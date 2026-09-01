@@ -16,6 +16,10 @@ export type ListVideosParams = {
 search?: string;
 status?: ListVideosStatus;
 visibility?: ListVideosVisibility;
+/**
+ * A folder UUID, or root for videos with no folder.
+ */
+folderId?: string;
 sort?: ListVideosSort;
 /**
  * @minimum 1

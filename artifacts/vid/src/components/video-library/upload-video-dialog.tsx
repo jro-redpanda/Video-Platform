@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-export function UploadVideoDialog({ onSuccess }: { onSuccess?: () => void }) {
+export function UploadVideoDialog({ onSuccess, folderId }: { onSuccess?: () => void, folderId?: string | null }) {
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
@@ -55,6 +55,7 @@ export function UploadVideoDialog({ onSuccess }: { onSuccess?: () => void }) {
         fileName: file.name,
         contentType: file.type,
         contentLength: file.size,
+        folderId: folderId === 'root' ? null : folderId
       }, { headers: { "Idempotency-Key": key } })
 
       if (initialized.upload.kind !== "tus") {

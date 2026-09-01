@@ -24,9 +24,14 @@ import type {
   AuthenticatedPlaybackVideo,
   CreatePlaybackEvents202,
   Dashboard,
+  Folder,
+  FolderDetail,
+  FolderInput,
+  FolderUpdate,
   HealthStatus,
   Invitation,
   InvitationInput,
+  ListFoldersParams,
   ListVideosParams,
   Member,
   MemberUpdate,
@@ -498,6 +503,351 @@ export function useListVideos<TData = Awaited<ReturnType<typeof listVideos>>, TE
 
 
 
+
+export const getListFoldersUrl = (params: ListFoldersParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/folders?${stringifiedParams}` : `/api/folders`
+}
+
+export const listFolders = async (params: ListFoldersParams, options?: Parameters<typeof customFetch>[1]): Promise<Folder[]> => {
+
+  return customFetch<Folder[]>(getListFoldersUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListFoldersQueryKey = (params?: ListFoldersParams,) => {
+    return [
+    `/api/folders`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListFoldersQueryOptions = <TData = Awaited<ReturnType<typeof listFolders>>, TError = ErrorType<unknown>>(params: ListFoldersParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listFolders>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListFoldersQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listFolders>>> = ({ signal }) => listFolders(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listFolders>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListFoldersQueryResult = NonNullable<Awaited<ReturnType<typeof listFolders>>>
+export type ListFoldersQueryError = ErrorType<unknown>
+
+
+
+export function useListFolders<TData = Awaited<ReturnType<typeof listFolders>>, TError = ErrorType<unknown>>(
+ params: ListFoldersParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listFolders>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListFoldersQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateFolderUrl = () => {
+
+
+
+
+  return `/api/folders`
+}
+
+export const createFolder = async (folderInput: FolderInput, options?: Parameters<typeof customFetch>[1]): Promise<FolderDetail> => {
+
+  return customFetch<FolderDetail>(getCreateFolderUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(folderInput)
+  }
+);}
+
+
+
+
+
+export const getCreateFolderMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createFolder>>, TError,{data: BodyType<FolderInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createFolder>>, TError,{data: BodyType<FolderInput>}, TContext> => {
+
+const mutationKey = ['createFolder'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createFolder>>, {data: BodyType<FolderInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createFolder(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateFolderMutationResult = NonNullable<Awaited<ReturnType<typeof createFolder>>>
+    export type CreateFolderMutationBody = BodyType<FolderInput>
+    export type CreateFolderMutationError = ErrorType<unknown>
+
+    export const useCreateFolder = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createFolder>>, TError,{data: BodyType<FolderInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createFolder>>,
+        TError,
+        {data: BodyType<FolderInput>},
+        TContext
+      > => {
+      return useMutation(getCreateFolderMutationOptions(options));
+    }
+
+export const getGetFolderUrl = (folderId: string,) => {
+
+
+
+
+  return `/api/folders/${folderId}`
+}
+
+export const getFolder = async (folderId: string, options?: Parameters<typeof customFetch>[1]): Promise<FolderDetail> => {
+
+  return customFetch<FolderDetail>(getGetFolderUrl(folderId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetFolderQueryKey = (folderId: string,) => {
+    return [
+    `/api/folders/${folderId}`
+    ] as const;
+    }
+
+
+export const getGetFolderQueryOptions = <TData = Awaited<ReturnType<typeof getFolder>>, TError = ErrorType<unknown>>(folderId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFolder>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetFolderQueryKey(folderId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getFolder>>> = ({ signal }) => getFolder(folderId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: folderId !== null && folderId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getFolder>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetFolderQueryResult = NonNullable<Awaited<ReturnType<typeof getFolder>>>
+export type GetFolderQueryError = ErrorType<unknown>
+
+
+
+export function useGetFolder<TData = Awaited<ReturnType<typeof getFolder>>, TError = ErrorType<unknown>>(
+ folderId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getFolder>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetFolderQueryOptions(folderId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateFolderUrl = (folderId: string,) => {
+
+
+
+
+  return `/api/folders/${folderId}`
+}
+
+export const updateFolder = async (folderId: string,
+    folderUpdate: FolderUpdate, options?: Parameters<typeof customFetch>[1]): Promise<FolderDetail> => {
+
+  return customFetch<FolderDetail>(getUpdateFolderUrl(folderId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(folderUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateFolderMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateFolder>>, TError,{folderId: string;data: BodyType<FolderUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateFolder>>, TError,{folderId: string;data: BodyType<FolderUpdate>}, TContext> => {
+
+const mutationKey = ['updateFolder'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateFolder>>, {folderId: string;data: BodyType<FolderUpdate>}> = (props) => {
+          const {folderId,data} = props ?? {};
+
+          return  updateFolder(folderId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateFolderMutationResult = NonNullable<Awaited<ReturnType<typeof updateFolder>>>
+    export type UpdateFolderMutationBody = BodyType<FolderUpdate>
+    export type UpdateFolderMutationError = ErrorType<unknown>
+
+    export const useUpdateFolder = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateFolder>>, TError,{folderId: string;data: BodyType<FolderUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateFolder>>,
+        TError,
+        {folderId: string;data: BodyType<FolderUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateFolderMutationOptions(options));
+    }
+
+export const getDeleteFolderUrl = (folderId: string,) => {
+
+
+
+
+  return `/api/folders/${folderId}`
+}
+
+export const deleteFolder = async (folderId: string, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeleteFolderUrl(folderId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteFolderMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteFolder>>, TError,{folderId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteFolder>>, TError,{folderId: string}, TContext> => {
+
+const mutationKey = ['deleteFolder'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteFolder>>, {folderId: string}> = (props) => {
+          const {folderId} = props ?? {};
+
+          return  deleteFolder(folderId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteFolderMutationResult = NonNullable<Awaited<ReturnType<typeof deleteFolder>>>
+
+    export type DeleteFolderMutationError = ErrorType<unknown>
+
+    export const useDeleteFolder = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteFolder>>, TError,{folderId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteFolder>>,
+        TError,
+        {folderId: string},
+        TContext
+      > => {
+      return useMutation(getDeleteFolderMutationOptions(options));
+    }
 
 export const getInitializeVideoUploadUrl = () => {
 

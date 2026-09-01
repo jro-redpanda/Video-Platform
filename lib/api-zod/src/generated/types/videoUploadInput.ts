@@ -25,4 +25,6 @@ export interface VideoUploadInput {
      * @maximum 2147483647
      */
   contentLength: number;
+  /** @nullable */
+  folderId?: string | null;
 }

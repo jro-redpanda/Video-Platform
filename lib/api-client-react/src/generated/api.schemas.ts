@@ -131,6 +131,11 @@ export const VideoVisibility = {
   public: 'public',
 } as const;
 
+export interface FolderAncestor {
+  id: string;
+  name: string;
+}
+
 export type VideoObjectContext = typeof VideoObjectContext[keyof typeof VideoObjectContext];
 
 
@@ -166,6 +171,11 @@ export interface Video {
   thumbnailColor: string;
   plays: number;
   completionRate: number;
+  /** @nullable */
+  folderId: string | null;
+  /** @nullable */
+  folderName: string | null;
+  folderPath: FolderAncestor[];
   embedUrl?: string;
   embedPath?: string;
   embedCode?: string;
@@ -199,6 +209,8 @@ export interface VideoUploadInput {
      * @maximum 2147483647
      */
   contentLength: number;
+  /** @nullable */
+  folderId?: string | null;
 }
 
 export type TusUploadCredentialsKind = typeof TusUploadCredentialsKind[keyof typeof TusUploadCredentialsKind];
@@ -260,6 +272,55 @@ export interface VideoUpdate {
   title?: string;
   description?: string;
   visibility?: VideoUpdateVisibility;
+  /** @nullable */
+  folderId?: string | null;
+}
+
+export interface Folder {
+  id: string;
+  /** @nullable */
+  parentId: string | null;
+  name: string;
+  /** @minimum 0 */
+  childFolderCount: number;
+  /** @minimum 0 */
+  videoCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FolderDetail {
+  id: string;
+  /** @nullable */
+  parentId: string | null;
+  name: string;
+  /** @minimum 0 */
+  childFolderCount: number;
+  /** @minimum 0 */
+  videoCount: number;
+  createdAt: string;
+  updatedAt: string;
+  ancestors: FolderAncestor[];
+}
+
+export interface FolderInput {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  name: string;
+  /** @nullable */
+  parentId?: string | null;
+}
+
+export interface FolderUpdate {
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  name?: string;
+  /** @nullable */
+  parentId?: string | null;
 }
 
 export interface ActivityItem {
@@ -481,6 +542,10 @@ export type ListVideosParams = {
 search?: string;
 status?: ListVideosStatus;
 visibility?: ListVideosVisibility;
+/**
+ * A folder UUID, or root for videos with no folder.
+ */
+folderId?: string;
 sort?: ListVideosSort;
 /**
  * @minimum 1
@@ -524,6 +589,13 @@ export const ListVideosSort = {
   title_desc: 'title_desc',
   plays_desc: 'plays_desc',
 } as const;
+
+export type ListFoldersParams = {
+/**
+ * A folder UUID, or root for top-level folders.
+ */
+parentId: string;
+};
 
 export type CreatePlaybackEvents202 = {
   accepted: number;

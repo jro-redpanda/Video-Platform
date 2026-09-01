@@ -13,6 +13,7 @@
     "webhook:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/webhook-step10-smoke.mjs",
     "embed:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/embed-step11-smoke.mjs",
     "library:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/video-library-step12-smoke.mjs",
+    "folders:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/folders-step13-smoke.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

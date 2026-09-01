@@ -1,10 +1,11 @@
-import { and, asc, desc, eq, gt, lt, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, lt, lte, or, sql, type SQL } from "drizzle-orm";
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter } from "express";
 import { runtimeConfig } from "../lib/config";
 import {
   auditLogsTable,
   embedGenerationOutboxTable,
+  foldersTable,
   groupPermissionsTable,
   membershipsTable,
   organizationCustomizationTable,
@@ -54,6 +55,7 @@ const cursorSigningKey = createHmac("sha256", sessionSecret)
   .update("video-library-cursor:v1")
   .digest();
 const cursorLifetimeMs = 15 * 60 * 1000;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const videoProjection = {
   id: videosTable.id,
@@ -70,6 +72,25 @@ const videoProjection = {
       / nullif(sum(${videoAnalyticsRollupsTable.plays}), 0),
     0
   )::float`,
+  folderId: videosTable.folderId,
+  folderName: sql<string | null>`(
+    select folder.name from ${foldersTable} folder
+    where folder.organization_id = ${videosTable.organizationId} and folder.id = ${videosTable.folderId}
+  )`,
+  folderPath: sql<Array<{ id: string; name: string }>>`coalesce((
+    with recursive folder_path as (
+      select folder.id, folder.parent_id, folder.name, 1 as distance
+      from ${foldersTable} folder
+      where folder.organization_id = ${videosTable.organizationId} and folder.id = ${videosTable.folderId}
+      union all
+      select parent.id, parent.parent_id, parent.name, folder_path.distance + 1
+      from ${foldersTable} parent
+      inner join folder_path on folder_path.parent_id = parent.id
+      where parent.organization_id = ${videosTable.organizationId}
+    )
+    select jsonb_agg(jsonb_build_object('id', id, 'name', name) order by distance desc)
+    from folder_path
+  ), '[]'::jsonb)`,
 };
 
 function scopedVideoWhere(organizationId: string, videoId?: string) {
@@ -272,12 +293,22 @@ router.get("/videos", requirePermission("videos.read"), async (req, res) => {
   }
   if (query.status) conditions.push(eq(videosTable.status, query.status));
   if (query.visibility) conditions.push(eq(videosTable.visibility, query.visibility));
+  const folderId = query.folderId === "root" ? null : query.folderId;
+  if (folderId !== undefined) {
+    if (folderId !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(folderId)) {
+      res.status(400).json({ error: "folderId must be root or a folder UUID." });
+      return;
+    }
+    if (folderId === null) conditions.push(isNull(videosTable.folderId));
+    else conditions.push(eq(videosTable.folderId, folderId));
+  }
 
   let cursor: VideoCursor | undefined;
   if (query.cursor) {
     try {
       cursor = decodeVideoCursor(query.cursor, {
         sort, search: search ?? null, status: query.status ?? null, visibility: query.visibility ?? null,
+        folderId: folderId ?? (folderId === null ? "root" : null),
       }, req.tenant.organizationId);
     } catch {
       res.status(400).json({ error: "Malformed or incompatible video cursor." });
@@ -286,7 +317,13 @@ router.get("/videos", requirePermission("videos.read"), async (req, res) => {
   }
   const cursorCondition = cursor ? videoCursorCondition(cursor) : undefined;
   const ordering = videoOrdering(sort);
-  const { rows, total, snapshotAt } = await withTenantDb(req.tenant, async (tx) => {
+  const { missingFolder, rows, total, snapshotAt } = await withTenantDb(req.tenant, async (tx) => {
+    if (folderId) {
+      const [folder] = await tx.select({ id: foldersTable.id }).from(foldersTable).where(and(
+        eq(foldersTable.organizationId, req.tenant.organizationId), eq(foldersTable.id, folderId),
+      )).limit(1);
+      if (!folder) return { missingFolder: true as const, rows: [], total: 0, snapshotAt: new Date() };
+    }
     const snapshotValue = cursor?.snapshotAt ?? (await tx.select({
       snapshotAt: sql<Date>`transaction_timestamp()`,
     }).from(organizationsTable).where(eq(organizationsTable.id, req.tenant.organizationId)).limit(1))[0]!.snapshotAt;
@@ -301,13 +338,18 @@ router.get("/videos", requirePermission("videos.read"), async (req, res) => {
       .limit(limit + 1);
     const total = cursor?.total ?? (await tx.select({ total: sql<number>`count(*)::int` }).from(videosTable)
       .where(and(...snapshotConditions)))[0]!.total;
-    return { rows, total, snapshotAt };
+    return { missingFolder: false as const, rows, total, snapshotAt };
   }, cursor ? undefined : { isolationLevel: "repeatable read" });
+  if (missingFolder) {
+    res.status(404).json({ error: "Folder not found" });
+    return;
+  }
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
   const nextCursor = hasNext && items.length
     ? encodeVideoCursor(items[items.length - 1]!, {
       sort, search: search ?? null, status: query.status ?? null, visibility: query.visibility ?? null,
+      folderId: folderId ?? (folderId === null ? "root" : null),
     }, snapshotAt, total, req.tenant.organizationId)
     : null;
   res.json(ListVideosResponse.parse({ items, nextCursor, total }));
@@ -318,6 +360,7 @@ type CursorScope = {
   search: string | null;
   status: (typeof videoStatuses)[number] | null;
   visibility: (typeof videoVisibilities)[number] | null;
+  folderId: string | null;
 };
 type VideoCursor = {
   v: 1;
@@ -413,6 +456,11 @@ function hashCursorScope(scope: CursorScope, organizationId: string) {
 // PRD video.upload maps to the existing Step 4 videos.create permission.
 router.post("/videos/upload-init", requirePermission("videos.create"), async (req, res) => {
   const input = InitializeVideoUploadBody.parse(req.body);
+  const requestedFolderId = input.folderId ?? null;
+  if (requestedFolderId && !uuidPattern.test(requestedFolderId)) {
+    res.status(400).json({ error: "folderId must be a folder UUID or null." });
+    return;
+  }
   const idempotencyKey = InitializeVideoUploadHeader.parse({
     "Idempotency-Key": req.get("Idempotency-Key"),
   })["Idempotency-Key"];
@@ -440,13 +488,21 @@ router.post("/videos/upload-init", requirePermission("videos.create"), async (re
 
   const reservation = await withTenantDb(req.tenant, async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${req.tenant.organizationId}))`);
+    if (requestedFolderId) {
+      const [folder] = await tx.select({ id: foldersTable.id }).from(foldersTable).where(and(
+        eq(foldersTable.organizationId, req.tenant.organizationId),
+        eq(foldersTable.id, requestedFolderId),
+      )).limit(1);
+      if (!folder) throw new UploadFolderNotFoundError();
+    }
     const [existing] = await tx.select().from(videosTable).where(and(
       eq(videosTable.organizationId, req.tenant.organizationId),
       eq(videosTable.uploadIdempotencyKey, idempotencyKey),
     )).limit(1);
     if (existing) {
       if (existing.title !== input.title || existing.uploadSourceBytes !== input.contentLength
-        || existing.uploadSourceFileName !== input.fileName || existing.uploadSourceContentType !== input.contentType) {
+        || existing.uploadSourceFileName !== input.fileName || existing.uploadSourceContentType !== input.contentType
+        || existing.folderId !== requestedFolderId) {
         throw new UploadInputError("Idempotency key was already used with different upload metadata.");
       }
       if (
@@ -472,6 +528,7 @@ router.post("/videos/upload-init", requirePermission("videos.create"), async (re
 
     const [video] = await tx.insert(videosTable).values({
       organizationId: req.tenant.organizationId, title: input.title, description: input.description ?? "",
+      folderId: requestedFolderId,
       status: "created", uploadIdempotencyKey: idempotencyKey,
       uploadSourceBytes: input.contentLength, reservedBytes: input.contentLength,
       uploadSourceFileName: input.fileName, uploadSourceContentType: input.contentType,
@@ -496,6 +553,7 @@ router.post("/videos/upload-init", requirePermission("videos.create"), async (re
   }).catch((error: unknown) => {
     if (error instanceof UploadInputError) return { error: error.message };
     if (error instanceof UploadReplayBlockedError) return { blocked: error.message };
+    if (error instanceof UploadFolderNotFoundError) return { missingFolder: true };
     throw error;
   });
   if ("error" in reservation) {
@@ -504,6 +562,10 @@ router.post("/videos/upload-init", requirePermission("videos.create"), async (re
   }
   if ("blocked" in reservation) {
     res.status(409).json({ error: reservation.blocked });
+    return;
+  }
+  if ("missingFolder" in reservation) {
+    res.status(404).json({ error: "Folder not found" });
     return;
   }
 
@@ -657,6 +719,7 @@ router.post("/videos/:videoId/upload-cancel", requirePermission("videos.create")
 
 class UploadInputError extends Error {}
 class UploadReplayBlockedError extends Error {}
+class UploadFolderNotFoundError extends Error {}
 
 function isRetryableInitializationRecord(status: (typeof videoStatuses)[number], initializationRetryable: boolean) {
   return status === "created" || status === "uploading" || initializationRetryable;
@@ -795,15 +858,44 @@ router.get("/videos/:videoId/playback/source", requirePermission("videos.read"),
 router.patch("/videos/:videoId", requirePermission("videos.update"), async (req, res) => {
   const { videoId } = UpdateVideoParams.parse(req.params);
   const update = UpdateVideoBody.parse(req.body);
-  const video = await withTenantDb(req.tenant, async (tx) => {
+  if (update.folderId && !uuidPattern.test(update.folderId)) {
+    res.status(400).json({ error: "folderId must be a folder UUID or null." });
+    return;
+  }
+  const result = await withTenantDb(req.tenant, async (tx) => {
+    if (update.folderId !== undefined) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${req.tenant.organizationId}))`);
+    }
+    const [current] = await tx.select({
+      id: videosTable.id, title: videosTable.title,
+    }).from(videosTable).where(scopedVideoWhere(req.tenant.organizationId, videoId)).limit(1);
+    if (!current) return { missing: "video" as const };
+    if (update.folderId) {
+      const [folder] = await tx.select({ id: foldersTable.id }).from(foldersTable).where(and(
+        eq(foldersTable.organizationId, req.tenant.organizationId),
+        eq(foldersTable.id, update.folderId),
+      )).limit(1);
+      if (!folder) return { missing: "folder" as const };
+    }
     const [updated] = await tx.update(videosTable).set(update)
       .where(scopedVideoWhere(req.tenant.organizationId, videoId))
       .returning({ id: videosTable.id });
-    if (!updated) return undefined;
-    return readVideo(tx, req.tenant.organizationId, videoId);
+    if (!updated) return { missing: "video" as const };
+    await tx.insert(auditLogsTable).values({
+      organizationId: req.tenant.organizationId,
+      actorUserId: req.tenant.userId,
+      action: update.folderId !== undefined ? "moved video" : "updated video",
+      subjectType: "video",
+      subjectId: videoId,
+      subjectLabel: update.title ?? current.title,
+    });
+    return { video: await readVideo(tx, req.tenant.organizationId, videoId) };
   });
-  if (!video) return void res.status(404).json({ error: "Video not found" });
-  res.json(UpdateVideoResponse.parse(video));
+  if ("missing" in result) {
+    res.status(404).json({ error: result.missing === "folder" ? "Folder not found" : "Video not found" });
+    return;
+  }
+  res.json(UpdateVideoResponse.parse(result.video));
 });
 
 router.delete("/videos/:videoId", requirePermission("videos.delete"), async (req, res) => {

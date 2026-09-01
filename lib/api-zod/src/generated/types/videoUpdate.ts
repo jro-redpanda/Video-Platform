@@ -12,4 +12,6 @@ export interface VideoUpdate {
   title?: string;
   description?: string;
   visibility?: VideoUpdateVisibility;
+  /** @nullable */
+  folderId?: string | null;
 }

@@ -1,11 +1,11 @@
 import { Link } from "wouter"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Card } from "@/components/ui/card"
-import { Play, MoreHorizontal, Trash2, Video as VideoIcon } from "lucide-react"
+import { Play, MoreHorizontal, Trash2, Video as VideoIcon, FolderInput } from "lucide-react"
 import { formatDate, formatDuration } from "@/lib/utils"
 import type { Video } from "@workspace/api-client-react"
 import { UploadVideoDialog } from "./upload-video-dialog"
@@ -20,20 +20,26 @@ interface VideoListProps {
   allVideos: Video[];
   isLoading: boolean;
   canDelete: boolean;
+  canUpdate: boolean;
   canCreate: boolean;
   hasActiveFilters: boolean;
   setVideoToDelete: (video: Video) => void;
+  setVideoToMove: (video: Video) => void;
   onUploadSuccess: () => void;
+  folderId?: string;
 }
 
 export function VideoList({
   allVideos,
   isLoading,
   canDelete,
+  canUpdate,
   canCreate,
   hasActiveFilters,
   setVideoToDelete,
-  onUploadSuccess
+  setVideoToMove,
+  onUploadSuccess,
+  folderId
 }: VideoListProps) {
   return (
     <>
@@ -113,14 +119,22 @@ export function VideoList({
                         <DropdownMenuItem asChild>
                           <Link href={`/videos/${video.id}`} className="cursor-pointer">View Details</Link>
                         </DropdownMenuItem>
-                        {canDelete && (
-                          <DropdownMenuItem
-                            className="text-destructive focus:text-destructive focus:bg-destructive/10 cursor-pointer"
-                            onClick={() => setVideoToDelete(video)}
-                            data-testid={`menu-delete-${video.id}`}
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" /> Delete
+                        {canUpdate && (
+                          <DropdownMenuItem onClick={() => setVideoToMove(video)} className="cursor-pointer">
+                            <FolderInput className="h-4 w-4 mr-2" /> Move
                           </DropdownMenuItem>
+                        )}
+                        {canDelete && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive focus:bg-destructive/10 cursor-pointer"
+                              onClick={() => setVideoToDelete(video)}
+                              data-testid={`menu-delete-${video.id}`}
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" /> Delete
+                            </DropdownMenuItem>
+                          </>
                         )}
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -169,13 +183,21 @@ export function VideoList({
                         <DropdownMenuItem asChild>
                           <Link href={`/videos/${video.id}`} className="cursor-pointer">View Details</Link>
                         </DropdownMenuItem>
-                        {canDelete && (
-                          <DropdownMenuItem
-                            className="text-destructive focus:text-destructive focus:bg-destructive/10 cursor-pointer"
-                            onClick={() => setVideoToDelete(video)}
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" /> Delete
+                        {canUpdate && (
+                          <DropdownMenuItem onClick={() => setVideoToMove(video)} className="cursor-pointer">
+                            <FolderInput className="h-4 w-4 mr-2" /> Move
                           </DropdownMenuItem>
+                        )}
+                        {canDelete && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive focus:bg-destructive/10 cursor-pointer"
+                              onClick={() => setVideoToDelete(video)}
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" /> Delete
+                            </DropdownMenuItem>
+                          </>
                         )}
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -209,7 +231,7 @@ export function VideoList({
             </p>
             {!hasActiveFilters && canCreate && (
               <div className="mt-8 flex justify-center">
-                <UploadVideoDialog onSuccess={onUploadSuccess} />
+                <UploadVideoDialog onSuccess={onUploadSuccess} folderId={folderId} />
               </div>
             )}
           </div>

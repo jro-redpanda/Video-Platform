@@ -5,6 +5,7 @@
  * Multi-tenant video platform API
  * OpenAPI spec version: 0.1.0
  */
+import type { FolderAncestor } from './folderAncestor';
 import type { VideoObject } from './videoObject';
 import type { VideoStatus } from './videoStatus';
 import type { VideoVisibility } from './videoVisibility';
@@ -20,6 +21,11 @@ export interface Video {
   thumbnailColor: string;
   plays: number;
   completionRate: number;
+  /** @nullable */
+  folderId: string | null;
+  /** @nullable */
+  folderName: string | null;
+  folderPath: FolderAncestor[];
   embedUrl?: string;
   embedPath?: string;
   embedCode?: string;

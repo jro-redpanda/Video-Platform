@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, Fragment } from "react"
 import { useParams, Link } from "wouter"
-import { useGetVideo, useUpdateVideo, getGetVideoQueryKey, useGetAuthenticatedVideoPlayback, getGetAuthenticatedVideoPlaybackQueryKey } from "@workspace/api-client-react"
+import { useGetVideo, useUpdateVideo, getGetVideoQueryKey, useGetAuthenticatedVideoPlayback, getGetAuthenticatedVideoPlaybackQueryKey, useGetWorkspace } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,9 +10,10 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ArrowLeft, Copy, ExternalLink, Activity, Check, XCircle } from "lucide-react"
+import { ArrowLeft, Copy, ExternalLink, Activity, Check, XCircle, Folder as FolderIcon, ChevronRight } from "lucide-react"
 import { formatDate, formatDuration, formatNumber } from "@/lib/utils"
 import { Player } from "@/components/player"
+import { MoveVideoDialog } from "@/components/video-library/move-video-dialog"
 
 export default function VideoDetail() {
   const { id } = useParams<{ id: string }>()
@@ -29,12 +30,15 @@ export default function VideoDetail() {
 
   const queryClient = useQueryClient()
   const updateVideo = useUpdateVideo()
+  const { data: workspace } = useGetWorkspace()
+  const canUpdate = workspace?.permissions?.includes("videos.update") ?? false
 
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
   const initializedId = useRef<string | null>(null)
 
   const [copyStatus, setCopyStatus] = useState<"idle" | "success" | "error">("idle")
+  const [moveVideoOpen, setMoveVideoOpen] = useState(false)
 
   useEffect(() => {
     if (video && initializedId.current !== id) {
@@ -104,7 +108,28 @@ export default function VideoDetail() {
               <h1 className="text-xl font-bold tracking-tight">{video.title}</h1>
               <Badge variant={video.status === 'ready' ? 'success' : 'warning'}>{video.status}</Badge>
             </div>
-            <p className="text-xs text-muted-foreground font-mono mt-1">ID: {video.id} • Added {formatDate(video.createdAt)}</p>
+
+            <div className="flex items-center flex-wrap gap-1 mt-1.5 text-xs text-muted-foreground font-medium">
+              <FolderIcon className="h-3.5 w-3.5 mr-0.5" />
+              {video.folderPath && video.folderPath.length > 0 ? (
+                video.folderPath.map((anc, idx) => (
+                  <Fragment key={anc.id}>
+                    {idx > 0 && <ChevronRight className="h-3 w-3 opacity-50" />}
+                    <Link href={`/videos?folder=${anc.id}`} className="hover:text-foreground transition-colors">{anc.name}</Link>
+                  </Fragment>
+                ))
+              ) : (
+                <Link href="/videos" className="hover:text-foreground transition-colors">Library</Link>
+              )}
+
+              {canUpdate && (
+                <Button variant="ghost" size="sm" className="h-5 px-1.5 ml-2 text-[10px] uppercase tracking-wider bg-muted/50 hover:bg-muted" onClick={() => setMoveVideoOpen(true)}>
+                  Change
+                </Button>
+              )}
+            </div>
+
+            <p className="text-xs text-muted-foreground/60 font-mono mt-1">ID: {video.id} • Added {formatDate(video.createdAt)}</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -113,9 +138,11 @@ export default function VideoDetail() {
               <ExternalLink className="h-4 w-4" /> Preview
             </a>
           </Button>
-          <Button className="gap-2" onClick={() => handleUpdate({ title, description })}>
-            Save Changes
-          </Button>
+          {canUpdate && (
+            <Button className="gap-2" onClick={() => handleUpdate({ title, description })}>
+              Save Changes
+            </Button>
+          )}
         </div>
       </div>
 
@@ -160,6 +187,7 @@ export default function VideoDetail() {
                       value={title}
                       onChange={e => setTitle(e.target.value)}
                       className="text-base"
+                      disabled={!canUpdate}
                     />
                   </div>
                   <div className="space-y-2">
@@ -169,6 +197,7 @@ export default function VideoDetail() {
                       value={description}
                       onChange={e => setDescription(e.target.value)}
                       className="min-h-[150px]"
+                      disabled={!canUpdate}
                     />
                   </div>
                 </div>
@@ -219,7 +248,7 @@ export default function VideoDetail() {
                 <Activity className="h-4 w-4" /> Visibility
               </h3>
               <div className="space-y-2">
-                <Select value={video.visibility} onValueChange={handleVisibilityChange}>
+                <Select value={video.visibility} onValueChange={handleVisibilityChange} disabled={!canUpdate}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -258,6 +287,12 @@ export default function VideoDetail() {
 
         </div>
       </div>
+
+      <MoveVideoDialog
+        video={video}
+        open={moveVideoOpen}
+        onOpenChange={setMoveVideoOpen}
+      />
     </div>
   )
 }

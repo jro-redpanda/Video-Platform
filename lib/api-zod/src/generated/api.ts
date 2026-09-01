@@ -121,6 +121,7 @@ export const ListVideosQueryParams = zod.object({
   "search": zod.coerce.string().max(listVideosQuerySearchMax).optional(),
   "status": zod.enum(['created', 'uploading', 'processing', 'ready', 'error']).optional(),
   "visibility": zod.enum(['private', 'unlisted', 'public']).optional(),
+  "folderId": zod.coerce.string().optional(),
   "sort": zod.enum(['newest', 'oldest', 'title_asc', 'title_desc', 'plays_desc']).default(listVideosQuerySortDefault),
   "limit": zod.coerce.number().int().min(1).max(listVideosQueryLimitMax).default(listVideosQueryLimitDefault),
   "cursor": zod.coerce.string().min(1).max(listVideosQueryCursorMax).optional()
@@ -142,6 +143,12 @@ export const ListVideosResponse = zod.object({
   "thumbnailColor": zod.string(),
   "plays": zod.number(),
   "completionRate": zod.number(),
+  "folderId": zod.string().nullable(),
+  "folderName": zod.string().nullable(),
+  "folderPath": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string()
+})),
   "embedUrl": zod.string().optional(),
   "embedPath": zod.string().optional(),
   "embedCode": zod.string().optional(),
@@ -158,6 +165,124 @@ export const ListVideosResponse = zod.object({
   "nextCursor": zod.string().nullable(),
   "total": zod.number().min(listVideosResponseTotalMin)
 })
+
+
+export const ListFoldersQueryParams = zod.object({
+  "parentId": zod.coerce.string()
+})
+
+export const listFoldersResponseChildFolderCountMin = 0;
+
+export const listFoldersResponseVideoCountMin = 0;
+
+
+
+export const ListFoldersResponseItem = zod.object({
+  "id": zod.string(),
+  "parentId": zod.string().nullable(),
+  "name": zod.string(),
+  "childFolderCount": zod.number().min(listFoldersResponseChildFolderCountMin),
+  "videoCount": zod.number().min(listFoldersResponseVideoCountMin),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+export const ListFoldersResponse = zod.array(ListFoldersResponseItem)
+
+
+export const createFolderBodyNameMax = 120;
+
+
+
+export const CreateFolderBody = zod.object({
+  "name": zod.string().min(1).max(createFolderBodyNameMax),
+  "parentId": zod.string().nullish()
+})
+
+export const createFolderResponseChildFolderCountMin = 0;
+
+export const createFolderResponseVideoCountMin = 0;
+
+
+
+export const CreateFolderResponse = zod.object({
+  "id": zod.string(),
+  "parentId": zod.string().nullable(),
+  "name": zod.string(),
+  "childFolderCount": zod.number().min(createFolderResponseChildFolderCountMin),
+  "videoCount": zod.number().min(createFolderResponseVideoCountMin),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "ancestors": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string()
+}))
+})
+
+
+export const GetFolderParams = zod.object({
+  "folderId": zod.coerce.string()
+})
+
+export const getFolderResponseChildFolderCountMin = 0;
+
+export const getFolderResponseVideoCountMin = 0;
+
+
+
+export const GetFolderResponse = zod.object({
+  "id": zod.string(),
+  "parentId": zod.string().nullable(),
+  "name": zod.string(),
+  "childFolderCount": zod.number().min(getFolderResponseChildFolderCountMin),
+  "videoCount": zod.number().min(getFolderResponseVideoCountMin),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "ancestors": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string()
+}))
+})
+
+
+export const UpdateFolderParams = zod.object({
+  "folderId": zod.coerce.string()
+})
+
+export const updateFolderBodyNameMax = 120;
+
+
+
+export const UpdateFolderBody = zod.object({
+  "name": zod.string().min(1).max(updateFolderBodyNameMax).optional(),
+  "parentId": zod.string().nullish()
+})
+
+export const updateFolderResponseChildFolderCountMin = 0;
+
+export const updateFolderResponseVideoCountMin = 0;
+
+
+
+export const UpdateFolderResponse = zod.object({
+  "id": zod.string(),
+  "parentId": zod.string().nullable(),
+  "name": zod.string(),
+  "childFolderCount": zod.number().min(updateFolderResponseChildFolderCountMin),
+  "videoCount": zod.number().min(updateFolderResponseVideoCountMin),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "ancestors": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string()
+}))
+})
+
+
+export const DeleteFolderParams = zod.object({
+  "folderId": zod.coerce.string()
+})
+
+export const DeleteFolderResponse = zod.void()
 
 
 export const initializeVideoUploadHeaderIdempotencyKeyMin = 16;
@@ -183,7 +308,8 @@ export const InitializeVideoUploadBody = zod.object({
   "description": zod.string().optional(),
   "fileName": zod.string().min(1).max(initializeVideoUploadBodyFileNameMax),
   "contentType": zod.string().min(1).max(initializeVideoUploadBodyContentTypeMax),
-  "contentLength": zod.number().min(1).max(initializeVideoUploadBodyContentLengthMax)
+  "contentLength": zod.number().min(1).max(initializeVideoUploadBodyContentLengthMax),
+  "folderId": zod.string().nullish()
 })
 
 export const InitializeVideoUploadResponse = zod.object({
@@ -223,6 +349,12 @@ export const GetVideoResponse = zod.object({
   "thumbnailColor": zod.string(),
   "plays": zod.number(),
   "completionRate": zod.number(),
+  "folderId": zod.string().nullable(),
+  "folderName": zod.string().nullable(),
+  "folderPath": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string()
+})),
   "embedUrl": zod.string().optional(),
   "embedPath": zod.string().optional(),
   "embedCode": zod.string().optional(),
@@ -248,7 +380,8 @@ export const UpdateVideoParams = zod.object({
 export const UpdateVideoBody = zod.object({
   "title": zod.string().min(1).optional(),
   "description": zod.string().optional(),
-  "visibility": zod.enum(['private', 'unlisted', 'public']).optional()
+  "visibility": zod.enum(['private', 'unlisted', 'public']).optional(),
+  "folderId": zod.string().nullish()
 })
 
 export const UpdateVideoResponse = zod.object({
@@ -262,6 +395,12 @@ export const UpdateVideoResponse = zod.object({
   "thumbnailColor": zod.string(),
   "plays": zod.number(),
   "completionRate": zod.number(),
+  "folderId": zod.string().nullable(),
+  "folderName": zod.string().nullable(),
+  "folderPath": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string()
+})),
   "embedUrl": zod.string().optional(),
   "embedPath": zod.string().optional(),
   "embedCode": zod.string().optional(),
@@ -331,6 +470,12 @@ export const CompleteVideoUploadResponse = zod.object({
   "thumbnailColor": zod.string(),
   "plays": zod.number(),
   "completionRate": zod.number(),
+  "folderId": zod.string().nullable(),
+  "folderName": zod.string().nullable(),
+  "folderPath": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string()
+})),
   "embedUrl": zod.string().optional(),
   "embedPath": zod.string().optional(),
   "embedCode": zod.string().optional(),
@@ -361,6 +506,12 @@ export const CancelVideoUploadResponse = zod.object({
   "thumbnailColor": zod.string(),
   "plays": zod.number(),
   "completionRate": zod.number(),
+  "folderId": zod.string().nullable(),
+  "folderName": zod.string().nullable(),
+  "folderPath": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string()
+})),
   "embedUrl": zod.string().optional(),
   "embedPath": zod.string().optional(),
   "embedCode": zod.string().optional(),

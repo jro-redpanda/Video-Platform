@@ -10,6 +10,7 @@ tags:
   - name: health
   - name: dashboard
   - name: videos
+  - name: folders
   - name: workspace
   - name: members
 paths:
@@ -94,6 +95,11 @@ paths:
             type: string
             enum: [private, unlisted, public]
         - in: query
+          name: folderId
+          schema:
+            type: string
+            description: A folder UUID, or root for videos with no folder.
+        - in: query
           name: sort
           schema:
             type: string
@@ -119,6 +125,81 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VideoList"
+  /folders:
+    get:
+      operationId: listFolders
+      tags: [folders]
+      parameters:
+        - in: query
+          name: parentId
+          required: true
+          schema:
+            type: string
+            description: A folder UUID, or root for top-level folders.
+      responses:
+        "200":
+          description: Direct child folders in the requested location
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Folder"
+    post:
+      operationId: createFolder
+      tags: [folders]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FolderInput"
+      responses:
+        "201":
+          description: Folder created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FolderDetail"
+  /folders/{folderId}:
+    get:
+      operationId: getFolder
+      tags: [folders]
+      parameters:
+        - $ref: "#/components/parameters/FolderId"
+      responses:
+        "200":
+          description: Folder detail and ordered root-to-parent ancestors
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FolderDetail"
+    patch:
+      operationId: updateFolder
+      tags: [folders]
+      parameters:
+        - $ref: "#/components/parameters/FolderId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FolderUpdate"
+      responses:
+        "200":
+          description: Updated folder
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FolderDetail"
+    delete:
+      operationId: deleteFolder
+      tags: [folders]
+      parameters:
+        - $ref: "#/components/parameters/FolderId"
+      responses:
+        "204":
+          description: Empty folder deleted
   /videos/upload-init:
     post:
       operationId: initializeVideoUpload
@@ -418,6 +499,12 @@ components:
       required: true
       schema:
         type: string
+    FolderId:
+      in: path
+      name: folderId
+      required: true
+      schema:
+        type: string
     GroupId:
       in: path
       name: groupId
@@ -521,7 +608,7 @@ components:
         completionRate: { type: number }
     Video:
       type: object
-      required: [id, title, description, status, visibility, durationSeconds, createdAt, thumbnailColor, plays, completionRate]
+      required: [id, title, description, status, visibility, durationSeconds, createdAt, thumbnailColor, plays, completionRate, folderId, folderName, folderPath]
       properties:
         id: { type: string }
         title: { type: string }
@@ -537,6 +624,12 @@ components:
         thumbnailColor: { type: string }
         plays: { type: number }
         completionRate: { type: number }
+        folderId: { type: ["string", "null"] }
+        folderName: { type: ["string", "null"] }
+        folderPath:
+          type: array
+          items:
+            $ref: "#/components/schemas/FolderAncestor"
         embedUrl: { type: string }
         embedPath: { type: string }
         embedCode: { type: string }
@@ -575,6 +668,7 @@ components:
         fileName: { type: string, minLength: 1, maxLength: 255 }
         contentType: { type: string, minLength: 1, maxLength: 127 }
         contentLength: { type: number, minimum: 1, maximum: 2147483647 }
+        folderId: { type: ["string", "null"] }
     VideoUploadInitialization:
       type: object
       required: [videoId, upload]
@@ -620,6 +714,50 @@ components:
         visibility:
           type: string
           enum: [private, unlisted, public]
+        folderId: { type: ["string", "null"] }
+    FolderAncestor:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+    Folder:
+      type: object
+      required: [id, parentId, name, childFolderCount, videoCount, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        parentId: { type: ["string", "null"] }
+        name: { type: string }
+        childFolderCount: { type: number, minimum: 0 }
+        videoCount: { type: number, minimum: 0 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    FolderDetail:
+      type: object
+      required: [id, parentId, name, childFolderCount, videoCount, createdAt, updatedAt, ancestors]
+      properties:
+        id: { type: string }
+        parentId: { type: ["string", "null"] }
+        name: { type: string }
+        childFolderCount: { type: number, minimum: 0 }
+        videoCount: { type: number, minimum: 0 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        ancestors:
+          type: array
+          items:
+            $ref: "#/components/schemas/FolderAncestor"
+    FolderInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        parentId: { type: ["string", "null"] }
+    FolderUpdate:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        parentId: { type: ["string", "null"] }
     ActivityItem:
       type: object
       required: [id, action, subject, actor, createdAt]

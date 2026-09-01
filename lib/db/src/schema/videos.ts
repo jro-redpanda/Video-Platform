@@ -1,4 +1,5 @@
-import { boolean, doublePrecision, index, integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, doublePrecision, foreignKey, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { organizationsTable } from "./organizations";
 import { providerAccountsTable } from "./operations";
 
@@ -6,20 +7,35 @@ export const videoStatusEnum = pgEnum("video_status", ["created", "uploading", "
 export const videoVisibilityEnum = pgEnum("video_visibility", ["private", "unlisted", "public"]);
 
 export const foldersTable = pgTable("folders", {
-  id: uuid("id").primaryKey().defaultRandom(),
+  id: uuid("id").notNull().defaultRandom(),
   organizationId: uuid("organization_id").notNull().references(() => organizationsTable.id, { onDelete: "cascade" }),
   parentId: uuid("parent_id"),
   name: text("name").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 }, (table) => [
-  uniqueIndex("folders_org_parent_name_idx").on(table.organizationId, table.parentId, table.name),
+  primaryKey({ name: "folders_org_id_pk", columns: [table.organizationId, table.id] }),
+  uniqueIndex("folders_org_root_name_ci_idx")
+    .on(table.organizationId, sql`lower(${table.name})`)
+    .where(sql`${table.parentId} is null`),
+  uniqueIndex("folders_org_parent_name_ci_idx")
+    .on(table.organizationId, table.parentId, sql`lower(${table.name})`)
+    .where(sql`${table.parentId} is not null`),
   index("folders_org_idx").on(table.organizationId),
+  index("folders_org_parent_idx").on(table.organizationId, table.parentId),
+  foreignKey({
+    name: "folders_org_parent_fk",
+    columns: [table.organizationId, table.parentId],
+    foreignColumns: [table.organizationId, table.id],
+  }).onDelete("restrict"),
+  check("folders_not_self_parent_check", sql`${table.parentId} is null or ${table.parentId} <> ${table.id}`),
+  check("folders_name_normalized_check", sql`${table.name} = btrim(${table.name}) and char_length(${table.name}) between 1 and 120`),
 ]);
 
 export const videosTable = pgTable("videos", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: uuid("organization_id").notNull().references(() => organizationsTable.id, { onDelete: "cascade" }),
-  folderId: uuid("folder_id").references(() => foldersTable.id, { onDelete: "set null" }),
+  folderId: uuid("folder_id"),
   title: text("title").notNull(),
   description: text("description").notNull().default(""),
   status: videoStatusEnum("status").notNull().default("created"),
@@ -57,6 +73,12 @@ export const videosTable = pgTable("videos", {
 }, (table) => [
   index("videos_org_created_idx").on(table.organizationId, table.createdAt),
   index("videos_org_status_idx").on(table.organizationId, table.status),
+  index("videos_org_folder_idx").on(table.organizationId, table.folderId),
+  foreignKey({
+    name: "videos_org_folder_fk",
+    columns: [table.organizationId, table.folderId],
+    foreignColumns: [foldersTable.organizationId, foldersTable.id],
+  }).onDelete("restrict"),
   uniqueIndex("videos_org_upload_idempotency_idx").on(table.organizationId, table.uploadIdempotencyKey),
   uniqueIndex("videos_private_provider_asset_idx").on(
     table.providerAccountId,
