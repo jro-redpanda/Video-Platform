@@ -1,0 +1,62 @@
+Before continuing, a few corrections and constraints.
+
+1. CLOUDFLARE IS NOT NEEDED YET
+Cold storage for masters isn't on the critical path until uploads work
+(build step 9). Custom domains are Phase 2 and plan-gated. Keep cold
+storage behind the unconfigured provider interface, as you proposed.
+
+When we do connect Cloudflare, it will be scoped to R2 storage only.
+Do not request DNS or domain automation access. Custom-domain
+provisioning is a later phase and I'll handle that grant separately.
+
+2. CORRECT A MISREAD ABOUT R2
+You said Cloudflare "fits the PRD's R2 migration path." R2 appears in
+the PRD in two unrelated roles:
+  (a) cold storage for source masters, starting at step 9
+  (b) a candidate future primary VIDEO provider, hypothetical, no work now
+Wiring (a) does not satisfy the portability requirement. Portability is
+satisfied by rules P1 through P4: our own embed URL, our own player, our
+own IDs, our own analytics. Those are steps 6 and 11 and they are the
+two most important steps in the build.
+
+3. HARD CHECKPOINTS, NO LONG AUTONOMOUS RUNS
+Stop and report for my review after each of these:
+  - Step 4: RBAC engine (permissions, groups, requirePermission guard)
+  - Step 6: provider adapter interface + Bunny implementation
+  - Step 11: player wrapper + embed page generator
+Everything else in the build depends on these three. Do not build past a
+checkpoint until I confirm.
+
+4. DON'T WRITE THE BUNNY ADAPTER BLIND
+Do not implement the Bunny adapter from documentation alone. When you
+reach step 6, stop and request Bunny credentials. Step 6 is not complete
+until you've made a real round trip: create a library, create a video,
+upload a small test file via tus, receive the webhook, and verify its
+HMAC signature.
+
+5. THE ADAPTER INTERFACE IS NOT BUNNY-SHAPED
+The interface must express only: durable storage, multi-rendition
+transcoding, HLS/DASH manifests, CDN delivery, resumable or multipart
+upload credentials, signed playback URLs, encode-completion callback.
+If a capability exists in Bunny but isn't in that list, it does not go
+in the interface. No Bunny types, names, or concepts leak outside
+lib/providers/bunny.
+
+6. NAMING (rule P6)
+The product has no name yet and may be renamed. Use "vid" as the
+internal namespace for repo, package, database, env prefix, and CSS
+prefix. No product name in any file name, directory, class, function,
+variable, table, column, enum, CSS class, env var key, or type. Display
+name reads from a single PRODUCT_NAME config value at runtime.
+
+Before continuing: grep the existing codebase for any invented product
+name from the earlier prototype pass and report what you find. Do not
+rename anything yet, just show me.
+
+7. NO DUAL CODE PATHS
+You mentioned replacing the in-memory API. Delete it, don't leave it
+alongside the new persistence layer. Confirm the old path is gone and
+nothing still imports it.
+
+Start with items 6 and 7 (report only), then proceed to step 4 and stop
+at the checkpoint.

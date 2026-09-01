@@ -120,7 +120,7 @@ export default function Customization() {
             <h3 className="text-lg font-semibold text-muted-foreground">Live Player Preview</h3>
             
             <div className="rounded-xl overflow-hidden shadow-2xl ring-1 ring-border bg-black aspect-video relative flex flex-col justify-between group">
-              {/* Fake Video Content */}
+              {/* // MOCK: replaced at step 11 */}
               <div className="absolute inset-0 bg-gradient-to-br from-zinc-800 to-black flex items-center justify-center pointer-events-none">
                 <div className="w-48 h-48 rounded-full border-4 border-white/5 flex items-center justify-center">
                    <div className="w-24 h-24 rounded-full border-4 border-white/10" />

@@ -1,5 +1,5 @@
 {
-  "name": "@workspace/video-platform",
+  "name": "@workspace/vid",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -49,6 +49,7 @@
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
     "@workspace/api-client-react": "workspace:*",
+    "better-auth": "^1.7.2",
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",
     "cmdk": "^1.1.1",

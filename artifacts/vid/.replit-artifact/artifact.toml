@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Video Platform"
+description = "A multi-tenant video operations platform with provider-portable uploads, owned playback, workspace permissions, customization, and first-party analytics."
+version = "1.0.0"
+id = "artifacts/vid"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19254
+
+[services.development]
+run = "pnpm --filter @workspace/vid run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/vid", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/vid/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19254"
+BASE_PATH = "/"

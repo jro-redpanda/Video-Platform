@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { useGetWorkspace, useUpdateWorkspace, getGetWorkspaceQueryKey } from "@workspace/api-client-react"
+import { useGetRuntimeConfig, useGetWorkspace, useUpdateWorkspace, getGetWorkspaceQueryKey } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -12,6 +12,7 @@ import { useToast } from "@/components/ui/use-toast"
 
 export default function Settings() {
   const { data: workspace, isLoading } = useGetWorkspace()
+  const { data: runtimeConfig } = useGetRuntimeConfig()
   const updateWorkspace = useUpdateWorkspace()
   const queryClient = useQueryClient()
   const { toast } = useToast()
@@ -69,7 +70,7 @@ export default function Settings() {
                 <Label>Workspace Slug</Label>
                 <div className="flex items-center gap-2 max-w-md">
                   <div className="bg-muted px-3 py-2 text-sm rounded-l-md border border-r-0 text-muted-foreground whitespace-nowrap">
-                    app.video-platform.com/
+                    {runtimeConfig?.appDomain}/
                   </div>
                   <Input 
                     value={workspace.slug} 
@@ -113,6 +114,7 @@ export default function Settings() {
                 </div>
               </CardContent>
               <CardFooter className="border-t px-6 py-4 bg-muted/20">
+                {/* // MOCK: replaced at step 8 */}
                 <Button variant="outline" className="w-full">Upgrade Storage</Button>
               </CardFooter>
             </Card>
@@ -138,6 +140,7 @@ export default function Settings() {
                 </ul>
               </CardContent>
               <CardFooter className="border-t px-6 py-4 bg-muted/20">
+                {/* // MOCK: replaced at step 8 */}
                 <Button variant="secondary" className="w-full">Manage Billing</Button>
               </CardFooter>
             </Card>

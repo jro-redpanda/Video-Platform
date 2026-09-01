@@ -11,6 +11,7 @@ tags:
   - name: dashboard
   - name: videos
   - name: workspace
+  - name: members
 paths:
   /healthz:
     get:
@@ -23,6 +24,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /public/runtime-config:
+    get:
+      operationId: getRuntimeConfig
+      tags: [health]
+      responses:
+        "200":
+          description: Public runtime display configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeConfig"
   /workspace:
     get:
       operationId: getWorkspace
@@ -143,11 +155,174 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ActivityItem"
+  /permission-groups:
+    get:
+      operationId: listPermissionGroups
+      tags: [members]
+      responses:
+        "200":
+          description: Permission groups available in the current workspace
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PermissionGroup"
+    post:
+      operationId: createPermissionGroup
+      tags: [members]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PermissionGroupInput"
+      responses:
+        "201":
+          description: Permission group created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PermissionGroup"
+  /permission-groups/{groupId}:
+    patch:
+      operationId: updatePermissionGroup
+      tags: [members]
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PermissionGroupInput"
+      responses:
+        "200":
+          description: Permission group updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PermissionGroup"
+    delete:
+      operationId: deletePermissionGroup
+      tags: [members]
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "204":
+          description: Permission group deleted
+  /permissions:
+    get:
+      operationId: listPermissions
+      tags: [members]
+      responses:
+        "200":
+          description: Permission catalog
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Permission"
+  /members:
+    get:
+      operationId: listMembers
+      tags: [members]
+      responses:
+        "200":
+          description: Current workspace members
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Member"
+  /members/{membershipId}:
+    patch:
+      operationId: updateMember
+      tags: [members]
+      parameters:
+        - $ref: "#/components/parameters/MembershipId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemberUpdate"
+      responses:
+        "200":
+          description: Member updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Member"
+  /invitations:
+    post:
+      operationId: createInvitation
+      tags: [members]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvitationInput"
+      responses:
+        "201":
+          description: Invitation created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invitation"
+  /public/videos/{videoId}:
+    get:
+      operationId: getPublicVideo
+      tags: [videos]
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      responses:
+        "200":
+          description: Provider-neutral public playback metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicVideo"
+  /public/playback-events:
+    post:
+      operationId: createPlaybackEvents
+      tags: [videos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaybackEventBatch"
+      responses:
+        "202":
+          description: Events accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted]
+                properties:
+                  accepted: { type: number }
 components:
   parameters:
     VideoId:
       in: path
       name: videoId
+      required: true
+      schema:
+        type: string
+    GroupId:
+      in: path
+      name: groupId
+      required: true
+      schema:
+        type: string
+    MembershipId:
+      in: path
+      name: membershipId
       required: true
       schema:
         type: string
@@ -158,6 +333,12 @@ components:
       properties:
         status:
           type: string
+    RuntimeConfig:
+      type: object
+      required: [productName, appDomain]
+      properties:
+        productName: { type: string }
+        appDomain: { type: string }
     Workspace:
       type: object
       required: [id, name, slug, plan, memberCount, storageUsedGb, storageLimitGb, playerAccent, logoInitials]
@@ -248,3 +429,104 @@ components:
         subject: { type: string }
         actor: { type: string }
         createdAt: { type: string, format: date-time }
+    PermissionGroup:
+      type: object
+      required: [id, name, description, permissions]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        permissions:
+          type: array
+          items: { type: string }
+    PermissionGroupInput:
+      type: object
+      required: [name, description, permissions]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        description: { type: string, maxLength: 240 }
+        permissions:
+          type: array
+          uniqueItems: true
+          items: { type: string }
+    Permission:
+      type: object
+      required: [key, description]
+      properties:
+        key: { type: string }
+        description: { type: string }
+    Member:
+      type: object
+      required: [id, name, email, groupId, role, status]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string, pattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$" }
+        groupId: { type: string }
+        role: { type: string }
+        status:
+          type: string
+          enum: [invited, active, suspended]
+    MemberUpdate:
+      type: object
+      properties:
+        groupId: { type: string }
+        status:
+          type: string
+          enum: [active, suspended]
+    InvitationInput:
+      type: object
+      required: [email, groupId]
+      properties:
+        email: { type: string, pattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$" }
+        groupId: { type: string }
+    Invitation:
+      type: object
+      required: [id, email, groupId, role, status, expiresAt]
+      properties:
+        id: { type: string }
+        email: { type: string, pattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$" }
+        groupId: { type: string }
+        role: { type: string }
+        status:
+          type: string
+          enum: [invited]
+        expiresAt: { type: string, format: date-time }
+    PublicVideo:
+      type: object
+      required: [id, title, description, status, visibility, durationSeconds, thumbnailColor, playerAccent]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        status:
+          type: string
+          enum: [created, uploading, processing, ready, error]
+        visibility:
+          type: string
+          enum: [unlisted, public]
+        durationSeconds: { type: number }
+        thumbnailColor: { type: string }
+        playerAccent: { type: string }
+        sourceUrl: { type: string }
+    PlaybackEventInput:
+      type: object
+      required: [videoId, sessionId, eventType, positionSeconds, occurredAt]
+      properties:
+        videoId: { type: string }
+        sessionId: { type: string }
+        eventType:
+          type: string
+          enum: [load, play, progress, pause, ended, error]
+        positionSeconds: { type: number, minimum: 0 }
+        occurredAt: { type: string, format: date-time }
+    PlaybackEventBatch:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/PlaybackEventInput"

@@ -15,15 +15,42 @@ import { Shell } from "@/components/layout/shell";
 import Dashboard from "@/pages/dashboard";
 import Videos from "@/pages/videos";
 import VideoDetail from "@/pages/video-detail";
-// Stubs for next round
 import Analytics from "@/pages/analytics";
 import Members from "@/pages/members";
 import Customization from "@/pages/customization";
 import Settings from "@/pages/settings";
+// PRELIMINARY SCAFFOLDING: this route is replaced, not extended, at Step 11.
+import EmbedPlayer from "@/pages/embed-player";
+import Login from "@/pages/login";
+import { authClient } from "@/lib/auth-client";
 
 const queryClient = new QueryClient();
 
 function Router() {
+  const [location] = useLocation();
+  if (location.startsWith("/v/")) {
+    return (
+      <RoutedErrorBoundary>
+        <Switch>
+          <Route path="/v/:id" component={EmbedPlayer} />
+          <Route component={NotFound} />
+        </Switch>
+      </RoutedErrorBoundary>
+    );
+  }
+
+  return <AuthenticatedRouter />;
+}
+
+function AuthenticatedRouter() {
+  const session = authClient.useSession();
+  if (session.isPending) {
+    return <div className="min-h-screen grid place-items-center text-muted-foreground">Loading workspace…</div>;
+  }
+  if (!session.data) {
+    return <Login />;
+  }
+
   return (
     <Shell>
       <RoutedErrorBoundary>

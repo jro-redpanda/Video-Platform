@@ -4,12 +4,14 @@ A provider-portable control plane for customer video libraries, embeds, workspac
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/api-server run dev` — run the API server
+- `pnpm --filter @workspace/vid run dev` — run the tenant-facing web application
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- Required runtime config: `PRODUCT_NAME`, `VID_APP_DOMAIN`
+- Required secret for the Step 6 provider adapter: `BUNNY_API_KEY`
 
 ## Stack
 
@@ -22,8 +24,8 @@ A provider-portable control plane for customer video libraries, embeds, workspac
 
 ## Where things live
 
-- `artifacts/video-platform` — tenant-facing React application
-- `artifacts/api-server/src/routes/platform.ts` — current API implementation and demo records
+- `artifacts/vid` — tenant-facing React application
+- `artifacts/api-server/src/routes/platform.ts` — current tenant API implementation
 - `lib/api-spec/openapi.yaml` — source of truth for the application API
 - `lib/db/src/schema` — durable Postgres schema as persistence is added
 
@@ -33,6 +35,8 @@ A provider-portable control plane for customer video libraries, embeds, workspac
 - Public video IDs and embed URLs must never contain a provider asset ID or hostname.
 - Provider-specific code belongs behind adapters; tenant-facing code consumes normalized types.
 - Tenant scope, permissions, and entitlements must be resolved server-side rather than trusted from client input.
+- Provider-space provisioning belongs to the Step 7 background worker and must never run inside an HTTP request.
+- `artifacts/api-server/src/routes/public.ts` and `artifacts/vid/src/pages/embed-player.tsx` are preliminary scaffolding to replace at Step 11, not foundations to extend.
 
 ## Product
 
@@ -44,7 +48,8 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Keep `vid` for internal identifiers only. User-visible product naming comes from `PRODUCT_NAME`.
+- Keep `MOCKS.md` and every `// MOCK: replaced at step N` marker current.
 
 ## Pointers
 

@@ -57,7 +57,11 @@ export default function VideoDetail() {
     return <div className="p-8 text-center">Video not found.</div>
   }
 
-  const embedCode = `<iframe src="https://player.example.com/v/${video.id}" width="100%" height="100%" frameborder="0" allowfullscreen></iframe>`
+  // PRELIMINARY SCAFFOLDING: replace this embed generation at Step 11.
+  // MOCK: replaced at step 11
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "")
+  const embedUrl = new URL(`${basePath}/v/${video.id}`, window.location.origin).toString()
+  const embedCode = `<iframe src="${embedUrl}" width="100%" height="100%" frameborder="0" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen></iframe>`
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-secondary/30">
@@ -76,8 +80,10 @@ export default function VideoDetail() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="outline" className="gap-2">
+          <Button variant="outline" className="gap-2" asChild>
+            <a href={embedUrl} target="_blank" rel="noreferrer">
             <ExternalLink className="h-4 w-4" /> Preview
+            </a>
           </Button>
           <Button className="gap-2" onClick={() => handleUpdate({ title, description })}>
             Save Changes

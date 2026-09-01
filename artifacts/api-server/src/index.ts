@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { startJobs, stopJobs } from "./lib/jobs";
 
 const rawPort = process.env["PORT"];
 
@@ -15,7 +16,9 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-app.listen(port, (err) => {
+await startJobs();
+
+const server = app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
@@ -23,3 +26,13 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
 });
+
+async function shutdown(signal: string) {
+  logger.info({ signal }, "Shutting down");
+  server.close();
+  await stopJobs();
+  process.exit(0);
+}
+
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
+process.once("SIGINT", () => void shutdown("SIGINT"));

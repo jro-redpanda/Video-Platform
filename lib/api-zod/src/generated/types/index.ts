@@ -7,9 +7,27 @@
  */
 
 export * from './activityItem';
+export * from './createPlaybackEvents202';
 export * from './dashboard';
 export * from './healthStatus';
+export * from './invitation';
+export * from './invitationInput';
+export * from './invitationStatus';
 export * from './listVideosParams';
+export * from './member';
+export * from './memberStatus';
+export * from './memberUpdate';
+export * from './memberUpdateStatus';
+export * from './permission';
+export * from './permissionGroup';
+export * from './permissionGroupInput';
+export * from './playbackEventBatch';
+export * from './playbackEventInput';
+export * from './playbackEventInputEventType';
+export * from './publicVideo';
+export * from './publicVideoStatus';
+export * from './publicVideoVisibility';
+export * from './runtimeConfig';
 export * from './topVideo';
 export * from './trendPoint';
 export * from './video';

@@ -13,6 +13,12 @@ export const HealthCheckResponse = zod.object({
 })
 
 
+export const GetRuntimeConfigResponse = zod.object({
+  "productName": zod.string(),
+  "appDomain": zod.string()
+})
+
+
 export const GetWorkspaceResponse = zod.object({
   "id": zod.string(),
   "name": zod.string(),
@@ -164,5 +170,167 @@ export const ListActivityResponseItem = zod.object({
   "createdAt": zod.coerce.date()
 })
 export const ListActivityResponse = zod.array(ListActivityResponseItem)
+
+
+export const ListPermissionGroupsResponseItem = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "description": zod.string(),
+  "permissions": zod.array(zod.string())
+})
+export const ListPermissionGroupsResponse = zod.array(ListPermissionGroupsResponseItem)
+
+
+export const createPermissionGroupBodyNameMax = 80;
+
+export const createPermissionGroupBodyDescriptionMax = 240;
+
+
+
+export const CreatePermissionGroupBody = zod.object({
+  "name": zod.string().min(1).max(createPermissionGroupBodyNameMax),
+  "description": zod.string().max(createPermissionGroupBodyDescriptionMax),
+  "permissions": zod.array(zod.string())
+})
+
+export const CreatePermissionGroupResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "description": zod.string(),
+  "permissions": zod.array(zod.string())
+})
+
+
+export const UpdatePermissionGroupParams = zod.object({
+  "groupId": zod.coerce.string()
+})
+
+export const updatePermissionGroupBodyNameMax = 80;
+
+export const updatePermissionGroupBodyDescriptionMax = 240;
+
+
+
+export const UpdatePermissionGroupBody = zod.object({
+  "name": zod.string().min(1).max(updatePermissionGroupBodyNameMax),
+  "description": zod.string().max(updatePermissionGroupBodyDescriptionMax),
+  "permissions": zod.array(zod.string())
+})
+
+export const UpdatePermissionGroupResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "description": zod.string(),
+  "permissions": zod.array(zod.string())
+})
+
+
+export const DeletePermissionGroupParams = zod.object({
+  "groupId": zod.coerce.string()
+})
+
+export const DeletePermissionGroupResponse = zod.void()
+
+
+export const ListPermissionsResponseItem = zod.object({
+  "key": zod.string(),
+  "description": zod.string()
+})
+export const ListPermissionsResponse = zod.array(ListPermissionsResponseItem)
+
+
+export const listMembersResponseEmailRegExp = new RegExp('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$');
+
+
+export const ListMembersResponseItem = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "email": zod.string().regex(listMembersResponseEmailRegExp),
+  "groupId": zod.string(),
+  "role": zod.string(),
+  "status": zod.enum(['invited', 'active', 'suspended'])
+})
+export const ListMembersResponse = zod.array(ListMembersResponseItem)
+
+
+export const UpdateMemberParams = zod.object({
+  "membershipId": zod.coerce.string()
+})
+
+export const UpdateMemberBody = zod.object({
+  "groupId": zod.string().optional(),
+  "status": zod.enum(['active', 'suspended']).optional()
+})
+
+export const updateMemberResponseEmailRegExp = new RegExp('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$');
+
+
+export const UpdateMemberResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "email": zod.string().regex(updateMemberResponseEmailRegExp),
+  "groupId": zod.string(),
+  "role": zod.string(),
+  "status": zod.enum(['invited', 'active', 'suspended'])
+})
+
+
+export const createInvitationBodyEmailRegExp = new RegExp('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$');
+
+
+export const CreateInvitationBody = zod.object({
+  "email": zod.string().regex(createInvitationBodyEmailRegExp),
+  "groupId": zod.string()
+})
+
+export const createInvitationResponseEmailRegExp = new RegExp('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$');
+
+
+export const CreateInvitationResponse = zod.object({
+  "id": zod.string(),
+  "email": zod.string().regex(createInvitationResponseEmailRegExp),
+  "groupId": zod.string(),
+  "role": zod.string(),
+  "status": zod.enum(['invited']),
+  "expiresAt": zod.coerce.date()
+})
+
+
+export const GetPublicVideoParams = zod.object({
+  "videoId": zod.coerce.string()
+})
+
+export const GetPublicVideoResponse = zod.object({
+  "id": zod.string(),
+  "title": zod.string(),
+  "description": zod.string(),
+  "status": zod.enum(['created', 'uploading', 'processing', 'ready', 'error']),
+  "visibility": zod.enum(['unlisted', 'public']),
+  "durationSeconds": zod.number(),
+  "thumbnailColor": zod.string(),
+  "playerAccent": zod.string(),
+  "sourceUrl": zod.string().optional()
+})
+
+
+export const createPlaybackEventsBodyEventsItemPositionSecondsMin = 0;
+
+export const createPlaybackEventsBodyEventsMax = 50;
+
+
+
+export const CreatePlaybackEventsBody = zod.object({
+  "events": zod.array(zod.object({
+  "videoId": zod.string(),
+  "sessionId": zod.string(),
+  "eventType": zod.enum(['load', 'play', 'progress', 'pause', 'ended', 'error']),
+  "positionSeconds": zod.number().min(createPlaybackEventsBodyEventsItemPositionSecondsMin),
+  "occurredAt": zod.coerce.date()
+})).min(1).max(createPlaybackEventsBodyEventsMax)
+})
+
+export const CreatePlaybackEventsResponse = zod.object({
+  "accepted": zod.number()
+})
 
 

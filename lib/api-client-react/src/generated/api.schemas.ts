@@ -9,6 +9,11 @@ export interface HealthStatus {
   status: string;
 }
 
+export interface RuntimeConfig {
+  productName: string;
+  appDomain: string;
+}
+
 export interface Workspace {
   id: string;
   name: string;
@@ -117,8 +122,150 @@ export interface ActivityItem {
   createdAt: string;
 }
 
+export interface PermissionGroup {
+  id: string;
+  name: string;
+  description: string;
+  permissions: string[];
+}
+
+export interface PermissionGroupInput {
+  /**
+     * @minLength 1
+     * @maxLength 80
+     */
+  name: string;
+  /** @maxLength 240 */
+  description: string;
+  permissions: string[];
+}
+
+export interface Permission {
+  key: string;
+  description: string;
+}
+
+export type MemberStatus = typeof MemberStatus[keyof typeof MemberStatus];
+
+
+export const MemberStatus = {
+  invited: 'invited',
+  active: 'active',
+  suspended: 'suspended',
+} as const;
+
+export interface Member {
+  id: string;
+  name: string;
+  /** @pattern ^[^@\s]+@[^@\s]+\.[^@\s]+$ */
+  email: string;
+  groupId: string;
+  role: string;
+  status: MemberStatus;
+}
+
+export type MemberUpdateStatus = typeof MemberUpdateStatus[keyof typeof MemberUpdateStatus];
+
+
+export const MemberUpdateStatus = {
+  active: 'active',
+  suspended: 'suspended',
+} as const;
+
+export interface MemberUpdate {
+  groupId?: string;
+  status?: MemberUpdateStatus;
+}
+
+export interface InvitationInput {
+  /** @pattern ^[^@\s]+@[^@\s]+\.[^@\s]+$ */
+  email: string;
+  groupId: string;
+}
+
+export type InvitationStatus = typeof InvitationStatus[keyof typeof InvitationStatus];
+
+
+export const InvitationStatus = {
+  invited: 'invited',
+} as const;
+
+export interface Invitation {
+  id: string;
+  /** @pattern ^[^@\s]+@[^@\s]+\.[^@\s]+$ */
+  email: string;
+  groupId: string;
+  role: string;
+  status: InvitationStatus;
+  expiresAt: string;
+}
+
+export type PublicVideoStatus = typeof PublicVideoStatus[keyof typeof PublicVideoStatus];
+
+
+export const PublicVideoStatus = {
+  created: 'created',
+  uploading: 'uploading',
+  processing: 'processing',
+  ready: 'ready',
+  error: 'error',
+} as const;
+
+export type PublicVideoVisibility = typeof PublicVideoVisibility[keyof typeof PublicVideoVisibility];
+
+
+export const PublicVideoVisibility = {
+  unlisted: 'unlisted',
+  public: 'public',
+} as const;
+
+export interface PublicVideo {
+  id: string;
+  title: string;
+  description: string;
+  status: PublicVideoStatus;
+  visibility: PublicVideoVisibility;
+  durationSeconds: number;
+  thumbnailColor: string;
+  playerAccent: string;
+  sourceUrl?: string;
+}
+
+export type PlaybackEventInputEventType = typeof PlaybackEventInputEventType[keyof typeof PlaybackEventInputEventType];
+
+
+export const PlaybackEventInputEventType = {
+  load: 'load',
+  play: 'play',
+  progress: 'progress',
+  pause: 'pause',
+  ended: 'ended',
+  error: 'error',
+} as const;
+
+export interface PlaybackEventInput {
+  videoId: string;
+  sessionId: string;
+  eventType: PlaybackEventInputEventType;
+  /** @minimum 0 */
+  positionSeconds: number;
+  occurredAt: string;
+}
+
+export interface PlaybackEventBatch {
+  /**
+     * @minItems 1
+     * @maxItems 50
+     */
+  events: PlaybackEventInput[];
+}
+
 export type ListVideosParams = {
 search?: string;
 status?: string;
+};
+
+export type CreatePlaybackEvents202 = {
+  accepted: number;
 };
 

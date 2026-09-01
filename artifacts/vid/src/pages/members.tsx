@@ -1,4 +1,12 @@
 import { useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
+import {
+  getListMembersQueryKey,
+  useCreateInvitation,
+  useListMembers,
+  useListPermissionGroups,
+  type PermissionGroup,
+} from "@workspace/api-client-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -7,19 +15,14 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Users, UserPlus, MoreHorizontal, Search } from "lucide-react"
+import { UserPlus, MoreHorizontal, Search } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 
-// Mocked local state to satisfy honest UI without an API endpoint
-const initialMembers = [
-  { id: "1", name: "Alice Administrator", email: "alice@example.com", role: "Owner", status: "Active" },
-  { id: "2", name: "Bob Editor", email: "bob@example.com", role: "Editor", status: "Active" },
-  { id: "3", name: "Charlie Viewer", email: "charlie@example.com", role: "Viewer", status: "Invited" },
-]
-
 export default function Members() {
-  const [members, setMembers] = useState(initialMembers)
   const [search, setSearch] = useState("")
+  const membersQuery = useListMembers()
+  const groupsQuery = useListPermissionGroups()
+  const members = membersQuery.data ?? []
   
   const filtered = members.filter(m => 
     m.name.toLowerCase().includes(search.toLowerCase()) || 
@@ -33,7 +36,7 @@ export default function Members() {
           <h1 className="text-3xl font-bold tracking-tight">Members</h1>
           <p className="text-muted-foreground mt-1">Manage team access and roles for this workspace.</p>
         </div>
-        <InviteDialog onInvite={(m) => setMembers([...members, m])} />
+        <InviteDialog groups={groupsQuery.data ?? []} />
       </div>
 
       <div className="flex items-center gap-4 mb-6">
@@ -59,7 +62,19 @@ export default function Members() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.length ? filtered.map((member) => (
+            {membersQuery.isLoading ? (
+              <TableRow>
+                <TableCell colSpan={4} className="h-32 text-center text-muted-foreground">
+                  Loading members…
+                </TableCell>
+              </TableRow>
+            ) : membersQuery.isError ? (
+              <TableRow>
+                <TableCell colSpan={4} className="h-32 text-center text-destructive">
+                  Members could not be loaded.
+                </TableCell>
+              </TableRow>
+            ) : filtered.length ? filtered.map((member) => (
               <TableRow key={member.id}>
                 <TableCell>
                   <div className="flex items-center gap-3">
@@ -78,8 +93,8 @@ export default function Members() {
                   <Badge variant="outline">{member.role}</Badge>
                 </TableCell>
                 <TableCell>
-                  <Badge variant={member.status === 'Active' ? 'success' : 'secondary'}>
-                    {member.status}
+                  <Badge variant={member.status === 'active' ? 'success' : 'secondary'}>
+                    {member.status.charAt(0).toUpperCase() + member.status.slice(1)}
                   </Badge>
                 </TableCell>
                 <TableCell>
@@ -102,26 +117,31 @@ export default function Members() {
   )
 }
 
-function InviteDialog({ onInvite }: { onInvite: (m: any) => void }) {
+function InviteDialog({ groups }: { groups: PermissionGroup[] }) {
   const [open, setOpen] = useState(false)
   const [email, setEmail] = useState("")
-  const [role, setRole] = useState("Editor")
+  const [groupId, setGroupId] = useState("")
   const { toast } = useToast()
+  const queryClient = useQueryClient()
+  const invitation = useCreateInvitation({
+    mutation: {
+      onSuccess: (created) => {
+        void queryClient.invalidateQueries({ queryKey: getListMembersQueryKey() })
+        toast({ title: "Invitation created", description: `Invited ${created.email} as ${created.role}.` })
+        setOpen(false)
+        setEmail("")
+        setGroupId("")
+      },
+      onError: () => {
+        toast({ title: "Invitation failed", description: "Check the address and permission group, then try again.", variant: "destructive" })
+      },
+    },
+  })
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!email) return
-    onInvite({
-      id: Math.random().toString(),
-      name: email.split('@')[0], // placeholder name
-      email,
-      role,
-      status: "Invited"
-    })
-    toast({ title: "Invitation sent", description: `Invited ${email} as ${role}.` })
-    setOpen(false)
-    setEmail("")
-    setRole("Editor")
+    if (!email || !groupId) return
+    invitation.mutate({ data: { email, groupId } })
   }
 
   return (
@@ -149,22 +169,24 @@ function InviteDialog({ onInvite }: { onInvite: (m: any) => void }) {
               />
             </div>
             <div className="space-y-2">
-              <Label>Role</Label>
-              <Select value={role} onValueChange={setRole}>
+              <Label>Permission group</Label>
+              <Select value={groupId} onValueChange={setGroupId}>
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue placeholder="Choose a group" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Admin">Admin</SelectItem>
-                  <SelectItem value="Editor">Editor</SelectItem>
-                  <SelectItem value="Viewer">Viewer</SelectItem>
+                  {groups.map((group) => (
+                    <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button type="submit" disabled={!email}>Send Invite</Button>
+            <Button type="submit" disabled={!email || !groupId || invitation.isPending}>
+              {invitation.isPending ? "Creating…" : "Create invitation"}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>
