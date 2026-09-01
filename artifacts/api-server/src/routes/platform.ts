@@ -21,8 +21,8 @@ const router: IRouter = Router();
 
 let workspace = {
   id: "a23d95cc-33a5-4ca9-8220-cd2192bf86e8",
-  name: "Northstar Media",
-  slug: "northstar",
+  name: "Vid",
+  slug: "vid",
   plan: "Growth",
   memberCount: 14,
   storageUsedGb: 286.4,
@@ -97,7 +97,7 @@ const videos: VideoRecord[] = [
 
 const activity = [
   { id: "1", action: "published", subject: "Launch film — Cut 04", actor: "Maya Chen", createdAt: new Date("2026-09-01T13:42:00.000Z") },
-  { id: "2", action: "updated player styling for", subject: "Northstar Media", actor: "Jason Roach", createdAt: new Date("2026-09-01T12:18:00.000Z") },
+  { id: "2", action: "updated player styling for", subject: "Vid", actor: "Jason Roach", createdAt: new Date("2026-09-01T12:18:00.000Z") },
   { id: "3", action: "uploaded", subject: "Product walkthrough", actor: "Elena Torres", createdAt: new Date("2026-08-31T19:42:00.000Z") },
   { id: "4", action: "copied embed code for", subject: "Customer story: Field Notes", actor: "Maya Chen", createdAt: new Date("2026-08-31T16:09:00.000Z") },
 ];
