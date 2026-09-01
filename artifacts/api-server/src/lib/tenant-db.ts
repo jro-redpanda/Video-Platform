@@ -7,11 +7,12 @@ export type TenantTransaction = Parameters<Parameters<typeof db.transaction>[0]>
 export async function withTenantDb<T>(
   tenant: TenantContext,
   operation: (tx: TenantTransaction) => Promise<T>,
+  options?: { isolationLevel?: "repeatable read" },
 ): Promise<T> {
   return db.transaction(async (tx) => {
     await tx.execute(sql.raw("set local role vid_app"));
     await tx.execute(sql`select set_config('app.organization_id', ${tenant.organizationId}, true)`);
     await tx.execute(sql`select set_config('app.user_id', ${tenant.userId}, true)`);
     return operation(tx);
-  });
+  }, options);
 }

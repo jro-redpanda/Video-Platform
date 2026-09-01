@@ -28,6 +28,7 @@ export const GetWorkspaceResponse = zod.object({
   "storageUsedGb": zod.number(),
   "storageLimitGb": zod.number(),
   "entitlements": zod.record(zod.string(), zod.union([zod.boolean(),zod.number(),zod.string()])),
+  "permissions": zod.array(zod.string()),
   "playerAccent": zod.string(),
   "playerControlForeground": zod.string(),
   "playerControlBackground": zod.string(),
@@ -75,6 +76,7 @@ export const UpdateWorkspaceResponse = zod.object({
   "storageUsedGb": zod.number(),
   "storageLimitGb": zod.number(),
   "entitlements": zod.record(zod.string(), zod.union([zod.boolean(),zod.number(),zod.string()])),
+  "permissions": zod.array(zod.string()),
   "playerAccent": zod.string(),
   "playerControlForeground": zod.string(),
   "playerControlBackground": zod.string(),
@@ -105,12 +107,31 @@ export const GetDashboardResponse = zod.object({
 })
 
 
+export const listVideosQuerySearchMax = 500;
+
+export const listVideosQuerySortDefault = `newest`;
+export const listVideosQueryLimitDefault = 24;
+export const listVideosQueryLimitMax = 100;
+
+export const listVideosQueryCursorMax = 2048;
+
+
+
 export const ListVideosQueryParams = zod.object({
-  "search": zod.coerce.string().optional(),
-  "status": zod.coerce.string().optional()
+  "search": zod.coerce.string().max(listVideosQuerySearchMax).optional(),
+  "status": zod.enum(['created', 'uploading', 'processing', 'ready', 'error']).optional(),
+  "visibility": zod.enum(['private', 'unlisted', 'public']).optional(),
+  "sort": zod.enum(['newest', 'oldest', 'title_asc', 'title_desc', 'plays_desc']).default(listVideosQuerySortDefault),
+  "limit": zod.coerce.number().int().min(1).max(listVideosQueryLimitMax).default(listVideosQueryLimitDefault),
+  "cursor": zod.coerce.string().min(1).max(listVideosQueryCursorMax).optional()
 })
 
-export const ListVideosResponseItem = zod.object({
+export const listVideosResponseTotalMin = 0;
+
+
+
+export const ListVideosResponse = zod.object({
+  "items": zod.array(zod.object({
   "id": zod.string(),
   "title": zod.string(),
   "description": zod.string(),
@@ -133,8 +154,10 @@ export const ListVideosResponseItem = zod.object({
   "duration": zod.string(),
   "thumbnailUrl": zod.string().optional()
 }).optional()
+})),
+  "nextCursor": zod.string().nullable(),
+  "total": zod.number().min(listVideosResponseTotalMin)
 })
-export const ListVideosResponse = zod.array(ListVideosResponseItem)
 
 
 export const initializeVideoUploadHeaderIdempotencyKeyMin = 16;
@@ -252,6 +275,13 @@ export const UpdateVideoResponse = zod.object({
   "thumbnailUrl": zod.string().optional()
 }).optional()
 })
+
+
+export const DeleteVideoParams = zod.object({
+  "videoId": zod.coerce.string()
+})
+
+export const DeleteVideoResponse = zod.void()
 
 
 export const GetAuthenticatedVideoPlaybackParams = zod.object({

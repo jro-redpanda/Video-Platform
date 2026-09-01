@@ -8,14 +8,15 @@ import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import type { ProvisioningProviderResolver } from "./provider-registry";
 
 const groups = [
-  { name: "Owners", description: "Full workspace access", permissions: ["workspace.manage", "videos.read", "videos.create", "videos.update", "members.manage", "analytics.read"] },
-  { name: "Editors", description: "Create and manage videos", permissions: ["videos.read", "videos.create", "videos.update", "analytics.read"] },
+  { name: "Owners", description: "Full workspace access", permissions: ["workspace.manage", "videos.read", "videos.create", "videos.update", "videos.delete", "members.manage", "analytics.read"] },
+  { name: "Editors", description: "Create and manage videos", permissions: ["videos.read", "videos.create", "videos.update", "videos.delete", "analytics.read"] },
   { name: "Viewers", description: "View videos and analytics", permissions: ["videos.read", "analytics.read"] },
 ] as const;
 
 const catalog = [
   ["workspace.manage", "Manage workspace settings and branding"], ["videos.read", "View the video library"],
   ["videos.create", "Create videos and upload media"], ["videos.update", "Edit video metadata and visibility"],
+  ["videos.delete", "Delete videos and provider media"],
   ["members.manage", "Invite, suspend, and assign members"], ["analytics.read", "View workspace analytics"],
 ] as const;
 

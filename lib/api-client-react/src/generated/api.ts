@@ -37,6 +37,7 @@ import type {
   PublicVideo,
   RuntimeConfig,
   Video,
+  VideoList,
   VideoUpdate,
   VideoUploadInitialization,
   VideoUploadInput,
@@ -435,9 +436,9 @@ export const getListVideosUrl = (params?: ListVideosParams,) => {
   return stringifiedParams.length > 0 ? `/api/videos?${stringifiedParams}` : `/api/videos`
 }
 
-export const listVideos = async (params?: ListVideosParams, options?: Parameters<typeof customFetch>[1]): Promise<Video[]> => {
+export const listVideos = async (params?: ListVideosParams, options?: Parameters<typeof customFetch>[1]): Promise<VideoList> => {
 
-  return customFetch<Video[]>(getListVideosUrl(params),
+  return customFetch<VideoList>(getListVideosUrl(params),
   {
     ...options,
     method: 'GET'
@@ -698,6 +699,71 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
         TContext
       > => {
       return useMutation(getUpdateVideoMutationOptions(options));
+    }
+
+export const getDeleteVideoUrl = (videoId: string,) => {
+
+
+
+
+  return `/api/videos/${videoId}`
+}
+
+export const deleteVideo = async (videoId: string, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeleteVideoUrl(videoId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteVideoMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteVideo>>, TError,{videoId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteVideo>>, TError,{videoId: string}, TContext> => {
+
+const mutationKey = ['deleteVideo'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteVideo>>, {videoId: string}> = (props) => {
+          const {videoId} = props ?? {};
+
+          return  deleteVideo(videoId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteVideoMutationResult = NonNullable<Awaited<ReturnType<typeof deleteVideo>>>
+
+    export type DeleteVideoMutationError = ErrorType<unknown>
+
+    export const useDeleteVideo = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteVideo>>, TError,{videoId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteVideo>>,
+        TError,
+        {videoId: string},
+        TContext
+      > => {
+      return useMutation(getDeleteVideoMutationOptions(options));
     }
 
 export const getGetAuthenticatedVideoPlaybackUrl = (videoId: string,) => {

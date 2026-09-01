@@ -13,7 +13,7 @@ import {
   videoEmbedsTable,
   videosTable,
 } from "@workspace/db";
-import { sql } from "drizzle-orm";
+import { and, eq, or, sql } from "drizzle-orm";
 import { runtimeConfig } from "./config";
 import { EMBED_GENERATION_VERSION } from "./video-embeds";
 
@@ -31,6 +31,7 @@ const permissionCatalog = [
   ["videos.read", "View the video library"],
   ["videos.create", "Create videos and upload media"],
   ["videos.update", "Edit video metadata and visibility"],
+  ["videos.delete", "Delete videos and provider media"],
   ["members.manage", "Invite, suspend, and assign members"],
   ["analytics.read", "View workspace analytics"],
 ] as const;
@@ -40,6 +41,7 @@ export async function bootstrapDevelopmentTenant() {
   // Security initialization is required in every environment; only fixtures
   // below are development-only.
   await ensureTenantIsolation();
+  await reconcileSystemVideoDeletePermission();
   if (process.env.NODE_ENV === "production") return;
 
   await db.transaction(async (tx) => {
@@ -140,7 +142,7 @@ export async function bootstrapDevelopmentTenant() {
           groupId: developmentTenant.groupId,
           permissionKey,
         })),
-        ...["videos.read", "videos.create", "videos.update", "analytics.read"].map((permissionKey) => ({
+        ...["videos.read", "videos.create", "videos.update", "videos.delete", "analytics.read"].map((permissionKey) => ({
           groupId: developmentTenant.editorGroupId,
           permissionKey,
         })),
@@ -205,6 +207,27 @@ export async function bootstrapDevelopmentTenant() {
     ]).onConflictDoNothing();
   });
 
+}
+
+/**
+ * Backfills only the canonical seeded Owner/Editor groups. Exact name and
+ * description matching deliberately avoids changing custom groups.
+ */
+export async function reconcileSystemVideoDeletePermission() {
+  await db.transaction(async (tx) => {
+    await tx.insert(permissionsTable).values({
+      key: "videos.delete", description: "Delete videos and provider media",
+    }).onConflictDoNothing();
+    const groups = await tx.select({ id: permissionGroupsTable.id }).from(permissionGroupsTable).where(or(
+      and(eq(permissionGroupsTable.name, "Owners"), eq(permissionGroupsTable.description, "Full workspace access")),
+      and(eq(permissionGroupsTable.name, "Editors"), eq(permissionGroupsTable.description, "Create and manage videos")),
+    ));
+    if (groups.length) {
+      await tx.insert(groupPermissionsTable).values(
+        groups.map(({ id }) => ({ groupId: id, permissionKey: "videos.delete" })),
+      ).onConflictDoNothing();
+    }
+  });
 }
 
 const tenantTables = [

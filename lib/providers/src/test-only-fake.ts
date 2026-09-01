@@ -11,6 +11,7 @@ export class Step7SmokeVideoProvider implements VideoProvider {
   private readonly spaces = new Map<string, TenantSpace>();
   createAssetCalls = 0;
   deleteAssetCalls = 0;
+  failNextDeleteAfterAcceptance = false;
 
   async createTenantSpace(input: { name: string }): Promise<TenantSpace> {
     const idempotencyKey = input.name;
@@ -34,7 +35,13 @@ export class Step7SmokeVideoProvider implements VideoProvider {
     };
   }
   async getAssetStatus(_space: TenantSpace, _asset: Asset): Promise<AssetStatus> { throw new Error("Test-only provider does not simulate status polling"); }
-  async deleteAsset(_space: TenantSpace, _asset: Asset) { this.deleteAssetCalls += 1; }
+  async deleteAsset(_space: TenantSpace, _asset: Asset) {
+    this.deleteAssetCalls += 1;
+    if (this.failNextDeleteAfterAcceptance) {
+      this.failNextDeleteAfterAcceptance = false;
+      throw new Error("Test-only ambiguous deletion outcome");
+    }
+  }
   async getPlaybackSources(_space: TenantSpace, asset: Asset): Promise<PlaybackSources> {
     const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
     return {

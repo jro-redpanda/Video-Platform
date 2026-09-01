@@ -34,6 +34,7 @@ export interface Workspace {
   storageUsedGb: number;
   storageLimitGb: number;
   entitlements: WorkspaceEntitlements;
+  permissions: string[];
   playerAccent: string;
   playerControlForeground: string;
   playerControlBackground: string;
@@ -169,6 +170,14 @@ export interface Video {
   embedPath?: string;
   embedCode?: string;
   videoObject?: VideoObject;
+}
+
+export interface VideoList {
+  items: Video[];
+  /** @nullable */
+  nextCursor: string | null;
+  /** @minimum 0 */
+  total: number;
 }
 
 export interface VideoUploadInput {
@@ -466,9 +475,55 @@ export interface PlaybackEventBatch {
 }
 
 export type ListVideosParams = {
+/**
+ * @maxLength 500
+ */
 search?: string;
-status?: string;
+status?: ListVideosStatus;
+visibility?: ListVideosVisibility;
+sort?: ListVideosSort;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minLength 1
+ * @maxLength 2048
+ */
+cursor?: string;
 };
+
+export type ListVideosStatus = typeof ListVideosStatus[keyof typeof ListVideosStatus];
+
+
+export const ListVideosStatus = {
+  created: 'created',
+  uploading: 'uploading',
+  processing: 'processing',
+  ready: 'ready',
+  error: 'error',
+} as const;
+
+export type ListVideosVisibility = typeof ListVideosVisibility[keyof typeof ListVideosVisibility];
+
+
+export const ListVideosVisibility = {
+  private: 'private',
+  unlisted: 'unlisted',
+  public: 'public',
+} as const;
+
+export type ListVideosSort = typeof ListVideosSort[keyof typeof ListVideosSort];
+
+
+export const ListVideosSort = {
+  newest: 'newest',
+  oldest: 'oldest',
+  title_asc: 'title_asc',
+  title_desc: 'title_desc',
+  plays_desc: 'plays_desc',
+} as const;
 
 export type CreatePlaybackEvents202 = {
   accepted: number;

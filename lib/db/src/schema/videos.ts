@@ -43,6 +43,9 @@ export const videosTable = pgTable("videos", {
   reservationExpiresAt: timestamp("reservation_expires_at", { withTimezone: true }),
   assetCreationClaim: uuid("asset_creation_claim"),
   assetCreationClaimedAt: timestamp("asset_creation_claimed_at", { withTimezone: true }),
+  /** Durable claim preventing retries of an ambiguously completed provider deletion. */
+  deletionClaim: uuid("deletion_claim"),
+  deletionClaimedAt: timestamp("deletion_claimed_at", { withTimezone: true }),
   reconciliationRequired: text("reconciliation_required"),
   /** Set only for safe-to-repeat initialization failures; terminal flows clear it. */
   initializationRetryable: boolean("initialization_retryable").notNull().default(false),

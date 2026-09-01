@@ -17,6 +17,7 @@ export interface Workspace {
   storageUsedGb: number;
   storageLimitGb: number;
   entitlements: WorkspaceEntitlements;
+  permissions: string[];
   playerAccent: string;
   playerControlForeground: string;
   playerControlBackground: string;

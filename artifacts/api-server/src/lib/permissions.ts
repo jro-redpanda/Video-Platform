@@ -8,6 +8,7 @@ export type Permission =
   | "videos.read"
   | "videos.create"
   | "videos.update"
+  | "videos.delete"
   | "members.manage"
   | "analytics.read";
 

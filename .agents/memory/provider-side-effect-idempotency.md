@@ -14,3 +14,9 @@ Outbox dispatch must use a deterministic queue job ID. Automatic repair is allow
 **Why:** After queue retention expires, absence of the old job no longer proves it was never accepted or executed.
 
 **How to apply:** Keep the repair horizon shorter than queue retention and route older stale dispatch claims to reconciliation. Downstream external writes should also be idempotent.
+
+Persist a deletion claim before asking a provider to delete an asset. Delete owned metadata only after provider deletion is confirmed; an ambiguous provider outcome keeps the owned record and enters reconciliation instead of retrying.
+
+**Why:** Repeating an ambiguously completed provider delete can hide a real external success behind a later not-found response, while deleting local metadata first destroys the information needed to reconcile.
+
+**How to apply:** Provider-backed delete flows are provider-first and fail closed. Local-only records may be deleted transactionally without an external claim.

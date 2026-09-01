@@ -5,8 +5,26 @@
  * Multi-tenant video platform API
  * OpenAPI spec version: 0.1.0
  */
+import type { ListVideosSort } from './listVideosSort';
+import type { ListVideosStatus } from './listVideosStatus';
+import type { ListVideosVisibility } from './listVideosVisibility';
 
 export type ListVideosParams = {
+/**
+ * @maxLength 500
+ */
 search?: string;
-status?: string;
+status?: ListVideosStatus;
+visibility?: ListVideosVisibility;
+sort?: ListVideosSort;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minLength 1
+ * @maxLength 2048
+ */
+cursor?: string;
 };

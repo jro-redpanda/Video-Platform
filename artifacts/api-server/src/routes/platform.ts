@@ -1,9 +1,11 @@
-import { and, desc, eq, ilike, sql } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
+import { and, asc, desc, eq, gt, lt, lte, or, sql, type SQL } from "drizzle-orm";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter } from "express";
 import { runtimeConfig } from "../lib/config";
 import {
   auditLogsTable,
+  embedGenerationOutboxTable,
+  groupPermissionsTable,
   membershipsTable,
   organizationCustomizationTable,
   organizationsTable,
@@ -14,6 +16,7 @@ import {
   videoAnalyticsRollupsTable,
   videoEmbedsTable,
   videosTable,
+  webhookEventsTable,
 } from "@workspace/db";
 import {
   GetDashboardResponse,
@@ -42,10 +45,15 @@ import { serializeEmbed, trustedRequestOrigin } from "../lib/video-embeds";
 
 const router: IRouter = Router();
 const videoStatuses = ["created", "uploading", "processing", "ready", "error"] as const;
-
-function isVideoStatus(value: string): value is (typeof videoStatuses)[number] {
-  return videoStatuses.includes(value as (typeof videoStatuses)[number]);
-}
+const videoVisibilities = ["private", "unlisted", "public"] as const;
+const videoSorts = ["newest", "oldest", "title_asc", "title_desc", "plays_desc"] as const;
+type VideoSort = (typeof videoSorts)[number];
+const sessionSecret = process.env.SESSION_SECRET;
+if (!sessionSecret) throw new Error("SESSION_SECRET is required");
+const cursorSigningKey = createHmac("sha256", sessionSecret)
+  .update("video-library-cursor:v1")
+  .digest();
+const cursorLifetimeMs = 15 * 60 * 1000;
 
 const videoProjection = {
   id: videosTable.id,
@@ -80,7 +88,9 @@ async function readVideo(tx: TenantTransaction, organizationId: string, videoId:
 }
 
 router.get("/workspace", async (req, res) => {
-  const workspace = await withTenantDb(req.tenant, (tx) => fetchWorkspace(tx, req.tenant.organizationId));
+  const workspace = await withTenantDb(req.tenant, (tx) => fetchWorkspace(
+    tx, req.tenant.organizationId, req.tenant.userId,
+  ));
 
   if (!workspace) return void res.status(404).json({ error: "Workspace not found" });
   res.json(GetWorkspaceResponse.parse(workspace));
@@ -152,12 +162,12 @@ router.patch("/workspace", requirePermission("workspace.manage"), async (req, re
       subjectId: req.tenant.organizationId,
       subjectLabel: update.name ?? runtimeConfig.productName,
     });
-    return fetchWorkspace(tx, req.tenant.organizationId);
+    return fetchWorkspace(tx, req.tenant.organizationId, req.tenant.userId);
   });
   res.json(UpdateWorkspaceResponse.parse(response));
 });
 
-async function fetchWorkspace(tx: TenantTransaction, organizationId: string) {
+async function fetchWorkspace(tx: TenantTransaction, organizationId: string, userId: string) {
   const [workspace] = await tx.select({
     id: organizationsTable.id,
     name: organizationsTable.name,
@@ -182,7 +192,20 @@ async function fetchWorkspace(tx: TenantTransaction, organizationId: string) {
     .where(eq(organizationsTable.id, organizationId))
     .groupBy(organizationsTable.id, plansTable.id, organizationCustomizationTable.organizationId);
   if (!workspace) return undefined;
-  return { ...workspace, entitlements: await resolveEntitlements(tx, organizationId) };
+  const permissions = await tx.select({ key: groupPermissionsTable.permissionKey })
+    .from(membershipsTable)
+    .innerJoin(groupPermissionsTable, eq(groupPermissionsTable.groupId, membershipsTable.groupId))
+    .where(and(
+      eq(membershipsTable.organizationId, organizationId),
+      eq(membershipsTable.userId, userId),
+      eq(membershipsTable.status, "active"),
+    ))
+    .orderBy(asc(groupPermissionsTable.permissionKey));
+  return {
+    ...workspace,
+    entitlements: await resolveEntitlements(tx, organizationId),
+    permissions: permissions.map(({ key }) => key),
+  };
 }
 
 function contrastRatio(foreground: string, background: string) {
@@ -230,20 +253,162 @@ router.get("/dashboard", requirePermission("analytics.read"), async (req, res) =
 });
 
 router.get("/videos", requirePermission("videos.read"), async (req, res) => {
-  const query = ListVideosQueryParams.parse(req.query);
-  const conditions = [eq(videosTable.organizationId, req.tenant.organizationId)];
-  if (query.search) conditions.push(ilike(videosTable.title, `%${query.search}%`));
-  if (query.status && isVideoStatus(query.status)) {
-    conditions.push(eq(videosTable.status, query.status));
+  const parsedQuery = ListVideosQueryParams.safeParse(req.query);
+  if (!parsedQuery.success) {
+    res.status(400).json({ error: "Invalid video library query parameters." });
+    return;
   }
+  const query = parsedQuery.data;
+  const search = query.search?.trim() || undefined;
+  const sort: VideoSort = query.sort ?? "newest";
+  const limit = query.limit ?? 24;
+  const conditions = [eq(videosTable.organizationId, req.tenant.organizationId)];
+  if (search) {
+    const pattern = `%${search.replace(/[\\%_]/g, "\\$&")}%`;
+    conditions.push(or(
+      sql`${videosTable.title} ilike ${pattern} escape '\'`,
+      sql`${videosTable.description} ilike ${pattern} escape '\'`,
+    )!);
+  }
+  if (query.status) conditions.push(eq(videosTable.status, query.status));
+  if (query.visibility) conditions.push(eq(videosTable.visibility, query.visibility));
 
-  const result = await withTenantDb(req.tenant, (tx) => tx.select(videoProjection).from(videosTable)
+  let cursor: VideoCursor | undefined;
+  if (query.cursor) {
+    try {
+      cursor = decodeVideoCursor(query.cursor, {
+        sort, search: search ?? null, status: query.status ?? null, visibility: query.visibility ?? null,
+      }, req.tenant.organizationId);
+    } catch {
+      res.status(400).json({ error: "Malformed or incompatible video cursor." });
+      return;
+    }
+  }
+  const cursorCondition = cursor ? videoCursorCondition(cursor) : undefined;
+  const ordering = videoOrdering(sort);
+  const { rows, total, snapshotAt } = await withTenantDb(req.tenant, async (tx) => {
+    const snapshotValue = cursor?.snapshotAt ?? (await tx.select({
+      snapshotAt: sql<Date>`transaction_timestamp()`,
+    }).from(organizationsTable).where(eq(organizationsTable.id, req.tenant.organizationId)).limit(1))[0]!.snapshotAt;
+    const snapshotAt = snapshotValue instanceof Date ? snapshotValue : new Date(snapshotValue);
+    const snapshotConditions = [...conditions, lte(videosTable.createdAt, snapshotAt)];
+    const rows = await tx.select(videoProjection).from(videosTable)
       .leftJoin(videoAnalyticsRollupsTable, eq(videoAnalyticsRollupsTable.videoId, videosTable.id))
-      .where(and(...conditions))
+      .where(and(...snapshotConditions))
       .groupBy(videosTable.id)
-      .orderBy(desc(videosTable.createdAt)));
-  res.json(ListVideosResponse.parse(result));
+      .having(cursorCondition)
+      .orderBy(...ordering)
+      .limit(limit + 1);
+    const total = cursor?.total ?? (await tx.select({ total: sql<number>`count(*)::int` }).from(videosTable)
+      .where(and(...snapshotConditions)))[0]!.total;
+    return { rows, total, snapshotAt };
+  }, cursor ? undefined : { isolationLevel: "repeatable read" });
+  const hasNext = rows.length > limit;
+  const items = hasNext ? rows.slice(0, limit) : rows;
+  const nextCursor = hasNext && items.length
+    ? encodeVideoCursor(items[items.length - 1]!, {
+      sort, search: search ?? null, status: query.status ?? null, visibility: query.visibility ?? null,
+    }, snapshotAt, total, req.tenant.organizationId)
+    : null;
+  res.json(ListVideosResponse.parse({ items, nextCursor, total }));
 });
+
+type CursorScope = {
+  sort: VideoSort;
+  search: string | null;
+  status: (typeof videoStatuses)[number] | null;
+  visibility: (typeof videoVisibilities)[number] | null;
+};
+type VideoCursor = {
+  v: 1;
+  sort: VideoSort;
+  scopeHash: string;
+  snapshotAt: Date;
+  total: number;
+  key: string | number;
+  id: string;
+  expiresAt: number;
+};
+
+function videoOrdering(sort: VideoSort): SQL[] {
+  if (sort === "oldest") return [asc(videosTable.createdAt), asc(videosTable.id)];
+  if (sort === "title_asc") return [asc(videosTable.title), asc(videosTable.id)];
+  if (sort === "title_desc") return [desc(videosTable.title), desc(videosTable.id)];
+  if (sort === "plays_desc") {
+    return [desc(sql`coalesce(sum(${videoAnalyticsRollupsTable.plays}), 0)`), desc(videosTable.id)];
+  }
+  return [desc(videosTable.createdAt), desc(videosTable.id)];
+}
+
+function videoCursorCondition(cursor: VideoCursor): SQL {
+  if (cursor.sort === "plays_desc") {
+    const plays = sql`coalesce(sum(${videoAnalyticsRollupsTable.plays}), 0)`;
+    return or(lt(plays, cursor.key as number), and(eq(plays, cursor.key as number), lt(videosTable.id, cursor.id)))!;
+  }
+  const column = cursor.sort.startsWith("title") ? videosTable.title : videosTable.createdAt;
+  const key = cursor.sort.startsWith("title") ? cursor.key as string : new Date(cursor.key as string);
+  const ascending = cursor.sort === "oldest" || cursor.sort === "title_asc";
+  return or(
+    ascending ? gt(column, key) : lt(column, key),
+    and(eq(column, key), ascending ? gt(videosTable.id, cursor.id) : lt(videosTable.id, cursor.id)),
+  )!;
+}
+
+function encodeVideoCursor(
+  row: { id: string; title: string; createdAt: Date; plays: number },
+  scope: CursorScope,
+  snapshotAt: Date,
+  total: number,
+  organizationId: string,
+) {
+  const key = scope.sort === "plays_desc"
+    ? row.plays
+    : scope.sort.startsWith("title") ? row.title : row.createdAt.toISOString();
+  const payload = Buffer.from(JSON.stringify({
+    v: 1, scopeHash: hashCursorScope(scope, organizationId), snapshotAt: snapshotAt.toISOString(),
+    total, key, id: row.id, expiresAt: Date.now() + cursorLifetimeMs,
+  }), "utf8").toString("base64url");
+  const signature = createHmac("sha256", cursorSigningKey).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function decodeVideoCursor(value: string, scope: CursorScope, organizationId: string): VideoCursor {
+  const [encodedPayload, encodedSignature, extra] = value.split(".");
+  if (extra !== undefined || !encodedPayload || !encodedSignature ||
+    !/^[A-Za-z0-9_-]+$/.test(encodedPayload) || !/^[A-Za-z0-9_-]+$/.test(encodedSignature)) {
+    throw new Error("Invalid cursor encoding");
+  }
+  const expectedSignature = createHmac("sha256", cursorSigningKey).update(encodedPayload).digest();
+  const receivedSignature = Buffer.from(encodedSignature, "base64url");
+  if (receivedSignature.toString("base64url") !== encodedSignature ||
+    receivedSignature.length !== expectedSignature.length ||
+    !timingSafeEqual(receivedSignature, expectedSignature)) throw new Error("Invalid cursor signature");
+  const decoded = Buffer.from(encodedPayload, "base64url");
+  if (decoded.toString("base64url") !== encodedPayload) throw new Error("Non-canonical cursor encoding");
+  const parsed = JSON.parse(decoded.toString("utf8")) as Partial<VideoCursor>;
+  if (
+    parsed.v !== 1 || parsed.scopeHash !== hashCursorScope(scope, organizationId) ||
+    typeof parsed.snapshotAt !== "string" || !Number.isFinite(new Date(parsed.snapshotAt).getTime()) ||
+    typeof parsed.total !== "number" || !Number.isSafeInteger(parsed.total) || parsed.total < 0 ||
+    typeof parsed.expiresAt !== "number" || !Number.isSafeInteger(parsed.expiresAt) || parsed.expiresAt < Date.now() ||
+    typeof parsed.id !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(parsed.id)
+  ) throw new Error("Invalid cursor payload");
+  if (scope.sort === "plays_desc") {
+    if (typeof parsed.key !== "number" || !Number.isSafeInteger(parsed.key) || parsed.key < 0) {
+      throw new Error("Invalid plays cursor");
+    }
+  } else if (typeof parsed.key !== "string" || (
+    !scope.sort.startsWith("title") && !Number.isFinite(new Date(parsed.key).getTime())
+  )) {
+    throw new Error("Invalid cursor key");
+  }
+  return { ...parsed, sort: scope.sort, snapshotAt: new Date(parsed.snapshotAt) } as VideoCursor;
+}
+
+function hashCursorScope(scope: CursorScope, organizationId: string) {
+  return createHash("sha256").update(JSON.stringify({ ...scope, organizationId })).digest("base64url");
+}
 
 // PRD video.upload maps to the existing Step 4 videos.create permission.
 router.post("/videos/upload-init", requirePermission("videos.create"), async (req, res) => {
@@ -640,6 +805,142 @@ router.patch("/videos/:videoId", requirePermission("videos.update"), async (req,
   if (!video) return void res.status(404).json({ error: "Video not found" });
   res.json(UpdateVideoResponse.parse(video));
 });
+
+router.delete("/videos/:videoId", requirePermission("videos.delete"), async (req, res) => {
+  const { videoId } = GetVideoParams.parse(req.params);
+  const organizationId = req.tenant.organizationId;
+  const video = await withTenantDb(req.tenant, async (tx) => {
+    const [row] = await tx.select().from(videosTable)
+      .where(scopedVideoWhere(organizationId, videoId)).limit(1);
+    return row;
+  });
+  if (!video) {
+    res.status(404).json({ error: "Video not found" });
+    return;
+  }
+  if (video.reconciliationRequired || video.deletionClaim) {
+    if (!video.reconciliationRequired && video.deletionClaim) {
+      await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
+        status: "error",
+        reconciliationRequired: "provider asset deletion outcome unknown",
+        uploadFailureDetail: "Deletion requires provider reconciliation.",
+        initializationRetryable: false,
+      }).where(scopedVideoWhere(organizationId, videoId)));
+    }
+    res.status(409).json({ error: "Video deletion requires provider reconciliation." });
+    return;
+  }
+
+  if (!video.providerAssetId) {
+    await withTenantDb(req.tenant, (tx) => deleteOwnedVideoMetadata(tx, organizationId, videoId));
+    res.sendStatus(204);
+    return;
+  }
+  if (!video.providerAccountId || !video.providerTenantSpaceId) {
+    await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
+      status: "error",
+      reconciliationRequired: "incomplete provider linkage prevents safe deletion",
+      uploadFailureDetail: "Deletion requires provider reconciliation.",
+      initializationRetryable: false,
+    }).where(scopedVideoWhere(organizationId, videoId)));
+    res.status(409).json({ error: "Video deletion requires provider reconciliation." });
+    return;
+  }
+
+  const claim = randomUUID();
+  const [claimed] = await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
+    deletionClaim: claim,
+    deletionClaimedAt: new Date(),
+  }).where(and(
+    scopedVideoWhere(organizationId, videoId),
+    sql`${videosTable.deletionClaim} is null`,
+    sql`${videosTable.reconciliationRequired} is null`,
+  )).returning({ id: videosTable.id }));
+  if (!claimed) {
+    res.status(409).json({ error: "Video deletion is already in progress or requires reconciliation." });
+    return;
+  }
+
+  const linkage = await withTenantDb(req.tenant, async (tx) => {
+    const [row] = await tx.select({ account: providerAccountsTable, space: providerTenantSpacesTable })
+      .from(providerTenantSpacesTable)
+      .innerJoin(providerAccountsTable, eq(providerAccountsTable.id, providerTenantSpacesTable.providerAccountId))
+      .where(and(
+        eq(providerTenantSpacesTable.organizationId, organizationId),
+        eq(providerTenantSpacesTable.providerAccountId, video.providerAccountId!),
+        eq(providerTenantSpacesTable.providerSpaceId, video.providerTenantSpaceId!),
+      )).limit(1);
+    return row;
+  });
+  if (!linkage) {
+    await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
+      deletionClaim: null, deletionClaimedAt: null,
+    }).where(and(scopedVideoWhere(organizationId, videoId), eq(videosTable.deletionClaim, claim))));
+    res.status(503).json({ error: "Video provider is unavailable." });
+    return;
+  }
+
+  let provider;
+  try {
+    provider = process.env.NODE_ENV === "test"
+      ? videoProviders.resolve(linkage.account.providerKey)
+      : await resolveProvisioningProvider(linkage.account, linkage.space);
+  } catch (error) {
+    await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
+      deletionClaim: null, deletionClaimedAt: null,
+    }).where(and(scopedVideoWhere(organizationId, videoId), eq(videosTable.deletionClaim, claim))));
+    req.log.error({ err: error, videoId }, "Video provider resolution failed before deletion");
+    res.status(503).json({ error: "Video provider is unavailable." });
+    return;
+  }
+
+  try {
+    await provider.deleteAsset({ id: video.providerTenantSpaceId }, { id: video.providerAssetId });
+  } catch (error) {
+    await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
+      status: "error",
+      reconciliationRequired: "provider asset deletion outcome unknown",
+      uploadFailureDetail: "Deletion requires provider reconciliation.",
+      initializationRetryable: false,
+    }).where(and(scopedVideoWhere(organizationId, videoId), eq(videosTable.deletionClaim, claim))));
+    req.log.error({ err: error, videoId }, "Video provider deletion outcome is ambiguous");
+    res.status(503).json({ error: "Video deletion could not be confirmed and requires reconciliation." });
+    return;
+  }
+
+  try {
+    await withTenantDb(req.tenant, (tx) => deleteOwnedVideoMetadata(tx, organizationId, videoId, claim));
+    res.sendStatus(204);
+  } catch (error) {
+    await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
+      status: "error",
+      reconciliationRequired: "provider asset deleted but local metadata deletion was not confirmed",
+      uploadFailureDetail: "Deletion requires provider reconciliation.",
+      initializationRetryable: false,
+    }).where(and(scopedVideoWhere(organizationId, videoId), eq(videosTable.deletionClaim, claim))));
+    req.log.error({ err: error, videoId }, "Local metadata deletion failed after provider deletion");
+    res.status(503).json({ error: "Video deletion could not be confirmed and requires reconciliation." });
+  }
+});
+
+async function deleteOwnedVideoMetadata(
+  tx: TenantTransaction,
+  organizationId: string,
+  videoId: string,
+  deletionClaim?: string,
+) {
+  await releaseReservationInTransaction(tx, organizationId, videoId);
+  await tx.delete(embedGenerationOutboxTable).where(eq(embedGenerationOutboxTable.videoId, videoId));
+  await tx.delete(webhookEventsTable).where(and(
+    eq(webhookEventsTable.organizationId, organizationId),
+    eq(webhookEventsTable.ownedVideoId, videoId),
+  ));
+  const condition = deletionClaim
+    ? and(scopedVideoWhere(organizationId, videoId), eq(videosTable.deletionClaim, deletionClaim))
+    : scopedVideoWhere(organizationId, videoId);
+  const [deleted] = await tx.delete(videosTable).where(condition).returning({ id: videosTable.id });
+  if (!deleted) throw new Error("Owned video deletion claim changed before metadata deletion");
+}
 
 router.get("/activity", async (req, res) => {
   const activity = await withTenantDb(req.tenant, (tx) => tx.select({

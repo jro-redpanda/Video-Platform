@@ -82,19 +82,43 @@ paths:
           name: search
           schema:
             type: string
+            maxLength: 500
         - in: query
           name: status
           schema:
             type: string
+            enum: [created, uploading, processing, ready, error]
+        - in: query
+          name: visibility
+          schema:
+            type: string
+            enum: [private, unlisted, public]
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum: [newest, oldest, title_asc, title_desc, plays_desc]
+            default: newest
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 24
+        - in: query
+          name: cursor
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
       responses:
         "200":
           description: Tenant video library
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Video"
+                $ref: "#/components/schemas/VideoList"
   /videos/upload-init:
     post:
       operationId: initializeVideoUpload
@@ -151,6 +175,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Video"
+    delete:
+      operationId: deleteVideo
+      tags: [videos]
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      responses:
+        "204":
+          description: Video deleted
   /videos/{videoId}/playback:
     get:
       operationId: getAuthenticatedVideoPlayback
@@ -413,7 +445,7 @@ components:
         appDomain: { type: string }
     Workspace:
       type: object
-      required: [id, name, slug, plan, memberCount, storageUsedGb, storageLimitGb, entitlements, playerAccent, playerControlForeground, playerControlBackground, logoInitials, logoObjectKey, watermarkObjectKey, posterTreatment, customDomain, customDomainVerified]
+      required: [id, name, slug, plan, memberCount, storageUsedGb, storageLimitGb, entitlements, permissions, playerAccent, playerControlForeground, playerControlBackground, logoInitials, logoObjectKey, watermarkObjectKey, posterTreatment, customDomain, customDomainVerified]
       properties:
         id: { type: string }
         name: { type: string }
@@ -429,6 +461,9 @@ components:
               - { type: boolean }
               - { type: number }
               - { type: string }
+        permissions:
+          type: array
+          items: { type: string }
         playerAccent: { type: string }
         playerControlForeground: { type: string }
         playerControlBackground: { type: string }
@@ -507,6 +542,19 @@ components:
         embedCode: { type: string }
         videoObject:
           $ref: "#/components/schemas/VideoObject"
+    VideoList:
+      type: object
+      required: [items, nextCursor, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Video"
+        nextCursor:
+          type: ["string", "null"]
+        total:
+          type: number
+          minimum: 0
     VideoObject:
       type: object
       required: ["@context", "@type", name, description, embedUrl, duration]
