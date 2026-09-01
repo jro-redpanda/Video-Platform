@@ -1,22 +1,21 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Multi-tenant video platform API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
-    description: Health operations
+  - name: dashboard
+  - name: videos
+  - name: workspace
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
-      summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +23,228 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /workspace:
+    get:
+      operationId: getWorkspace
+      tags: [workspace]
+      responses:
+        "200":
+          description: Current tenant workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+    patch:
+      operationId: updateWorkspace
+      tags: [workspace]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkspaceUpdate"
+      responses:
+        "200":
+          description: Updated workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+  /dashboard:
+    get:
+      operationId: getDashboard
+      tags: [dashboard]
+      responses:
+        "200":
+          description: Workspace dashboard
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dashboard"
+  /videos:
+    get:
+      operationId: listVideos
+      tags: [videos]
+      parameters:
+        - in: query
+          name: search
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Tenant video library
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Video"
+    post:
+      operationId: createVideo
+      tags: [videos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VideoInput"
+      responses:
+        "201":
+          description: Created video upload record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Video"
+  /videos/{videoId}:
+    get:
+      operationId: getVideo
+      tags: [videos]
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      responses:
+        "200":
+          description: Video detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Video"
+    patch:
+      operationId: updateVideo
+      tags: [videos]
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VideoUpdate"
+      responses:
+        "200":
+          description: Updated video
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Video"
+  /activity:
+    get:
+      operationId: listActivity
+      tags: [dashboard]
+      responses:
+        "200":
+          description: Recent workspace activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityItem"
 components:
+  parameters:
+    VideoId:
+      in: path
+      name: videoId
+      required: true
+      schema:
+        type: string
   schemas:
     HealthStatus:
       type: object
+      required: [status]
       properties:
         status:
           type: string
-      required:
-        - status
-
+    Workspace:
+      type: object
+      required: [id, name, slug, plan, memberCount, storageUsedGb, storageLimitGb, playerAccent, logoInitials]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        slug: { type: string }
+        plan: { type: string }
+        memberCount: { type: number }
+        storageUsedGb: { type: number }
+        storageLimitGb: { type: number }
+        playerAccent: { type: string }
+        logoInitials: { type: string }
+    WorkspaceUpdate:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        playerAccent: { type: string, pattern: "^#[0-9A-Fa-f]{6}$" }
+        logoInitials: { type: string, minLength: 1, maxLength: 3 }
+    Dashboard:
+      type: object
+      required: [totalVideos, totalPlays, watchTimeHours, completionRate, playsTrend, topVideos]
+      properties:
+        totalVideos: { type: number }
+        totalPlays: { type: number }
+        watchTimeHours: { type: number }
+        completionRate: { type: number }
+        playsTrend:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrendPoint"
+        topVideos:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopVideo"
+    TrendPoint:
+      type: object
+      required: [date, plays]
+      properties:
+        date: { type: string }
+        plays: { type: number }
+    TopVideo:
+      type: object
+      required: [id, title, plays, completionRate]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        plays: { type: number }
+        completionRate: { type: number }
+    Video:
+      type: object
+      required: [id, title, description, status, visibility, durationSeconds, createdAt, thumbnailColor, plays, completionRate]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        status:
+          type: string
+          enum: [created, uploading, processing, ready, error]
+        visibility:
+          type: string
+          enum: [private, unlisted, public]
+        durationSeconds: { type: number }
+        createdAt: { type: string, format: date-time }
+        thumbnailColor: { type: string }
+        plays: { type: number }
+        completionRate: { type: number }
+    VideoInput:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1 }
+        description: { type: string }
+    VideoUpdate:
+      type: object
+      properties:
+        title: { type: string, minLength: 1 }
+        description: { type: string }
+        visibility:
+          type: string
+          enum: [private, unlisted, public]
+    ActivityItem:
+      type: object
+      required: [id, action, subject, actor, createdAt]
+      properties:
+        id: { type: string }
+        action: { type: string }
+        subject: { type: string }
+        actor: { type: string }
+        createdAt: { type: string, format: date-time }

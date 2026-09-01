@@ -1,6 +1,6 @@
-# [Project name]
+# Multi-Tenant Video Platform
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A provider-portable control plane for customer video libraries, embeds, workspace permissions, customization, and first-party analytics.
 
 ## Run & Operate
 
@@ -22,15 +22,21 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/video-platform` — tenant-facing React application
+- `artifacts/api-server/src/routes/platform.ts` — current API implementation and demo records
+- `lib/api-spec/openapi.yaml` — source of truth for the application API
+- `lib/db/src/schema` — durable Postgres schema as persistence is added
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- The displayed product name remains runtime configuration; internal identifiers use neutral video-domain names.
+- Public video IDs and embed URLs must never contain a provider asset ID or hostname.
+- Provider-specific code belongs behind adapters; tenant-facing code consumes normalized types.
+- Tenant scope, permissions, and entitlements must be resolved server-side rather than trusted from client input.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+The first slice includes a workspace dashboard, video library and upload records, video detail and embed workflow, analytics, member/group surfaces, live player customization, and workspace plan/settings.
 
 ## User preferences
 
