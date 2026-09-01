@@ -12,6 +12,7 @@ A provider-portable control plane for customer video libraries, embeds, workspac
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required runtime config: `PRODUCT_NAME`, `VID_APP_DOMAIN`
 - Required secret for the Step 6 provider adapter: `BUNNY_API_KEY`
+- Required secret for Step 7 credential encryption: `SESSION_SECRET`
 
 ## Stack
 
@@ -36,6 +37,7 @@ A provider-portable control plane for customer video libraries, embeds, workspac
 - Provider-specific code belongs behind adapters; tenant-facing code consumes normalized types.
 - Tenant scope, permissions, and entitlements must be resolved server-side rather than trusted from client input.
 - Provider-space provisioning belongs to the Step 7 background worker and must never run inside an HTTP request.
+- Provider account credentials are AES-256-GCM encrypted at rest with a `SESSION_SECRET`-derived key; no API exposes them.
 - `artifacts/api-server/src/routes/public.ts` and `artifacts/vid/src/pages/embed-player.tsx` are preliminary scaffolding to replace at Step 11, not foundations to extend.
 
 ## Product

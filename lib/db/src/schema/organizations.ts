@@ -45,9 +45,12 @@ export const organizationsTable = pgTable("organizations", {
 export const organizationCustomizationTable = pgTable("organization_customization", {
   organizationId: uuid("organization_id").primaryKey().references(() => organizationsTable.id, { onDelete: "cascade" }),
   playerAccent: text("player_accent").notNull().default("#6C5CE7"),
+  playerControlForeground: text("player_control_foreground").notNull().default("#FFFFFF"),
+  playerControlBackground: text("player_control_background").notNull().default("#111827"),
   logoInitials: text("logo_initials").notNull().default("V"),
   logoObjectKey: text("logo_object_key"),
   watermarkObjectKey: text("watermark_object_key"),
+  posterTreatment: text("poster_treatment").notNull().default("default"),
   customDomain: text("custom_domain"),
   customDomainVerified: boolean("custom_domain_verified").notNull().default(false),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),

@@ -1,7 +1,8 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Link } from "wouter"
-import { useListVideos, useCreateVideo, getListVideosQueryKey } from "@workspace/api-client-react"
+import { cancelVideoUpload, completeVideoUpload, initializeVideoUpload, useListVideos, getListVideosQueryKey } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
+import * as tus from "tus-js-client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -132,27 +133,82 @@ function UploadDialog() {
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
+  const [file, setFile] = useState<File | null>(null)
+  const [progress, setProgress] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null)
+  const [videoId, setVideoId] = useState<string | null>(null)
+  const uploadRef = useRef<tus.Upload | null>(null)
   const queryClient = useQueryClient()
-  
-  const createVideo = useCreateVideo({
-    mutation: {
-      onSuccess: () => {
+  useEffect(() => () => { void uploadRef.current?.abort(false) }, [])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!title || !file) return
+    setError(null)
+    setUploading(true)
+    try {
+      const key = idempotencyKey ?? crypto.randomUUID()
+      setIdempotencyKey(key)
+      const initialized = await initializeVideoUpload({
+        title, description: description || undefined, fileName: file.name,
+        contentType: file.type, contentLength: file.size,
+      }, { headers: { "Idempotency-Key": key } })
+      if (initialized.upload.kind !== "tus") {
+        throw new Error("This upload method is not supported by this browser.")
+      }
+      setVideoId(initialized.videoId)
+      const upload = new tus.Upload(file, {
+        endpoint: initialized.upload.endpoint,
+        headers: initialized.upload.headers,
+        metadata: { filename: file.name, filetype: file.type },
+        removeFingerprintOnSuccess: true,
+        retryDelays: [0, 1000, 3000, 5000],
+        onProgress: (uploaded: number, total: number) => setProgress(total ? Math.round(uploaded / total * 100) : 0),
+        onError: (cause: Error) => { setError(cause.message); setUploading(false) },
+        onSuccess: async () => {
+          setProgress(100)
+          try {
+            await completeVideoUpload(initialized.videoId)
+            queryClient.invalidateQueries({ queryKey: getListVideosQueryKey() })
+          } catch (cause) {
+            setError(cause instanceof Error ? cause.message : "Upload completed but processing acknowledgement failed.")
+          } finally {
+            setUploading(false)
+          }
+        },
+      })
+      uploadRef.current = upload
+      const previous = await upload.findPreviousUploads()
+      if (previous.length) upload.resumeFromPreviousUpload(previous[0])
+      upload.start()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to initialize upload.")
+      setUploading(false)
+    }
+  }
+
+  const cancel = async () => {
+    void uploadRef.current?.abort(true)
+    uploadRef.current = null
+    setUploading(false)
+    setProgress(0)
+    if (videoId) {
+      try {
+        await cancelVideoUpload(videoId)
         queryClient.invalidateQueries({ queryKey: getListVideosQueryKey() })
-        setOpen(false)
-        setTitle("")
-        setDescription("")
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Unable to confirm cancellation.")
       }
     }
-  })
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!title) return
-    createVideo.mutate({ data: { title, description } })
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(next) => {
+      if (!next && uploading) void uploadRef.current?.abort(false)
+      setOpen(next)
+    }}>
       <DialogTrigger asChild>
         <Button className="gap-2">
           <Plus className="h-4 w-4" /> Upload Video
@@ -164,6 +220,12 @@ function UploadDialog() {
             <DialogTitle>Upload New Video</DialogTitle>
           </DialogHeader>
           <div className="py-6 space-y-4">
+             <div className="space-y-2">
+                <Label htmlFor="file">Video file</Label>
+                <Input id="file" type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,video/mpeg"
+                  onChange={e => { setFile(e.target.files?.[0] ?? null); setError(null); setIdempotencyKey(crypto.randomUUID()) }} />
+                {file && <p className="text-xs text-muted-foreground">{file.name} · {(file.size / 1024 / 1024).toFixed(1)} MB</p>}
+              </div>
             <div className="space-y-2">
               <Label htmlFor="title">Video Title</Label>
               <Input 
@@ -184,10 +246,14 @@ function UploadDialog() {
               />
             </div>
           </div>
+            {uploading && <div className="space-y-2"><div className="text-sm">Uploading: {progress}%</div><div className="h-2 rounded bg-muted"><div className="h-2 rounded bg-primary" style={{ width: `${progress}%` }} /></div></div>}
+            {error && <p className="text-sm text-destructive">{error} You can retry with the selected file.</p>}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button type="submit" disabled={!title || createVideo.isPending}>
-              {createVideo.isPending ? "Creating..." : "Create Record"}
+             <Button type="button" variant="outline" onClick={() => { void cancel(); setOpen(false) }}>Cancel</Button>
+             {uploading && <Button type="button" variant="outline" onClick={() => uploadRef.current?.abort(false)}>Pause</Button>}
+             {uploading && <Button type="button" variant="outline" onClick={() => uploadRef.current?.start()}>Resume</Button>}
+             <Button type="submit" disabled={!title || !file || uploading}>
+               {uploading ? "Uploading…" : error ? "Retry upload" : "Upload"}
             </Button>
           </DialogFooter>
         </form>

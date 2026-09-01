@@ -27,21 +27,43 @@ export const GetWorkspaceResponse = zod.object({
   "memberCount": zod.number(),
   "storageUsedGb": zod.number(),
   "storageLimitGb": zod.number(),
+  "entitlements": zod.record(zod.string(), zod.union([zod.boolean(),zod.number(),zod.string()])),
   "playerAccent": zod.string(),
-  "logoInitials": zod.string()
+  "playerControlForeground": zod.string(),
+  "playerControlBackground": zod.string(),
+  "logoInitials": zod.string(),
+  "logoObjectKey": zod.string().nullable(),
+  "watermarkObjectKey": zod.string().nullable(),
+  "posterTreatment": zod.enum(['default', 'darken', 'gradient']),
+  "customDomain": zod.string().nullable(),
+  "customDomainVerified": zod.boolean()
 })
 
 
 
 export const updateWorkspaceBodyPlayerAccentRegExp = new RegExp('^#[0-9A-Fa-f]{6}$');
+export const updateWorkspaceBodyPlayerControlForegroundRegExp = new RegExp('^#[0-9A-Fa-f]{6}$');
+export const updateWorkspaceBodyPlayerControlBackgroundRegExp = new RegExp('^#[0-9A-Fa-f]{6}$');
 export const updateWorkspaceBodyLogoInitialsMax = 3;
+
+export const updateWorkspaceBodyLogoObjectKeyMax = 1024;
+
+export const updateWorkspaceBodyWatermarkObjectKeyMax = 1024;
+
+export const updateWorkspaceBodyCustomDomainMax = 253;
 
 
 
 export const UpdateWorkspaceBody = zod.object({
   "name": zod.string().min(1).optional(),
   "playerAccent": zod.string().regex(updateWorkspaceBodyPlayerAccentRegExp).optional(),
-  "logoInitials": zod.string().min(1).max(updateWorkspaceBodyLogoInitialsMax).optional()
+  "playerControlForeground": zod.string().regex(updateWorkspaceBodyPlayerControlForegroundRegExp).optional(),
+  "playerControlBackground": zod.string().regex(updateWorkspaceBodyPlayerControlBackgroundRegExp).optional(),
+  "logoInitials": zod.string().min(1).max(updateWorkspaceBodyLogoInitialsMax).optional(),
+  "logoObjectKey": zod.string().max(updateWorkspaceBodyLogoObjectKeyMax).nullish(),
+  "watermarkObjectKey": zod.string().max(updateWorkspaceBodyWatermarkObjectKeyMax).nullish(),
+  "posterTreatment": zod.enum(['default', 'darken', 'gradient']).optional(),
+  "customDomain": zod.string().max(updateWorkspaceBodyCustomDomainMax).nullish()
 })
 
 export const UpdateWorkspaceResponse = zod.object({
@@ -52,8 +74,16 @@ export const UpdateWorkspaceResponse = zod.object({
   "memberCount": zod.number(),
   "storageUsedGb": zod.number(),
   "storageLimitGb": zod.number(),
+  "entitlements": zod.record(zod.string(), zod.union([zod.boolean(),zod.number(),zod.string()])),
   "playerAccent": zod.string(),
-  "logoInitials": zod.string()
+  "playerControlForeground": zod.string(),
+  "playerControlBackground": zod.string(),
+  "logoInitials": zod.string(),
+  "logoObjectKey": zod.string().nullable(),
+  "watermarkObjectKey": zod.string().nullable(),
+  "posterTreatment": zod.enum(['default', 'darken', 'gradient']),
+  "customDomain": zod.string().nullable(),
+  "customDomainVerified": zod.boolean()
 })
 
 
@@ -95,25 +125,51 @@ export const ListVideosResponseItem = zod.object({
 export const ListVideosResponse = zod.array(ListVideosResponseItem)
 
 
+export const initializeVideoUploadHeaderIdempotencyKeyMin = 16;
+export const initializeVideoUploadHeaderIdempotencyKeyMax = 128;
 
 
 
-export const CreateVideoBody = zod.object({
-  "title": zod.string().min(1),
-  "description": zod.string().optional()
+export const InitializeVideoUploadHeader = zod.object({
+  "Idempotency-Key": zod.string().min(initializeVideoUploadHeaderIdempotencyKeyMin).max(initializeVideoUploadHeaderIdempotencyKeyMax)
 })
 
-export const CreateVideoResponse = zod.object({
-  "id": zod.string(),
-  "title": zod.string(),
-  "description": zod.string(),
-  "status": zod.enum(['created', 'uploading', 'processing', 'ready', 'error']),
-  "visibility": zod.enum(['private', 'unlisted', 'public']),
-  "durationSeconds": zod.number(),
-  "createdAt": zod.coerce.date(),
-  "thumbnailColor": zod.string(),
-  "plays": zod.number(),
-  "completionRate": zod.number()
+
+export const initializeVideoUploadBodyFileNameMax = 255;
+
+export const initializeVideoUploadBodyContentTypeMax = 127;
+
+export const initializeVideoUploadBodyContentLengthMax = 2147483647;
+
+
+
+export const InitializeVideoUploadBody = zod.object({
+  "title": zod.string().min(1),
+  "description": zod.string().optional(),
+  "fileName": zod.string().min(1).max(initializeVideoUploadBodyFileNameMax),
+  "contentType": zod.string().min(1).max(initializeVideoUploadBodyContentTypeMax),
+  "contentLength": zod.number().min(1).max(initializeVideoUploadBodyContentLengthMax)
+})
+
+export const InitializeVideoUploadResponse = zod.object({
+  "videoId": zod.string(),
+  "upload": zod.union([zod.object({
+  "kind": zod.enum(['tus']),
+  "endpoint": zod.string(),
+  "headers": zod.record(zod.string(), zod.string()),
+  "expiresAt": zod.coerce.date()
+}),zod.object({
+  "kind": zod.enum(['multipart']),
+  "uploadId": zod.string(),
+  "partSizeBytes": zod.number(),
+  "parts": zod.array(zod.object({
+  "number": zod.number(),
+  "url": zod.string(),
+  "headers": zod.record(zod.string(), zod.string())
+})),
+  "completeUrl": zod.string(),
+  "expiresAt": zod.coerce.date()
+})])
 })
 
 
@@ -149,6 +205,42 @@ export const UpdateVideoBody = zod.object({
 })
 
 export const UpdateVideoResponse = zod.object({
+  "id": zod.string(),
+  "title": zod.string(),
+  "description": zod.string(),
+  "status": zod.enum(['created', 'uploading', 'processing', 'ready', 'error']),
+  "visibility": zod.enum(['private', 'unlisted', 'public']),
+  "durationSeconds": zod.number(),
+  "createdAt": zod.coerce.date(),
+  "thumbnailColor": zod.string(),
+  "plays": zod.number(),
+  "completionRate": zod.number()
+})
+
+
+export const CompleteVideoUploadParams = zod.object({
+  "videoId": zod.coerce.string()
+})
+
+export const CompleteVideoUploadResponse = zod.object({
+  "id": zod.string(),
+  "title": zod.string(),
+  "description": zod.string(),
+  "status": zod.enum(['created', 'uploading', 'processing', 'ready', 'error']),
+  "visibility": zod.enum(['private', 'unlisted', 'public']),
+  "durationSeconds": zod.number(),
+  "createdAt": zod.coerce.date(),
+  "thumbnailColor": zod.string(),
+  "plays": zod.number(),
+  "completionRate": zod.number()
+})
+
+
+export const CancelVideoUploadParams = zod.object({
+  "videoId": zod.coerce.string()
+})
+
+export const CancelVideoUploadResponse = zod.object({
   "id": zod.string(),
   "title": zod.string(),
   "description": zod.string(),

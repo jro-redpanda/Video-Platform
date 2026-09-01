@@ -15,6 +15,22 @@ export type TenantSpace = {
   id: string;
 };
 
+/** A provider received and rejected a create request; no tenant space was created. */
+export class TenantSpaceCreationRejectedError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "TenantSpaceCreationRejectedError";
+  }
+}
+
+/** A provider definitively rejected asset creation, so its local reservation may be removed. */
+export class AssetCreationRejectedError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "AssetCreationRejectedError";
+  }
+}
+
 export type Asset = {
   id: string;
 };

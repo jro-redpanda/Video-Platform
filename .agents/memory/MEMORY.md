@@ -1,3 +1,4 @@
 - [Build checkpoints and portability](build-checkpoints-portability.md) — stop for review after RBAC, provider adapter, and player/embed milestones; R2 storage is not portability.
 - [Better Auth Drizzle compatibility](better-auth-drizzle-compatibility.md) — current auth schema and pnpm peer contexts need version-aware handling.
 - [Bunny account-key validation](bunny-account-key-validation.md) — validate the global account key against the core library API before retrying the Step 6 round trip.
+- [Provider side-effect idempotency](provider-side-effect-idempotency.md) — persist claims before non-idempotent provider creates; bound queue repair by durable dedupe retention.

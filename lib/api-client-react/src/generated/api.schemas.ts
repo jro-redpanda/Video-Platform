@@ -14,6 +14,17 @@ export interface RuntimeConfig {
   appDomain: string;
 }
 
+export type WorkspaceEntitlements = {[key: string]: boolean | number | string};
+
+export type WorkspacePosterTreatment = typeof WorkspacePosterTreatment[keyof typeof WorkspacePosterTreatment];
+
+
+export const WorkspacePosterTreatment = {
+  default: 'default',
+  darken: 'darken',
+  gradient: 'gradient',
+} as const;
+
 export interface Workspace {
   id: string;
   name: string;
@@ -22,20 +33,60 @@ export interface Workspace {
   memberCount: number;
   storageUsedGb: number;
   storageLimitGb: number;
+  entitlements: WorkspaceEntitlements;
   playerAccent: string;
+  playerControlForeground: string;
+  playerControlBackground: string;
   logoInitials: string;
+  /** @nullable */
+  logoObjectKey: string | null;
+  /** @nullable */
+  watermarkObjectKey: string | null;
+  posterTreatment: WorkspacePosterTreatment;
+  /** @nullable */
+  customDomain: string | null;
+  customDomainVerified: boolean;
 }
+
+export type WorkspaceUpdatePosterTreatment = typeof WorkspaceUpdatePosterTreatment[keyof typeof WorkspaceUpdatePosterTreatment];
+
+
+export const WorkspaceUpdatePosterTreatment = {
+  default: 'default',
+  darken: 'darken',
+  gradient: 'gradient',
+} as const;
 
 export interface WorkspaceUpdate {
   /** @minLength 1 */
   name?: string;
   /** @pattern ^#[0-9A-Fa-f]{6}$ */
   playerAccent?: string;
+  /** @pattern ^#[0-9A-Fa-f]{6}$ */
+  playerControlForeground?: string;
+  /** @pattern ^#[0-9A-Fa-f]{6}$ */
+  playerControlBackground?: string;
   /**
      * @minLength 1
      * @maxLength 3
      */
   logoInitials?: string;
+  /**
+     * @maxLength 1024
+     * @nullable
+     */
+  logoObjectKey?: string | null;
+  /**
+     * @maxLength 1024
+     * @nullable
+     */
+  watermarkObjectKey?: string | null;
+  posterTreatment?: WorkspaceUpdatePosterTreatment;
+  /**
+     * @maxLength 253
+     * @nullable
+     */
+  customDomain?: string | null;
 }
 
 export interface TrendPoint {
@@ -92,10 +143,70 @@ export interface Video {
   completionRate: number;
 }
 
-export interface VideoInput {
+export interface VideoUploadInput {
   /** @minLength 1 */
   title: string;
   description?: string;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  fileName: string;
+  /**
+     * @minLength 1
+     * @maxLength 127
+     */
+  contentType: string;
+  /**
+     * @minimum 1
+     * @maximum 2147483647
+     */
+  contentLength: number;
+}
+
+export type TusUploadCredentialsKind = typeof TusUploadCredentialsKind[keyof typeof TusUploadCredentialsKind];
+
+
+export const TusUploadCredentialsKind = {
+  tus: 'tus',
+} as const;
+
+export type TusUploadCredentialsHeaders = {[key: string]: string};
+
+export interface TusUploadCredentials {
+  kind: TusUploadCredentialsKind;
+  endpoint: string;
+  headers: TusUploadCredentialsHeaders;
+  expiresAt: string;
+}
+
+export type MultipartUploadCredentialsKind = typeof MultipartUploadCredentialsKind[keyof typeof MultipartUploadCredentialsKind];
+
+
+export const MultipartUploadCredentialsKind = {
+  multipart: 'multipart',
+} as const;
+
+export type MultipartUploadCredentialsPartsItemHeaders = {[key: string]: string};
+
+export type MultipartUploadCredentialsPartsItem = {
+  number: number;
+  url: string;
+  headers: MultipartUploadCredentialsPartsItemHeaders;
+};
+
+export interface MultipartUploadCredentials {
+  kind: MultipartUploadCredentialsKind;
+  uploadId: string;
+  partSizeBytes: number;
+  parts: MultipartUploadCredentialsPartsItem[];
+  completeUrl: string;
+  expiresAt: string;
+}
+
+export interface VideoUploadInitialization {
+  videoId: string;
+  upload: TusUploadCredentials | MultipartUploadCredentials;
 }
 
 export type VideoUpdateVisibility = typeof VideoUpdateVisibility[keyof typeof VideoUpdateVisibility];

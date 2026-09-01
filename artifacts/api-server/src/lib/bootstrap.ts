@@ -35,6 +35,9 @@ const permissionCatalog = [
 
 // MOCK: replaced at step 18
 export async function bootstrapDevelopmentTenant() {
+  // Security initialization is required in every environment; only fixtures
+  // below are development-only.
+  await ensureTenantIsolation();
   if (process.env.NODE_ENV === "production") return;
 
   await db.transaction(async (tx) => {
@@ -44,12 +47,40 @@ export async function bootstrapDevelopmentTenant() {
       name: "Growth",
       storageLimitGb: 500,
       entitlements: {
-        customBranding: true,
-        watermark: true,
-        analytics: true,
-        customDomains: false,
+        "branding.logo": true,
+        "branding.player_colors": true,
+        "branding.watermark": true,
+        "branding.custom_domain": false,
+        "limits.max_users": 25,
+        "limits.max_storage_gb": 500,
+        "limits.max_videos": 500,
+        "limits.monthly_bandwidth_gb": 2_000,
+        "feature.custom_groups": true,
+        "feature.api_access": true,
+        "feature.captions": true,
+        "feature.analytics_export": true,
       },
-    }).onConflictDoNothing();
+    }).onConflictDoUpdate({
+      target: plansTable.code,
+      set: {
+        name: "Growth",
+        storageLimitGb: 500,
+        entitlements: {
+          "branding.logo": true,
+          "branding.player_colors": true,
+          "branding.watermark": true,
+          "branding.custom_domain": false,
+          "limits.max_users": 25,
+          "limits.max_storage_gb": 500,
+          "limits.max_videos": 500,
+          "limits.monthly_bandwidth_gb": 2_000,
+          "feature.custom_groups": true,
+          "feature.api_access": true,
+          "feature.captions": true,
+          "feature.analytics_export": true,
+        },
+      },
+    });
 
     await tx.insert(organizationsTable).values({
       id: developmentTenant.organizationId,
@@ -63,6 +94,8 @@ export async function bootstrapDevelopmentTenant() {
     await tx.insert(organizationCustomizationTable).values({
       organizationId: developmentTenant.organizationId,
       playerAccent: "#6C5CE7",
+      playerControlForeground: "#FFFFFF",
+      playerControlBackground: "#111827",
       logoInitials: "V",
     }).onConflictDoNothing();
 
@@ -157,7 +190,6 @@ export async function bootstrapDevelopmentTenant() {
     ]).onConflictDoNothing();
   });
 
-  await ensureTenantIsolation();
 }
 
 const tenantTables = [
@@ -169,7 +201,7 @@ const tenantTables = [
   "videos",
   "video_analytics_rollups",
   "playback_events",
-  "provider_accounts",
+  "provider_tenant_spaces",
   "organization_entitlement_overrides",
   "audit_logs",
 ] as const;
@@ -191,9 +223,7 @@ async function ensureTenantIsolation() {
   `));
 
   for (const table of tenantTables) {
-    const expression = table === "provider_accounts" || table === "audit_logs"
-      ? "organization_id = nullif(current_setting('app.organization_id', true), '')::uuid"
-      : "organization_id = nullif(current_setting('app.organization_id', true), '')::uuid";
+    const expression = "organization_id = nullif(current_setting('app.organization_id', true), '')::uuid";
     await db.execute(sql.raw(`
       alter table "${table}" enable row level security;
       drop policy if exists tenant_isolation on "${table}";

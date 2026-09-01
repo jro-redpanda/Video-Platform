@@ -1,5 +1,6 @@
-import { doublePrecision, index, integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, doublePrecision, index, integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { organizationsTable } from "./organizations";
+import { providerAccountsTable } from "./operations";
 
 export const videoStatusEnum = pgEnum("video_status", ["created", "uploading", "processing", "ready", "error"]);
 export const videoVisibilityEnum = pgEnum("video_visibility", ["private", "unlisted", "public"]);
@@ -25,8 +26,26 @@ export const videosTable = pgTable("videos", {
   visibility: videoVisibilityEnum("visibility").notNull().default("private"),
   durationSeconds: integer("duration_seconds").notNull().default(0),
   thumbnailColor: text("thumbnail_color").notNull().default("#5B5BD6"),
-  providerKey: text("provider_key"),
-  providerVideoId: text("provider_video_id"),
+  /** Legacy pre-adapter linkage retained for non-destructive migration only. */
+  legacyProviderKey: text("provider_key"),
+  legacyProviderVideoId: text("provider_video_id"),
+  /** Private control-plane linkage. Never project these columns in public APIs. */
+  providerAccountId: uuid("provider_account_id").references(() => providerAccountsTable.id),
+  providerTenantSpaceId: text("provider_tenant_space_id"),
+  providerAssetId: text("provider_asset_id"),
+  uploadIdempotencyKey: text("upload_idempotency_key"),
+  uploadFailureDetail: text("upload_failure_detail"),
+  uploadSourceBytes: integer("upload_source_bytes"),
+  uploadSourceFileName: text("upload_source_file_name"),
+  uploadSourceContentType: text("upload_source_content_type"),
+  reservedBytes: integer("reserved_bytes").notNull().default(0),
+  quotaReleasedAt: timestamp("quota_released_at", { withTimezone: true }),
+  reservationExpiresAt: timestamp("reservation_expires_at", { withTimezone: true }),
+  assetCreationClaim: uuid("asset_creation_claim"),
+  assetCreationClaimedAt: timestamp("asset_creation_claimed_at", { withTimezone: true }),
+  reconciliationRequired: text("reconciliation_required"),
+  /** Set only for safe-to-repeat initialization failures; terminal flows clear it. */
+  initializationRetryable: boolean("initialization_retryable").notNull().default(false),
   masterStorageKey: text("master_storage_key"),
   masterArchivedAt: timestamp("master_archived_at", { withTimezone: true }),
   tags: text("tags").array().notNull().default([]),
@@ -35,6 +54,12 @@ export const videosTable = pgTable("videos", {
 }, (table) => [
   index("videos_org_created_idx").on(table.organizationId, table.createdAt),
   index("videos_org_status_idx").on(table.organizationId, table.status),
+  uniqueIndex("videos_org_upload_idempotency_idx").on(table.organizationId, table.uploadIdempotencyKey),
+  uniqueIndex("videos_private_provider_asset_idx").on(
+    table.providerAccountId,
+    table.providerTenantSpaceId,
+    table.providerAssetId,
+  ),
 ]);
 
 export const videoAnalyticsRollupsTable = pgTable("video_analytics_rollups", {

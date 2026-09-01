@@ -1,10 +1,21 @@
 import { PgBoss, events, type Job } from "pg-boss";
 import { logger } from "./logger";
 import { runBunnyRoundTrip } from "./bunny-roundtrip";
+import { provisionTenantOrganization } from "./tenant-provisioning";
+import { resolveProvisioningProvider, type ProvisioningProviderResolver } from "./provider-registry";
+import { cleanupExpiredUploads } from "./upload-expiry-cleanup";
+import { and, eq, gte, lt, or, sql } from "drizzle-orm";
+import { db, embedGenerationOutboxTable } from "@workspace/db";
+import { randomUUID } from "node:crypto";
 
-const QUEUE_NAME = "vid.system.health";
-const DEAD_LETTER_QUEUE = "vid.system.dead-letter";
-export const BUNNY_ROUNDTRIP_QUEUE = "vid.provider.bunny-roundtrip";
+const queueSuffix = process.env.JOB_QUEUE_NAMESPACE ? `.${process.env.JOB_QUEUE_NAMESPACE}` : "";
+const QUEUE_NAME = `vid.system.health${queueSuffix}`;
+const DEAD_LETTER_QUEUE = `vid.system.dead-letter${queueSuffix}`;
+export const BUNNY_ROUNDTRIP_QUEUE = `vid.provider.bunny-roundtrip${queueSuffix}`;
+export const TENANT_PROVISION_QUEUE = `vid.tenant.provision${queueSuffix}`;
+export const UPLOAD_EXPIRY_QUEUE = `vid.upload.expiry-cleanup${queueSuffix}`;
+export const EMBED_GENERATION_QUEUE = `vid.video.embed-generation${queueSuffix}`;
+export const EMBED_DISPATCH_QUEUE = `vid.video.embed-dispatch${queueSuffix}`;
 
 type HealthJob = {
   requestedAt: string;
@@ -13,10 +24,11 @@ type HealthJob = {
 type BunnyRoundTripJob = {
   requestedAt: string;
 };
+type TenantProvisionJob = { organizationId: string };
 
 let boss: PgBoss | undefined;
 
-export async function startJobs() {
+export async function startJobs(options: { resolveProvisioningProvider?: ProvisioningProviderResolver } = {}) {
   if (boss) return boss;
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error("DATABASE_URL is required for the job queue");
@@ -44,6 +56,42 @@ export async function startJobs() {
     expireInSeconds: 1200,
     retentionSeconds: 86400,
   });
+  await instance.createQueue(TENANT_PROVISION_QUEUE, {
+    retryLimit: 5,
+    retryDelay: 2,
+    retryBackoff: true,
+    deadLetter: DEAD_LETTER_QUEUE,
+    expireInSeconds: 1200,
+    retentionSeconds: 86400,
+  });
+  await instance.createQueue(UPLOAD_EXPIRY_QUEUE, {
+    retryLimit: 3,
+    retryDelay: 30,
+    retryBackoff: true,
+    deadLetter: DEAD_LETTER_QUEUE,
+    expireInSeconds: 600,
+    retentionSeconds: 86400,
+  });
+  await instance.createQueue(EMBED_GENERATION_QUEUE, {
+    retryLimit: 5,
+    retryDelay: 5,
+    retryBackoff: true,
+    deadLetter: DEAD_LETTER_QUEUE,
+    expireInSeconds: 600,
+    retentionSeconds: 86400,
+  });
+  await instance.createQueue(EMBED_DISPATCH_QUEUE, {
+    retryLimit: 3,
+    retryDelay: 5,
+    retryBackoff: true,
+    deadLetter: DEAD_LETTER_QUEUE,
+    expireInSeconds: 600,
+    retentionSeconds: 86400,
+  });
+  // MOCK: replaced at step 11
+  // The embed-generation worker is intentionally not registered in Step 10.
+  await instance.schedule(UPLOAD_EXPIRY_QUEUE, "*/15 * * * *", {}, { tz: "UTC" });
+  await instance.schedule(EMBED_DISPATCH_QUEUE, "* * * * *", {}, { tz: "UTC" });
   await instance.work<HealthJob>(QUEUE_NAME, async ([job]: Job<HealthJob>[]) => {
     logger.info({ jobId: job.id, requestedAt: job.data.requestedAt }, "Job worker processed health check");
     return { processedAt: new Date().toISOString() };
@@ -58,6 +106,18 @@ export async function startJobs() {
       return result;
     },
   );
+  await instance.work<TenantProvisionJob>(
+    TENANT_PROVISION_QUEUE,
+    { batchSize: 1 },
+    async ([job]: Job<TenantProvisionJob>[]) => provisionTenantOrganization(
+      job.data.organizationId,
+      options.resolveProvisioningProvider ?? resolveProvisioningProvider,
+    ),
+  );
+  await instance.work(UPLOAD_EXPIRY_QUEUE, { batchSize: 1 }, async () => cleanupExpiredUploads(
+    options.resolveProvisioningProvider ?? resolveProvisioningProvider,
+  ));
+  await instance.work(EMBED_DISPATCH_QUEUE, { batchSize: 1 }, async () => dispatchPendingEmbedOutbox(instance));
 
   boss = instance;
   logger.info({ queue: QUEUE_NAME }, "Job queue and worker started");
@@ -81,4 +141,96 @@ export async function findHealthCheck(id: string) {
   const instance = boss ?? await startJobs();
   const [job] = await instance.findJobs<HealthJob>(QUEUE_NAME, { id });
   return job;
+}
+
+/** The only entry point for tenant provisioning; routes must only enqueue this work. */
+export async function enqueueTenantProvisioning(organizationId: string) {
+  const instance = boss ?? await startJobs();
+  const id = await instance.send(TENANT_PROVISION_QUEUE, { organizationId });
+  if (!id) throw new Error("Job queue rejected tenant provisioning");
+  return id;
+}
+
+/** Step 10 outbox target. Payload deliberately contains only the owned UUID. */
+export async function enqueueEmbedGeneration(videoId: string, outboxId: string) {
+  const instance = boss ?? await startJobs();
+  return sendEmbedGenerationJob(instance, videoId, outboxId);
+}
+
+/** Wakes the dispatcher after commit. Correctness comes from its scheduled scan. */
+export async function enqueueEmbedDispatchWakeup() {
+  const instance = boss ?? await startJobs();
+  await instance.send(EMBED_DISPATCH_QUEUE, {}, { singletonKey: "outbox-wakeup" });
+}
+
+/** Exposed for deterministic smoke verification; safe to call concurrently. */
+export async function dispatchPendingEmbedOutbox(instance?: PgBoss) {
+  const queue = instance ?? boss ?? await startJobs();
+  let dispatched = 0;
+  const repairHorizon = new Date(Date.now() - 23 * 60 * 60_000);
+  await db.update(embedGenerationOutboxTable).set({
+    state: "reconciliation_required",
+    dispatchClaim: null,
+    diagnosticCode: "dispatch_outcome_unknown_after_retention_horizon",
+  }).where(and(
+    eq(embedGenerationOutboxTable.state, "dispatching"),
+    lt(embedGenerationOutboxTable.claimedAt, repairHorizon),
+  ));
+  for (let i = 0; i < 100; i++) {
+    const claim = randomUUID();
+    const staleBefore = new Date(Date.now() - 5 * 60_000);
+    const claimable = or(
+      eq(embedGenerationOutboxTable.state, "pending"),
+      and(
+        eq(embedGenerationOutboxTable.state, "dispatching"),
+        gte(embedGenerationOutboxTable.claimedAt, repairHorizon),
+        lt(embedGenerationOutboxTable.claimedAt, staleBefore),
+      ),
+    );
+    const [candidate] = await db.select({ id: embedGenerationOutboxTable.id, videoId: embedGenerationOutboxTable.videoId })
+      .from(embedGenerationOutboxTable)
+      .where(claimable)
+      .orderBy(embedGenerationOutboxTable.createdAt)
+      .limit(1);
+    if (!candidate) break;
+    const claimed = await db.update(embedGenerationOutboxTable).set({
+      state: "dispatching", dispatchClaim: claim, claimedAt: new Date(), attemptedAt: new Date(),
+      attempts: sql`${embedGenerationOutboxTable.attempts} + 1`,
+      diagnosticCode: null,
+    }).where(and(
+      eq(embedGenerationOutboxTable.id, candidate.id),
+      claimable,
+    )).returning({ id: embedGenerationOutboxTable.id });
+    if (!claimed.length) continue;
+    try {
+      await sendEmbedGenerationJob(queue, candidate.videoId, candidate.id);
+      await db.update(embedGenerationOutboxTable).set({
+        state: "dispatched", dispatchedAt: new Date(), dispatchClaim: null,
+      }).where(and(
+        eq(embedGenerationOutboxTable.id, candidate.id),
+        eq(embedGenerationOutboxTable.dispatchClaim, claim),
+      ));
+      dispatched++;
+    } catch {
+      await db.update(embedGenerationOutboxTable).set({
+        state: "pending", dispatchClaim: null, diagnosticCode: "enqueue_failed",
+      }).where(and(
+        eq(embedGenerationOutboxTable.id, candidate.id),
+        eq(embedGenerationOutboxTable.dispatchClaim, claim),
+      ));
+    }
+  }
+  return { dispatched };
+}
+
+async function sendEmbedGenerationJob(queue: PgBoss, videoId: string, outboxId: string) {
+  const jobId = await queue.send(
+    EMBED_GENERATION_QUEUE,
+    { videoId },
+    { id: outboxId, singletonKey: outboxId },
+  );
+  if (jobId) return jobId;
+  const [existing] = await queue.findJobs(EMBED_GENERATION_QUEUE, { id: outboxId });
+  if (!existing) throw new Error("Job queue rejected embed generation");
+  return existing.id;
 }

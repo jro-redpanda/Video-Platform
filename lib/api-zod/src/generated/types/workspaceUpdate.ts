@@ -5,15 +5,36 @@
  * Multi-tenant video platform API
  * OpenAPI spec version: 0.1.0
  */
+import type { WorkspaceUpdatePosterTreatment } from './workspaceUpdatePosterTreatment';
 
 export interface WorkspaceUpdate {
   /** @minLength 1 */
   name?: string;
   /** @pattern ^#[0-9A-Fa-f]{6}$ */
   playerAccent?: string;
+  /** @pattern ^#[0-9A-Fa-f]{6}$ */
+  playerControlForeground?: string;
+  /** @pattern ^#[0-9A-Fa-f]{6}$ */
+  playerControlBackground?: string;
   /**
      * @minLength 1
      * @maxLength 3
      */
   logoInitials?: string;
+  /**
+     * @maxLength 1024
+     * @nullable
+     */
+  logoObjectKey?: string | null;
+  /**
+     * @maxLength 1024
+     * @nullable
+     */
+  watermarkObjectKey?: string | null;
+  posterTreatment?: WorkspaceUpdatePosterTreatment;
+  /**
+     * @maxLength 253
+     * @nullable
+     */
+  customDomain?: string | null;
 }

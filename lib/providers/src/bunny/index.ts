@@ -1,4 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { AssetCreationRejectedError, TenantSpaceCreationRejectedError } from "../contracts";
 import type {
   Asset,
   AssetStatus,
@@ -26,12 +27,17 @@ export type BunnyLibraryCredentials = {
 type BunnyProviderOptions = {
   accountApiKey: string;
   resolveLibraryCredentials?: (libraryId: string) => Promise<BunnyLibraryCredentials>;
+  /** Pre-resolved private credentials used for synchronous callback verification. */
+  webhookCredentials?: BunnyLibraryCredentials;
+  /** Bunny-internal persistence hook. It must complete before the space is returned. */
+  onLibraryCreated?: (library: BunnyLibraryCredentials) => Promise<void>;
 };
 
 type BunnyWebhookBody = {
   VideoLibraryId: number;
   VideoGuid: string;
   Status: number;
+  Length?: number;
 };
 
 export class BunnyVideoProvider implements VideoProvider {
@@ -52,13 +58,26 @@ export class BunnyVideoProvider implements VideoProvider {
   constructor(private readonly options: BunnyProviderOptions) {
     this.accountApiKey = options.accountApiKey.trim();
     if (!this.accountApiKey) throw new Error("Bunny account API key is required");
+    if (options.webhookCredentials) {
+      this.libraries.set(options.webhookCredentials.libraryId, options.webhookCredentials);
+    }
   }
 
   async createTenantSpace(input: { name: string }): Promise<TenantSpace> {
-    const library = await this.coreRequest<Record<string, unknown>>("/videolibrary", {
-      method: "POST",
-      body: JSON.stringify({ Name: input.name, AllowDirectPlay: true }),
-    });
+    let library: Record<string, unknown>;
+    try {
+      library = await this.coreRequest<Record<string, unknown>>("/videolibrary", {
+        method: "POST",
+        body: JSON.stringify({ Name: input.name, AllowDirectPlay: true }),
+      });
+    } catch (error) {
+      // A non-2xx HTTP response is a definitive rejection; network failures
+      // remain unclassified so callers retain their capacity reservation.
+      if (error instanceof Error && error.message.startsWith("Bunny API POST /videolibrary failed")) {
+        throw new TenantSpaceCreationRejectedError("Bunny rejected tenant-space creation", { cause: error });
+      }
+      throw error;
+    }
     const libraryId = requiredString(library.Id, "Bunny library Id");
     const pullZoneId = requiredString(library.PullZoneId, "Bunny PullZoneId");
     const pullZone = await this.coreRequest<Record<string, unknown>>(`/pullzone/${pullZoneId}`);
@@ -77,6 +96,7 @@ export class BunnyVideoProvider implements VideoProvider {
       zoneSecurityEnabled: pullZone.ZoneSecurityEnabled === true,
     };
     this.libraries.set(libraryId, credentials);
+    await this.options.onLibraryCreated?.(credentials);
     return { id: libraryId };
   }
 
@@ -85,10 +105,6 @@ export class BunnyVideoProvider implements VideoProvider {
       method: "POST",
       body: JSON.stringify({ WebhookUrl: webhookUrl }),
     });
-  }
-
-  async getLibraryCredentials(space: TenantSpace): Promise<BunnyLibraryCredentials> {
-    return this.credentials(space.id);
   }
 
   async deleteTenantSpace(space: TenantSpace): Promise<void> {
@@ -101,11 +117,19 @@ export class BunnyVideoProvider implements VideoProvider {
 
   async createAsset(space: TenantSpace, input: { title: string }): Promise<Asset> {
     const credentials = await this.credentials(space.id);
-    const response = await this.streamRequest<Record<string, unknown>>(
-      credentials,
-      `/library/${space.id}/videos`,
-      { method: "POST", body: JSON.stringify({ title: input.title }) },
-    );
+    let response: Record<string, unknown>;
+    try {
+      response = await this.streamRequest<Record<string, unknown>>(
+        credentials,
+        `/library/${space.id}/videos`,
+        { method: "POST", body: JSON.stringify({ title: input.title }) },
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Bunny API POST")) {
+        throw new AssetCreationRejectedError("Bunny rejected video asset creation", { cause: error });
+      }
+      throw error;
+    }
     return { id: requiredString(response.guid, "Bunny video guid") };
   }
 
@@ -158,6 +182,8 @@ export class BunnyVideoProvider implements VideoProvider {
     }
     const expires = Math.floor(Date.now() / 1000) + 15 * 60;
     const directory = `/${asset.id}/`;
+    // Bunny Advanced Token Authentication (2026 HMAC-SHA256 format):
+    // HS256- + base64url(HMAC(key, protectedDirectory + expiry)).
     const signature = createHmac("sha256", credentials.zoneSecurityKey)
       .update(`${directory}${expires}`)
       .digest("base64url");
@@ -179,7 +205,12 @@ export class BunnyVideoProvider implements VideoProvider {
     const signature = header(headers, "x-bunnystream-signature");
     if (!signature || !/^[a-f0-9]{64}$/.test(signature)) return null;
 
-    const payload = parseWebhook(rawBody);
+    let payload: BunnyWebhookBody;
+    try {
+      payload = parseWebhook(rawBody);
+    } catch {
+      return null;
+    }
     const credentials = this.libraries.get(String(payload.VideoLibraryId));
     if (!credentials) return null;
     const expected = createHmac("sha256", credentials.readOnlyApiKey).update(rawBody).digest();
@@ -192,7 +223,7 @@ export class BunnyVideoProvider implements VideoProvider {
       tenantSpaceId: String(payload.VideoLibraryId),
       assetId: payload.VideoGuid,
       status: payload.Status === 3
-        ? { state: "ready", durationSeconds: 0 }
+        ? { state: "ready", durationSeconds: payload.Length ?? 0 }
         : { state: "error", reason: `Bunny status ${payload.Status}` },
       occurredAt: new Date().toISOString(),
     };
@@ -228,8 +259,9 @@ async function request<T>(url: string, accessKey: string, init: RequestInit): Pr
     headers: { AccessKey: accessKey, "Content-Type": "application/json", ...init.headers },
   });
   if (!response.ok) {
-    const detail = (await response.text()).slice(0, 500);
-    throw new Error(`Bunny API ${init.method ?? "GET"} ${new URL(url).pathname} failed (${response.status}): ${detail}`);
+    // Do not include upstream response text: provider responses can contain
+    // sensitive account details and errors are logged by queue infrastructure.
+    throw new Error(`Bunny API ${init.method ?? "GET"} ${new URL(url).pathname} failed (${response.status})`);
   }
   if (response.status === 204 || response.headers.get("content-length") === "0") return undefined as T;
   return response.json() as Promise<T>;
@@ -250,10 +282,22 @@ function parseWebhook(rawBody: Buffer): BunnyWebhookBody {
   if (!isRecord(value)) throw new Error("Invalid Bunny webhook body");
   const libraryId = Number(value.VideoLibraryId);
   const status = Number(value.Status);
+  const length = value.Length === undefined ? undefined : Number(value.Length);
   if (!Number.isInteger(libraryId) || typeof value.VideoGuid !== "string" || !Number.isInteger(status)) {
     throw new Error("Invalid Bunny webhook fields");
   }
-  return { VideoLibraryId: libraryId, VideoGuid: value.VideoGuid, Status: status };
+  if (length !== undefined && (!Number.isFinite(length) || length < 0)) {
+    throw new Error("Invalid Bunny webhook duration");
+  }
+  return { VideoLibraryId: libraryId, VideoGuid: value.VideoGuid, Status: status, Length: length };
+}
+
+/**
+ * Reads only the routing identifier needed to select candidate account-backed
+ * adapters. No status or asset field returned by this parse may be trusted.
+ */
+export function inspectBunnyEncodeCompletionCallback(rawBody: Buffer): { tenantSpaceId: string } {
+  return { tenantSpaceId: String(parseWebhook(rawBody).VideoLibraryId) };
 }
 
 function header(

@@ -10,6 +10,7 @@ import { toNodeHandler } from "better-auth/node";
 import { auth } from "./lib/auth";
 import { videoProviders } from "./lib/provider-registry";
 import { receiveBunnyRoundTripCallback } from "./lib/bunny-roundtrip";
+import providerWebhooksRouter from "./routes/provider-webhooks";
 
 const app: Express = express();
 app.locals.videoProviders = videoProviders;
@@ -44,6 +45,7 @@ app.post(
     res.sendStatus(result.accepted ? 204 : 401);
   },
 );
+app.use("/api", providerWebhooksRouter);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

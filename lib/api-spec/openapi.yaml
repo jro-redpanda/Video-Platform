@@ -95,22 +95,31 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Video"
+  /videos/upload-init:
     post:
-      operationId: createVideo
+      operationId: initializeVideoUpload
       tags: [videos]
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/VideoInput"
+              $ref: "#/components/schemas/VideoUploadInput"
       responses:
         "201":
-          description: Created video upload record
+          description: Direct-upload credentials
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Video"
+                $ref: "#/components/schemas/VideoUploadInitialization"
   /videos/{videoId}:
     get:
       operationId: getVideo
@@ -138,6 +147,32 @@ paths:
       responses:
         "200":
           description: Updated video
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Video"
+  /videos/{videoId}/upload-complete:
+    post:
+      operationId: completeVideoUpload
+      tags: [videos]
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      responses:
+        "200":
+          description: Upload acknowledged for provider processing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Video"
+  /videos/{videoId}/upload-cancel:
+    post:
+      operationId: cancelVideoUpload
+      tags: [videos]
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      responses:
+        "200":
+          description: Upload cancelled
           content:
             application/json:
               schema:
@@ -341,7 +376,7 @@ components:
         appDomain: { type: string }
     Workspace:
       type: object
-      required: [id, name, slug, plan, memberCount, storageUsedGb, storageLimitGb, playerAccent, logoInitials]
+      required: [id, name, slug, plan, memberCount, storageUsedGb, storageLimitGb, entitlements, playerAccent, playerControlForeground, playerControlBackground, logoInitials, logoObjectKey, watermarkObjectKey, posterTreatment, customDomain, customDomainVerified]
       properties:
         id: { type: string }
         name: { type: string }
@@ -350,14 +385,38 @@ components:
         memberCount: { type: number }
         storageUsedGb: { type: number }
         storageLimitGb: { type: number }
+        entitlements:
+          type: object
+          additionalProperties:
+            oneOf:
+              - { type: boolean }
+              - { type: number }
+              - { type: string }
         playerAccent: { type: string }
+        playerControlForeground: { type: string }
+        playerControlBackground: { type: string }
         logoInitials: { type: string }
+        logoObjectKey: { type: ["string", "null"] }
+        watermarkObjectKey: { type: ["string", "null"] }
+        posterTreatment:
+          type: string
+          enum: [default, darken, gradient]
+        customDomain: { type: ["string", "null"] }
+        customDomainVerified: { type: boolean }
     WorkspaceUpdate:
       type: object
       properties:
         name: { type: string, minLength: 1 }
         playerAccent: { type: string, pattern: "^#[0-9A-Fa-f]{6}$" }
+        playerControlForeground: { type: string, pattern: "^#[0-9A-Fa-f]{6}$" }
+        playerControlBackground: { type: string, pattern: "^#[0-9A-Fa-f]{6}$" }
         logoInitials: { type: string, minLength: 1, maxLength: 3 }
+        logoObjectKey: { type: ["string", "null"], maxLength: 1024 }
+        watermarkObjectKey: { type: ["string", "null"], maxLength: 1024 }
+        posterTreatment:
+          type: string
+          enum: [default, darken, gradient]
+        customDomain: { type: ["string", "null"], maxLength: 253 }
     Dashboard:
       type: object
       required: [totalVideos, totalPlays, watchTimeHours, completionRate, playsTrend, topVideos]
@@ -406,12 +465,52 @@ components:
         thumbnailColor: { type: string }
         plays: { type: number }
         completionRate: { type: number }
-    VideoInput:
+    VideoUploadInput:
       type: object
-      required: [title]
+      required: [title, fileName, contentType, contentLength]
       properties:
         title: { type: string, minLength: 1 }
         description: { type: string }
+        fileName: { type: string, minLength: 1, maxLength: 255 }
+        contentType: { type: string, minLength: 1, maxLength: 127 }
+        contentLength: { type: number, minimum: 1, maximum: 2147483647 }
+    VideoUploadInitialization:
+      type: object
+      required: [videoId, upload]
+      properties:
+        videoId: { type: string }
+        upload:
+          oneOf:
+            - $ref: "#/components/schemas/TusUploadCredentials"
+            - $ref: "#/components/schemas/MultipartUploadCredentials"
+    TusUploadCredentials:
+      type: object
+      required: [kind, endpoint, headers, expiresAt]
+      properties:
+        kind: { type: string, enum: [tus] }
+        endpoint: { type: string }
+        headers:
+          type: object
+          additionalProperties: { type: string }
+        expiresAt: { type: string, format: date-time }
+    MultipartUploadCredentials:
+      type: object
+      required: [kind, uploadId, partSizeBytes, parts, completeUrl, expiresAt]
+      properties:
+        kind: { type: string, enum: [multipart] }
+        uploadId: { type: string }
+        partSizeBytes: { type: number }
+        parts:
+          type: array
+          items:
+            type: object
+            required: [number, url, headers]
+            properties:
+              number: { type: number }
+              url: { type: string }
+              headers: { type: object, additionalProperties: { type: string } }
+        completeUrl: { type: string }
+        expiresAt: { type: string, format: date-time }
     VideoUpdate:
       type: object
       properties:

@@ -1,183 +1,107 @@
-import { useState, useEffect } from "react"
+import { useEffect, useState } from "react"
 import { useGetWorkspace, useUpdateWorkspace, getGetWorkspaceQueryKey } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Play, Maximize, Settings2 } from "lucide-react"
+import { Maximize, Play, Settings2 } from "lucide-react"
 
-const SWATCHES = [
-  "#4f46e5", // Indigo
-  "#0ea5e9", // Blue
-  "#10b981", // Sky
-  "#14b8a6", // Teal
-  "#22c55e", // Emerald
-  "#84cc16", // Mint
-  "#eab308", // Yellow
-  "#f97316", // Orange
-  "#ef4444", // Red
-  "#ec4899", // Rose
-  "#d946ef", // Pink
-  "#a855f7", // Fuchsia
-  "#8b5cf6", // Purple
-]
+const SWATCHES = ["#4f46e5", "#0ea5e9", "#10b981", "#f97316", "#ef4444", "#a855f7"]
 
 export default function Customization() {
   const { data: workspace, isLoading } = useGetWorkspace()
   const updateWorkspace = useUpdateWorkspace()
   const queryClient = useQueryClient()
-
   const [accent, setAccent] = useState("#4f46e5")
+  const [foreground, setForeground] = useState("#FFFFFF")
+  const [background, setBackground] = useState("#111827")
   const [initials, setInitials] = useState("VP")
+  const [posterTreatment, setPosterTreatment] = useState<"default" | "darken" | "gradient">("default")
+  const [customDomain, setCustomDomain] = useState("")
 
   useEffect(() => {
-    if (workspace) {
-      setAccent(workspace.playerAccent)
-      setInitials(workspace.logoInitials)
-    }
+    if (!workspace) return
+    setAccent(workspace.playerAccent)
+    setForeground(workspace.playerControlForeground)
+    setBackground(workspace.playerControlBackground)
+    setInitials(workspace.logoInitials)
+    setPosterTreatment(workspace.posterTreatment)
+    setCustomDomain(workspace.customDomain ?? "")
   }, [workspace])
 
-  const handleSave = () => {
-    updateWorkspace.mutate({ data: { playerAccent: accent, logoInitials: initials } }, {
-      onSuccess: (data) => {
-        queryClient.setQueryData(getGetWorkspaceQueryKey(), data)
-      }
-    })
-  }
+  if (isLoading) return <div className="p-8"><Skeleton className="h-[400px] w-full" /></div>
+  if (!workspace) return null
 
-  if (isLoading) {
-    return <div className="p-8"><Skeleton className="h-[400px] w-full" /></div>
+  const entitled = (key: string) => workspace.entitlements[key] === true
+  const playerColors = entitled("branding.player_colors")
+  const logo = entitled("branding.logo")
+  const watermark = entitled("branding.watermark")
+  const domain = entitled("branding.custom_domain")
+  const restriction = (enabled: boolean) => !enabled && <p className="text-xs text-muted-foreground">Available on a plan that includes this branding feature.</p>
+  const handleSave = () => {
+    updateWorkspace.mutate({
+      data: {
+        ...(playerColors ? { playerAccent: accent, playerControlForeground: foreground, playerControlBackground: background, posterTreatment } : {}),
+        ...(logo ? { logoInitials: initials } : {}),
+        ...(domain ? { customDomain: customDomain || null } : {}),
+      },
+    }, {
+      onSuccess: (data) => queryClient.setQueryData(getGetWorkspaceQueryKey(), data),
+    })
   }
 
   return (
     <div className="flex-1 p-8 overflow-y-auto">
       <div className="max-w-6xl mx-auto space-y-8">
-        
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Customization</h1>
-          <p className="text-muted-foreground mt-1">Brand your video player experience to match your company.</p>
-        </div>
-
+        <div><h1 className="text-3xl font-bold tracking-tight">Customization</h1><p className="text-muted-foreground mt-1">Add workspace identity and limited player styling. Product layout, navigation, and brand remain unchanged.</p></div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-          {/* Controls */}
-          <div className="space-y-8">
-            
-            <div className="space-y-4 border rounded-lg p-6 bg-card">
-              <h3 className="text-lg font-semibold border-b pb-2">Player Accent Color</h3>
-              <p className="text-sm text-muted-foreground mb-4">Choose a primary color for the timeline, buttons, and focused states in your embedded player.</p>
-              
-              <div className="flex items-center gap-4">
-                <div 
-                  className="w-12 h-12 rounded-md shadow-sm border" 
-                  style={{ backgroundColor: accent }} 
-                />
-                <Input 
-                  value={accent}
-                  onChange={(e) => setAccent(e.target.value)}
-                  className="w-32 font-mono uppercase"
-                  maxLength={7}
-                />
+          <div className="space-y-6">
+            <section className="space-y-4 border rounded-lg p-6 bg-card">
+              <h2 className="text-lg font-semibold">Player colors</h2>
+              <p className="text-sm text-muted-foreground">Accent and player controls only. Control colors must meet WCAG AA contrast.</p>
+              {restriction(playerColors)}
+              <div className="grid gap-3 sm:grid-cols-3">
+                <ColorField label="Accent" value={accent} onChange={setAccent} disabled={!playerColors} />
+                <ColorField label="Control foreground" value={foreground} onChange={setForeground} disabled={!playerColors} />
+                <ColorField label="Control background" value={background} onChange={setBackground} disabled={!playerColors} />
               </div>
-
-              <div className="flex flex-wrap gap-2 pt-2">
-                {SWATCHES.map((color) => (
-                  <button
-                    key={color}
-                    onClick={() => setAccent(color)}
-                    className="w-8 h-8 rounded-full border shadow-sm transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-offset-2"
-                    style={{ 
-                      backgroundColor: color,
-                      outlineColor: accent === color ? color : 'transparent' 
-                    }}
-                    aria-label={`Select color ${color}`}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-4 border rounded-lg p-6 bg-card">
-              <h3 className="text-lg font-semibold border-b pb-2">Watermark / Logo</h3>
-              <p className="text-sm text-muted-foreground mb-4">Fallback initials displayed in the player when no logo is provided.</p>
-              <div className="space-y-2">
-                <Label>Initials (1-3 chars)</Label>
-                <Input 
-                  value={initials}
-                  onChange={(e) => setInitials(e.target.value.substring(0, 3).toUpperCase())}
-                  className="w-24 uppercase font-bold"
-                  maxLength={3}
-                />
-              </div>
-            </div>
-
-            <Button size="lg" onClick={handleSave} disabled={updateWorkspace.isPending}>
-              {updateWorkspace.isPending ? "Saving..." : "Save Customization"}
-            </Button>
+              <div className="flex flex-wrap gap-2">{SWATCHES.map((color) => <button type="button" key={color} disabled={!playerColors} onClick={() => setAccent(color)} className="w-7 h-7 rounded-full border disabled:opacity-40" style={{ backgroundColor: color }} aria-label={`Select ${color}`} />)}</div>
+              <div className="space-y-2"><Label>Poster treatment</Label><select value={posterTreatment} disabled={!playerColors} onChange={(event) => setPosterTreatment(event.target.value as typeof posterTreatment)} className="h-9 w-full rounded-md border bg-background px-3 text-sm disabled:opacity-50"><option value="default">Default</option><option value="darken">Darken</option><option value="gradient">Gradient</option></select></div>
+            </section>
+            <section className="space-y-3 border rounded-lg p-6 bg-card">
+              <h2 className="text-lg font-semibold">Workspace logo</h2>{restriction(logo)}
+              <p className="text-sm text-muted-foreground">Logo assets are connected through the media asset flow; uploads are not available here.</p>
+              <p className="text-xs text-muted-foreground">Current reference: {workspace.logoObjectKey ?? "No logo asset connected"}</p>
+              <Label htmlFor="initials">Fallback initials</Label><Input id="initials" disabled={!logo} value={initials} onChange={(event) => setInitials(event.target.value.substring(0, 3).toUpperCase())} maxLength={3} className="w-24 uppercase font-bold" />
+            </section>
+            <section className="space-y-3 border rounded-lg p-6 bg-card">
+              <h2 className="text-lg font-semibold">Player watermark</h2>{restriction(watermark)}
+              <p className="text-sm text-muted-foreground">Watermark assets are connected through the media asset flow; uploads are not available here.</p>
+              <p className="text-xs text-muted-foreground">Current reference: {workspace.watermarkObjectKey ?? "No watermark asset connected"}</p>
+            </section>
+            <section className="space-y-3 border rounded-lg p-6 bg-card">
+              <h2 className="text-lg font-semibold">Custom domain</h2>{restriction(domain)}
+              <Label htmlFor="domain">Domain</Label><Input id="domain" disabled={!domain} placeholder="video.example.com" value={customDomain} onChange={(event) => setCustomDomain(event.target.value)} />
+              {workspace.customDomain && <p className="text-xs text-muted-foreground">{workspace.customDomainVerified ? "Verified" : "Awaiting verification"}</p>}
+            </section>
+            <Button size="lg" onClick={handleSave} disabled={updateWorkspace.isPending}>{updateWorkspace.isPending ? "Saving..." : "Save Customization"}</Button>
           </div>
-
-          {/* Preview */}
           <div className="space-y-4">
-            <h3 className="text-lg font-semibold text-muted-foreground">Live Player Preview</h3>
-            
-            <div className="rounded-xl overflow-hidden shadow-2xl ring-1 ring-border bg-black aspect-video relative flex flex-col justify-between group">
+            <h2 className="text-lg font-semibold text-muted-foreground">Live Player Preview</h2>
+            <div className="rounded-xl overflow-hidden shadow-2xl ring-1 ring-border bg-black aspect-video relative flex flex-col justify-between group" style={{ backgroundColor: background, color: foreground }}>
               {/* // MOCK: replaced at step 11 */}
-              <div className="absolute inset-0 bg-gradient-to-br from-zinc-800 to-black flex items-center justify-center pointer-events-none">
-                <div className="w-48 h-48 rounded-full border-4 border-white/5 flex items-center justify-center">
-                   <div className="w-24 h-24 rounded-full border-4 border-white/10" />
-                </div>
-              </div>
-
-              {/* Top Bar */}
-              <div className="w-full p-4 flex justify-between items-center bg-gradient-to-b from-black/80 to-transparent z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-                <div className="font-medium text-white shadow-sm flex items-center gap-3">
-                  <div className="w-8 h-8 rounded bg-white/20 backdrop-blur-md flex items-center justify-center text-sm font-bold" style={{ color: accent }}>
-                    {initials}
-                  </div>
-                  Preview Video Title
-                </div>
-                <div className="text-white/80 hover:text-white cursor-pointer">
-                  <Settings2 className="h-5 w-5" />
-                </div>
-              </div>
-
-              {/* Center Play Button */}
-              <div className="z-10 m-auto flex items-center justify-center">
-                <div 
-                  className="w-20 h-20 rounded-full flex items-center justify-center cursor-pointer hover:scale-105 transition-transform shadow-xl backdrop-blur-md"
-                  style={{ backgroundColor: accent }}
-                >
-                  <Play className="h-10 w-10 text-white ml-2" />
-                </div>
-              </div>
-
-              {/* Bottom Bar */}
-              <div className="w-full p-4 bg-gradient-to-t from-black/90 to-transparent z-10 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                {/* Scrubber */}
-                <div className="w-full h-1.5 bg-white/30 rounded-full cursor-pointer overflow-hidden flex relative">
-                   <div className="h-full w-1/3" style={{ backgroundColor: accent }} />
-                   <div className="w-3 h-3 rounded-full absolute top-1/2 -translate-y-1/2 shadow-sm left-1/3 -ml-1.5" style={{ backgroundColor: accent }} />
-                </div>
-                
-                {/* Controls */}
-                <div className="flex justify-between items-center text-white/90">
-                  <div className="flex gap-4 items-center">
-                    <Play className="h-5 w-5 cursor-pointer hover:text-white" />
-                    <span className="text-xs font-mono">01:23 / 04:56</span>
-                  </div>
-                  <div>
-                    <Maximize className="h-4 w-4 cursor-pointer hover:text-white" />
-                  </div>
-                </div>
-              </div>
+              <div className="absolute inset-0 bg-gradient-to-br from-zinc-800 to-black flex items-center justify-center pointer-events-none" />
+              <div className="z-10 m-auto flex items-center justify-center"><div className="w-20 h-20 rounded-full flex items-center justify-center shadow-xl" style={{ backgroundColor: accent }}><Play className="h-10 w-10 ml-2" color={foreground} /></div></div>
+              <div className="w-full p-4 z-10 flex justify-between items-center" style={{ backgroundColor: background, color: foreground }}><Settings2 className="h-5 w-5" /><Maximize className="h-4 w-4" /></div>
             </div>
-            
-            <p className="text-xs text-center text-muted-foreground mt-4">
-              Interact with the preview to see hover states and colors.
-            </p>
           </div>
-          
         </div>
       </div>
     </div>
   )
+}
+
+function ColorField({ label, value, onChange, disabled }: { label: string; value: string; onChange: (value: string) => void; disabled: boolean }) {
+  return <div className="space-y-2"><Label>{label}</Label><Input value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} maxLength={7} className="font-mono uppercase" /></div>
 }

@@ -6,8 +6,4 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface VideoInput {
-  /** @minLength 1 */
-  title: string;
-  description?: string;
-}
+export type MultipartUploadCredentialsPartsItemHeaders = {[key: string]: string};
