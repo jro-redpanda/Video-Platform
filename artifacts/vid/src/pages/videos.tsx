@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useMemo, useCallback, Fragment } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { useListVideos, useGetWorkspace, getListVideosQueryKey, useListFolders, useGetFolder, getListFoldersQueryKey, getGetFolderQueryKey } from "@workspace/api-client-react"
+import { useListVideos, useGetWorkspace, getListVideosQueryKey, useListFolders, useGetFolder, getListFoldersQueryKey, getGetFolderQueryKey, getGetVideoQueryKey } from "@workspace/api-client-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -16,6 +16,10 @@ import { DeleteVideoDialog } from "@/components/video-library/delete-video-dialo
 import { MoveVideoDialog } from "@/components/video-library/move-video-dialog"
 import { FolderGrid } from "@/components/folders/folder-grid"
 import { CreateFolderDialog, RenameFolderDialog, MoveFolderDialog, DeleteFolderDialog } from "@/components/folders/folder-dialogs"
+import { useVideoSelection } from "@/components/video-library/use-video-selection"
+import { BulkActionsBar } from "@/components/video-library/bulk-actions-bar"
+import { BulkMoveDialog, BulkVisibilityDialog, BulkDeleteDialog, BulkResultDialog, BulkResultContext } from "@/components/video-library/bulk-video-dialogs"
+import { useToast } from "@/components/ui/use-toast"
 
 export default function Videos() {
   const { data: workspace } = useGetWorkspace()
@@ -31,6 +35,18 @@ export default function Videos() {
   const [resetGeneration, setResetGeneration] = useState(0)
 
   const prevFiltersStr = useRef(JSON.stringify(filters))
+
+  const { selectedIds, toggleSelection, selectAll, clearSelection, handlePartialSuccess } = useVideoSelection()
+  const handleSearchInputChange = useCallback((value: string) => {
+    clearSelection()
+    setSearchInput(value)
+  }, [clearSelection])
+
+  // Bulk Dialog states
+  const [bulkMoveOpen, setBulkMoveOpen] = useState(false)
+  const [bulkVisibilityOpen, setBulkVisibilityOpen] = useState(false)
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
+  const [bulkResult, setBulkResult] = useState<BulkResultContext | null>(null)
 
   // Dialog states
   const [videoToDelete, setVideoToDelete] = useState<Video | null>(null)
@@ -75,10 +91,11 @@ export default function Videos() {
     if (prevFiltersStr.current !== currStr) {
       setAllVideos([])
       setCurrentCursor(undefined)
+      clearSelection()
       setResetGeneration(g => g + 1)
       prevFiltersStr.current = currStr
     }
-  }, [filters])
+  }, [filters, clearSelection])
 
   const queryParams = useMemo(() => ({
     search: filters.search || undefined,
@@ -93,12 +110,55 @@ export default function Videos() {
   const { data, isLoading, error, isFetching } = useListVideos(queryParams)
 
   const queryClient = useQueryClient()
+  const { toast } = useToast()
 
   const resetAndRefetch = useCallback(() => {
     setCurrentCursor(undefined)
     setResetGeneration(g => g + 1)
     queryClient.invalidateQueries({ queryKey: getListVideosQueryKey() })
-  }, [queryClient])
+    queryClient.invalidateQueries({ queryKey: getListFoldersQueryKey() })
+    if (filters.folder && filters.folder !== "root") {
+      queryClient.invalidateQueries({ queryKey: getGetFolderQueryKey(filters.folder) })
+    }
+  }, [queryClient, filters.folder])
+
+  const handleBulkSuccess = useCallback((context: BulkResultContext) => {
+    resetAndRefetch();
+
+    context.result.succeeded.forEach(id => {
+      queryClient.invalidateQueries({ queryKey: getGetVideoQueryKey(id) })
+    })
+
+    if (context.result.failed.length === 0) {
+      clearSelection();
+      toast({
+        title: "Success",
+        description: `Successfully processed ${context.result.succeeded.length} videos.`,
+      })
+    } else {
+      handlePartialSuccess(context.result.succeeded);
+      setBulkResult(context);
+    }
+  }, [resetAndRefetch, clearSelection, handlePartialSuccess, queryClient, toast])
+
+  const handleBulkRetrySuccess = useCallback((context: BulkResultContext) => {
+    resetAndRefetch();
+    context.result.succeeded.forEach(id => {
+      queryClient.invalidateQueries({ queryKey: getGetVideoQueryKey(id) })
+    })
+
+    if (context.result.failed.length === 0) {
+      clearSelection();
+      setBulkResult(null);
+      toast({
+        title: "Success",
+        description: `Successfully retried and processed ${context.result.succeeded.length} videos.`,
+      })
+    } else {
+      handlePartialSuccess(context.result.succeeded);
+      setBulkResult(context);
+    }
+  }, [resetAndRefetch, clearSelection, handlePartialSuccess, queryClient, toast])
 
   // Append items for pagination without duplicates
   useEffect(() => {
@@ -207,7 +267,7 @@ export default function Videos() {
           <>
             <VideoFiltersBar
               searchInput={searchInput}
-              setSearchInput={setSearchInput}
+            setSearchInput={handleSearchInputChange}
               filters={filters}
               setFilter={setFilter}
               hasActiveFilters={hasActiveFilters}
@@ -279,6 +339,9 @@ export default function Videos() {
                   setVideoToMove={setVideoToMove}
                   onUploadSuccess={resetAndRefetch}
                   folderId={filters.folder}
+                  selectedIds={selectedIds}
+                  onToggleSelection={toggleSelection}
+                  onSelectAll={selectAll}
                 />
 
                 {/* Load More */}
@@ -353,6 +416,46 @@ export default function Videos() {
             handleDeleteCurrentFolderSuccess()
           }
         }}
+      />
+
+      <BulkActionsBar
+        selectedCount={selectedIds.size}
+        onClear={clearSelection}
+        onMove={() => setBulkMoveOpen(true)}
+        onVisibility={() => setBulkVisibilityOpen(true)}
+        onDelete={() => setBulkDeleteOpen(true)}
+        canUpdate={canUpdate}
+        canDelete={canDelete}
+      />
+
+      <BulkMoveDialog
+        open={bulkMoveOpen}
+        onOpenChange={setBulkMoveOpen}
+        selectedIds={selectedIds}
+        allVideos={allVideos}
+        onSuccess={handleBulkSuccess}
+      />
+
+      <BulkVisibilityDialog
+        open={bulkVisibilityOpen}
+        onOpenChange={setBulkVisibilityOpen}
+        selectedIds={selectedIds}
+        onSuccess={handleBulkSuccess}
+      />
+
+      <BulkDeleteDialog
+        open={bulkDeleteOpen}
+        onOpenChange={setBulkDeleteOpen}
+        selectedIds={selectedIds}
+        onSuccess={handleBulkSuccess}
+      />
+
+      <BulkResultDialog
+        open={!!bulkResult}
+        onOpenChange={(open) => !open && setBulkResult(null)}
+        resultContext={bulkResult}
+        allVideos={allVideos}
+        onRetrySuccess={handleBulkRetrySuccess}
       />
     </div>
   )

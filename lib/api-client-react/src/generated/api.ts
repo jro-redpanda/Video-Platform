@@ -22,6 +22,9 @@ import type {
 import type {
   ActivityItem,
   AuthenticatedPlaybackVideo,
+  BulkVideoActionResult,
+  BulkVideoDeleteInput,
+  BulkVideoUpdate,
   CreatePlaybackEvents202,
   Dashboard,
   Folder,
@@ -503,6 +506,136 @@ export function useListVideos<TData = Awaited<ReturnType<typeof listVideos>>, TE
 
 
 
+
+export const getBulkUpdateVideosUrl = () => {
+
+
+
+
+  return `/api/videos/bulk`
+}
+
+export const bulkUpdateVideos = async (bulkVideoUpdate: BulkVideoUpdate, options?: Parameters<typeof customFetch>[1]): Promise<BulkVideoActionResult> => {
+
+  return customFetch<BulkVideoActionResult>(getBulkUpdateVideosUrl(),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(bulkVideoUpdate)
+  }
+);}
+
+
+
+
+
+export const getBulkUpdateVideosMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof bulkUpdateVideos>>, TError,{data: BodyType<BulkVideoUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof bulkUpdateVideos>>, TError,{data: BodyType<BulkVideoUpdate>}, TContext> => {
+
+const mutationKey = ['bulkUpdateVideos'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof bulkUpdateVideos>>, {data: BodyType<BulkVideoUpdate>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  bulkUpdateVideos(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type BulkUpdateVideosMutationResult = NonNullable<Awaited<ReturnType<typeof bulkUpdateVideos>>>
+    export type BulkUpdateVideosMutationBody = BodyType<BulkVideoUpdate>
+    export type BulkUpdateVideosMutationError = ErrorType<unknown>
+
+    export const useBulkUpdateVideos = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof bulkUpdateVideos>>, TError,{data: BodyType<BulkVideoUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof bulkUpdateVideos>>,
+        TError,
+        {data: BodyType<BulkVideoUpdate>},
+        TContext
+      > => {
+      return useMutation(getBulkUpdateVideosMutationOptions(options));
+    }
+
+export const getBulkDeleteVideosUrl = () => {
+
+
+
+
+  return `/api/videos/bulk-delete`
+}
+
+export const bulkDeleteVideos = async (bulkVideoDeleteInput: BulkVideoDeleteInput, options?: Parameters<typeof customFetch>[1]): Promise<BulkVideoActionResult> => {
+
+  return customFetch<BulkVideoActionResult>(getBulkDeleteVideosUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(bulkVideoDeleteInput)
+  }
+);}
+
+
+
+
+
+export const getBulkDeleteVideosMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof bulkDeleteVideos>>, TError,{data: BodyType<BulkVideoDeleteInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof bulkDeleteVideos>>, TError,{data: BodyType<BulkVideoDeleteInput>}, TContext> => {
+
+const mutationKey = ['bulkDeleteVideos'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof bulkDeleteVideos>>, {data: BodyType<BulkVideoDeleteInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  bulkDeleteVideos(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type BulkDeleteVideosMutationResult = NonNullable<Awaited<ReturnType<typeof bulkDeleteVideos>>>
+    export type BulkDeleteVideosMutationBody = BodyType<BulkVideoDeleteInput>
+    export type BulkDeleteVideosMutationError = ErrorType<unknown>
+
+    export const useBulkDeleteVideos = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof bulkDeleteVideos>>, TError,{data: BodyType<BulkVideoDeleteInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof bulkDeleteVideos>>,
+        TError,
+        {data: BodyType<BulkVideoDeleteInput>},
+        TContext
+      > => {
+      return useMutation(getBulkDeleteVideosMutationOptions(options));
+    }
 
 export const getListFoldersUrl = (params: ListFoldersParams,) => {
   const normalizedParams = new URLSearchParams();

@@ -125,6 +125,40 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VideoList"
+  /videos/bulk:
+    patch:
+      operationId: bulkUpdateVideos
+      tags: [videos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkVideoUpdate"
+      responses:
+        "200":
+          description: Ordered bulk video update result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkVideoActionResult"
+  /videos/bulk-delete:
+    post:
+      operationId: bulkDeleteVideos
+      tags: [videos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkVideoDeleteInput"
+      responses:
+        "200":
+          description: Ordered bulk video deletion result, including partial failures
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkVideoActionResult"
   /folders:
     get:
       operationId: listFolders
@@ -715,6 +749,69 @@ components:
           type: string
           enum: [private, unlisted, public]
         folderId: { type: ["string", "null"] }
+    BulkVideoUpdate:
+      oneOf:
+        - $ref: "#/components/schemas/BulkVideoMoveInput"
+        - $ref: "#/components/schemas/BulkVideoVisibilityInput"
+    BulkVideoMoveInput:
+      type: object
+      required: [operation, videoIds, folderId]
+      additionalProperties: false
+      properties:
+        operation: { type: string, enum: [move] }
+        videoIds:
+          type: array
+          minItems: 1
+          maxItems: 50
+          uniqueItems: true
+          items: { type: string, pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$" }
+        folderId:
+          type: ["string", "null"]
+          pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    BulkVideoVisibilityInput:
+      type: object
+      required: [operation, videoIds, visibility]
+      additionalProperties: false
+      properties:
+        operation: { type: string, enum: [visibility] }
+        videoIds:
+          type: array
+          minItems: 1
+          maxItems: 50
+          uniqueItems: true
+          items: { type: string, pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$" }
+        visibility:
+          type: string
+          enum: [private, unlisted, public]
+    BulkVideoDeleteInput:
+      type: object
+      required: [videoIds]
+      additionalProperties: false
+      properties:
+        videoIds:
+          type: array
+          minItems: 1
+          maxItems: 25
+          uniqueItems: true
+          items: { type: string, pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$" }
+    BulkVideoActionFailure:
+      type: object
+      required: [videoId, status, error]
+      properties:
+        videoId: { type: string, pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$" }
+        status: { type: integer, enum: [404, 409, 503] }
+        error: { type: string }
+    BulkVideoActionResult:
+      type: object
+      required: [succeeded, failed]
+      properties:
+        succeeded:
+          type: array
+          items: { type: string, pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$" }
+        failed:
+          type: array
+          items:
+            $ref: "#/components/schemas/BulkVideoActionFailure"
     FolderAncestor:
       type: object
       required: [id, name]

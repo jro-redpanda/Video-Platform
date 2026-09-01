@@ -27,7 +27,7 @@ export function FolderBrowser({ selectedId, onSelect, excludeFolderId }: FolderB
   })
 
   return (
-    <div className="border rounded-md flex flex-col h-[300px] overflow-hidden bg-background">
+    <div className="border rounded-md flex flex-col h-[min(300px,45dvh)] overflow-hidden bg-background">
       <div className="flex items-center gap-1 p-2 border-b bg-muted/30 overflow-x-auto whitespace-nowrap scrollbar-hide text-sm">
         <Button
           type="button"

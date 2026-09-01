@@ -167,6 +167,62 @@ export const ListVideosResponse = zod.object({
 })
 
 
+export const bulkUpdateVideosBodyOneVideoIdsItemRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$');
+export const bulkUpdateVideosBodyOneVideoIdsMax = 50;
+
+export const bulkUpdateVideosBodyOneFolderIdRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$');
+export const bulkUpdateVideosBodyTwoVideoIdsItemRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$');
+export const bulkUpdateVideosBodyTwoVideoIdsMax = 50;
+
+
+
+export const BulkUpdateVideosBody = zod.union([zod.object({
+  "operation": zod.enum(['move']),
+  "videoIds": zod.array(zod.string().regex(bulkUpdateVideosBodyOneVideoIdsItemRegExp)).min(1).max(bulkUpdateVideosBodyOneVideoIdsMax),
+  "folderId": zod.string().regex(bulkUpdateVideosBodyOneFolderIdRegExp).nullable()
+}),zod.object({
+  "operation": zod.enum(['visibility']),
+  "videoIds": zod.array(zod.string().regex(bulkUpdateVideosBodyTwoVideoIdsItemRegExp)).min(1).max(bulkUpdateVideosBodyTwoVideoIdsMax),
+  "visibility": zod.enum(['private', 'unlisted', 'public'])
+})])
+
+export const bulkUpdateVideosResponseSucceededItemRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$');
+export const bulkUpdateVideosResponseFailedItemVideoIdRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$');
+
+
+export const BulkUpdateVideosResponse = zod.object({
+  "succeeded": zod.array(zod.string().regex(bulkUpdateVideosResponseSucceededItemRegExp)),
+  "failed": zod.array(zod.object({
+  "videoId": zod.string().regex(bulkUpdateVideosResponseFailedItemVideoIdRegExp),
+  "status": zod.union([zod.literal(404),zod.literal(409),zod.literal(503)]),
+  "error": zod.string()
+}))
+})
+
+
+export const bulkDeleteVideosBodyVideoIdsItemRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$');
+export const bulkDeleteVideosBodyVideoIdsMax = 25;
+
+
+
+export const BulkDeleteVideosBody = zod.object({
+  "videoIds": zod.array(zod.string().regex(bulkDeleteVideosBodyVideoIdsItemRegExp)).min(1).max(bulkDeleteVideosBodyVideoIdsMax)
+})
+
+export const bulkDeleteVideosResponseSucceededItemRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$');
+export const bulkDeleteVideosResponseFailedItemVideoIdRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$');
+
+
+export const BulkDeleteVideosResponse = zod.object({
+  "succeeded": zod.array(zod.string().regex(bulkDeleteVideosResponseSucceededItemRegExp)),
+  "failed": zod.array(zod.object({
+  "videoId": zod.string().regex(bulkDeleteVideosResponseFailedItemVideoIdRegExp),
+  "status": zod.union([zod.literal(404),zod.literal(409),zod.literal(503)]),
+  "error": zod.string()
+}))
+})
+
+
 export const ListFoldersQueryParams = zod.object({
   "parentId": zod.coerce.string()
 })

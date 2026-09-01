@@ -23,6 +23,7 @@ async function buildAll() {
       path.resolve(artifactDir, "src/embed-step11-smoke.ts"),
       path.resolve(artifactDir, "src/video-library-step12-smoke.ts"),
       path.resolve(artifactDir, "src/folders-step13-smoke.ts"),
+      path.resolve(artifactDir, "src/bulk-video-step14-smoke.ts"),
     ],
     platform: "node",
     bundle: true,

@@ -4,3 +4,4 @@
 - [Provider side-effect idempotency](provider-side-effect-idempotency.md) — persist claims before non-idempotent provider creates; bound queue repair by durable dedupe retention.
 - [Video library pagination](video-library-pagination.md) — sign and scope cursors, bind traversals to an initial snapshot, and explicitly rehydrate client pagination after mutations.
 - [Folder hierarchy concurrency](folder-hierarchy-concurrency.md) — serialize every mutation that changes folder membership with hierarchy create/move/delete checks.
+- [Strict union request validation](strict-union-request-validation.md) — keep raw-key boundary guards for mutually exclusive OpenAPI bodies generated through Orval/Zod.

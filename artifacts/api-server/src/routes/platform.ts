@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gt, isNull, lt, lte, or, sql, type SQL } from "drizzle-orm";
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request } from "express";
 import { runtimeConfig } from "../lib/config";
 import {
   auditLogsTable,
@@ -20,6 +20,10 @@ import {
   webhookEventsTable,
 } from "@workspace/db";
 import {
+  BulkDeleteVideosBody,
+  BulkDeleteVideosResponse,
+  BulkUpdateVideosBody,
+  BulkUpdateVideosResponse,
   GetDashboardResponse,
   GetVideoParams,
   GetVideoResponse,
@@ -855,6 +859,8 @@ router.get("/videos/:videoId/playback/source", requirePermission("videos.read"),
   }
 });
 
+router.patch("/videos/bulk", requirePermission("videos.update"), bulkUpdateVideos);
+
 router.patch("/videos/:videoId", requirePermission("videos.update"), async (req, res) => {
   const { videoId } = UpdateVideoParams.parse(req.params);
   const update = UpdateVideoBody.parse(req.body);
@@ -898,8 +904,118 @@ router.patch("/videos/:videoId", requirePermission("videos.update"), async (req,
   res.json(UpdateVideoResponse.parse(result.video));
 });
 
-router.delete("/videos/:videoId", requirePermission("videos.delete"), async (req, res) => {
+type VideoActionFailure = {
+  videoId: string;
+  status: 404 | 409 | 503;
+  error: string;
+};
+
+async function bulkUpdateVideos(req: Request, res: import("express").Response): Promise<void> {
+  const parsed = BulkUpdateVideosBody.safeParse(req.body);
+  const raw = isPlainObject(req.body) ? req.body : undefined;
+  const operationKeys = raw
+    ? ["folderId", "visibility"].filter((key) => Object.prototype.hasOwnProperty.call(raw, key))
+    : [];
+  const allowedKeys = raw
+    ? Object.keys(raw).every((key) => ["operation", "videoIds", "folderId", "visibility"].includes(key))
+    : false;
+  if (!parsed.success || !raw || !allowedKeys || operationKeys.length !== 1
+    || (parsed.success && parsed.data.operation !== operationKeys[0].replace("folderId", "move"))
+    || new Set(parsed.data.videoIds).size !== parsed.data.videoIds.length) {
+    res.status(400).json({ error: "Invalid bulk video update." });
+    return;
+  }
+  const input = parsed.data;
+  const folderOperation = input.operation === "move";
+  const folderId = folderOperation ? input.folderId : undefined;
+  const visibility = folderOperation ? undefined : input.visibility;
+  const result = await withTenantDb(req.tenant, async (tx) => {
+    if (folderOperation) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${req.tenant.organizationId}))`);
+      if (folderId) {
+        const [folder] = await tx.select({ id: foldersTable.id }).from(foldersTable).where(and(
+          eq(foldersTable.organizationId, req.tenant.organizationId),
+          eq(foldersTable.id, folderId),
+        )).limit(1);
+        if (!folder) {
+          return {
+            succeeded: [],
+            failed: input.videoIds.map((videoId): VideoActionFailure => ({
+              videoId, status: 404, error: "Folder not found",
+            })),
+          };
+        }
+      }
+    }
+    const succeeded: string[] = [];
+    const failed: VideoActionFailure[] = [];
+    for (const videoId of input.videoIds) {
+      const [current] = await tx.select({ id: videosTable.id, title: videosTable.title })
+        .from(videosTable).where(scopedVideoWhere(req.tenant.organizationId, videoId)).limit(1);
+      if (!current) {
+        failed.push({ videoId, status: 404, error: "Video not found" });
+        continue;
+      }
+      const [updated] = await tx.update(videosTable).set(
+        folderOperation ? { folderId } : { visibility: visibility! },
+      ).where(scopedVideoWhere(req.tenant.organizationId, videoId)).returning({ id: videosTable.id });
+      if (!updated) {
+        failed.push({ videoId, status: 404, error: "Video not found" });
+        continue;
+      }
+      await tx.insert(auditLogsTable).values({
+        organizationId: req.tenant.organizationId,
+        actorUserId: req.tenant.userId,
+        action: folderOperation ? "moved video" : "updated video",
+        subjectType: "video",
+        subjectId: videoId,
+        subjectLabel: current.title,
+      });
+      succeeded.push(videoId);
+    }
+    return { succeeded, failed };
+  });
+  res.json(BulkUpdateVideosResponse.parse(result));
+}
+
+router.post("/videos/bulk-delete", requirePermission("videos.delete"), async (req, res): Promise<void> => {
+  const parsed = BulkDeleteVideosBody.safeParse(req.body);
+  const raw = isPlainObject(req.body) ? req.body : undefined;
+  if (!parsed.success || !raw || Object.keys(raw).some((key) => key !== "videoIds")
+    || new Set(parsed.data.videoIds).size !== parsed.data.videoIds.length) {
+    res.status(400).json({ error: "Invalid bulk video deletion." });
+    return;
+  }
+  const succeeded: string[] = [];
+  const failed: VideoActionFailure[] = [];
+  // Provider deletion is intentionally sequential. Each non-idempotent provider
+  // call completes (or is quarantined) before the next durable claim is acquired.
+  for (const videoId of parsed.data.videoIds) {
+    const outcome = await deleteVideoDurably(req, videoId);
+    if (outcome.status === 204) succeeded.push(videoId);
+    else failed.push({
+      videoId,
+      status: outcome.status,
+      error: outcome.status === 503 ? "Video deletion could not be completed." : outcome.error,
+    });
+  }
+  res.json(BulkDeleteVideosResponse.parse({ succeeded, failed }));
+});
+
+router.delete("/videos/:videoId", requirePermission("videos.delete"), async (req, res): Promise<void> => {
   const { videoId } = GetVideoParams.parse(req.params);
+  const outcome = await deleteVideoDurably(req, videoId);
+  if (outcome.status === 204) {
+    res.sendStatus(204);
+    return;
+  }
+  res.status(outcome.status).json({ error: outcome.error });
+});
+
+async function deleteVideoDurably(
+  req: Request,
+  videoId: string,
+): Promise<{ status: 204 } | { status: 404 | 409 | 503; error: string }> {
   const organizationId = req.tenant.organizationId;
   const video = await withTenantDb(req.tenant, async (tx) => {
     const [row] = await tx.select().from(videosTable)
@@ -907,8 +1023,7 @@ router.delete("/videos/:videoId", requirePermission("videos.delete"), async (req
     return row;
   });
   if (!video) {
-    res.status(404).json({ error: "Video not found" });
-    return;
+    return { status: 404, error: "Video not found" };
   }
   if (video.reconciliationRequired || video.deletionClaim) {
     if (!video.reconciliationRequired && video.deletionClaim) {
@@ -919,14 +1034,12 @@ router.delete("/videos/:videoId", requirePermission("videos.delete"), async (req
         initializationRetryable: false,
       }).where(scopedVideoWhere(organizationId, videoId)));
     }
-    res.status(409).json({ error: "Video deletion requires provider reconciliation." });
-    return;
+    return { status: 409, error: "Video deletion requires provider reconciliation." };
   }
 
   if (!video.providerAssetId) {
     await withTenantDb(req.tenant, (tx) => deleteOwnedVideoMetadata(tx, organizationId, videoId));
-    res.sendStatus(204);
-    return;
+    return { status: 204 };
   }
   if (!video.providerAccountId || !video.providerTenantSpaceId) {
     await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
@@ -935,8 +1048,7 @@ router.delete("/videos/:videoId", requirePermission("videos.delete"), async (req
       uploadFailureDetail: "Deletion requires provider reconciliation.",
       initializationRetryable: false,
     }).where(scopedVideoWhere(organizationId, videoId)));
-    res.status(409).json({ error: "Video deletion requires provider reconciliation." });
-    return;
+    return { status: 409, error: "Video deletion requires provider reconciliation." };
   }
 
   const claim = randomUUID();
@@ -949,8 +1061,7 @@ router.delete("/videos/:videoId", requirePermission("videos.delete"), async (req
     sql`${videosTable.reconciliationRequired} is null`,
   )).returning({ id: videosTable.id }));
   if (!claimed) {
-    res.status(409).json({ error: "Video deletion is already in progress or requires reconciliation." });
-    return;
+    return { status: 409, error: "Video deletion is already in progress or requires reconciliation." };
   }
 
   const linkage = await withTenantDb(req.tenant, async (tx) => {
@@ -968,8 +1079,7 @@ router.delete("/videos/:videoId", requirePermission("videos.delete"), async (req
     await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
       deletionClaim: null, deletionClaimedAt: null,
     }).where(and(scopedVideoWhere(organizationId, videoId), eq(videosTable.deletionClaim, claim))));
-    res.status(503).json({ error: "Video provider is unavailable." });
-    return;
+    return { status: 503, error: "Video provider is unavailable." };
   }
 
   let provider;
@@ -982,8 +1092,7 @@ router.delete("/videos/:videoId", requirePermission("videos.delete"), async (req
       deletionClaim: null, deletionClaimedAt: null,
     }).where(and(scopedVideoWhere(organizationId, videoId), eq(videosTable.deletionClaim, claim))));
     req.log.error({ err: error, videoId }, "Video provider resolution failed before deletion");
-    res.status(503).json({ error: "Video provider is unavailable." });
-    return;
+    return { status: 503, error: "Video provider is unavailable." };
   }
 
   try {
@@ -996,13 +1105,12 @@ router.delete("/videos/:videoId", requirePermission("videos.delete"), async (req
       initializationRetryable: false,
     }).where(and(scopedVideoWhere(organizationId, videoId), eq(videosTable.deletionClaim, claim))));
     req.log.error({ err: error, videoId }, "Video provider deletion outcome is ambiguous");
-    res.status(503).json({ error: "Video deletion could not be confirmed and requires reconciliation." });
-    return;
+    return { status: 503, error: "Video deletion could not be confirmed and requires reconciliation." };
   }
 
   try {
     await withTenantDb(req.tenant, (tx) => deleteOwnedVideoMetadata(tx, organizationId, videoId, claim));
-    res.sendStatus(204);
+    return { status: 204 };
   } catch (error) {
     await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
       status: "error",
@@ -1011,9 +1119,13 @@ router.delete("/videos/:videoId", requirePermission("videos.delete"), async (req
       initializationRetryable: false,
     }).where(and(scopedVideoWhere(organizationId, videoId), eq(videosTable.deletionClaim, claim))));
     req.log.error({ err: error, videoId }, "Local metadata deletion failed after provider deletion");
-    res.status(503).json({ error: "Video deletion could not be confirmed and requires reconciliation." });
+    return { status: 503, error: "Video deletion could not be confirmed and requires reconciliation." };
   }
-});
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 async function deleteOwnedVideoMetadata(
   tx: TenantTransaction,

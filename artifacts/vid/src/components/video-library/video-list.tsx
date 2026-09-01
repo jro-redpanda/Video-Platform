@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Card } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Play, MoreHorizontal, Trash2, Video as VideoIcon, FolderInput } from "lucide-react"
 import { formatDate, formatDuration } from "@/lib/utils"
 import type { Video } from "@workspace/api-client-react"
@@ -27,6 +28,9 @@ interface VideoListProps {
   setVideoToMove: (video: Video) => void;
   onUploadSuccess: () => void;
   folderId?: string;
+  selectedIds?: Set<string>;
+  onToggleSelection?: (id: string) => void;
+  onSelectAll?: (ids: string[]) => void;
 }
 
 export function VideoList({
@@ -39,8 +43,25 @@ export function VideoList({
   setVideoToDelete,
   setVideoToMove,
   onUploadSuccess,
-  folderId
+  folderId,
+  selectedIds = new Set(),
+  onToggleSelection,
+  onSelectAll
 }: VideoListProps) {
+  const isSelectable = canUpdate || canDelete;
+  const allLoadedIds = allVideos.map(v => v.id);
+  const allSelected = allLoadedIds.length > 0 && allLoadedIds.every(id => selectedIds.has(id));
+  const someSelected = allLoadedIds.some(id => selectedIds.has(id));
+
+  const handleSelectAll = (checked: boolean) => {
+    if (!onSelectAll) return;
+    if (checked) {
+      onSelectAll(allLoadedIds);
+    } else {
+      onSelectAll([]);
+    }
+  };
+
   return (
     <>
       {/* Desktop Table */}
@@ -48,6 +69,15 @@ export function VideoList({
         <Table>
           <TableHeader className="bg-muted/50">
             <TableRow>
+              {isSelectable && (
+                <TableHead className="w-[40px] pl-4 pr-0">
+                  <Checkbox
+                    checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                    onCheckedChange={handleSelectAll}
+                    aria-label="Select all videos"
+                  />
+                </TableHead>
+              )}
               <TableHead className="w-[400px]">Video</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Visibility</TableHead>
@@ -61,6 +91,11 @@ export function VideoList({
             {isLoading && !allVideos.length ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
+                  {isSelectable && (
+                    <TableCell className="pl-4 pr-0">
+                      <Skeleton className="h-4 w-4 rounded-sm" />
+                    </TableCell>
+                  )}
                   <TableCell><div className="flex gap-4"><Skeleton className="h-12 w-20 rounded-md" /><div className="space-y-2 py-1"><Skeleton className="h-4 w-48" /><Skeleton className="h-3 w-32" /></div></div></TableCell>
                   <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
                   <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
@@ -71,8 +106,23 @@ export function VideoList({
                 </TableRow>
               ))
             ) : (
-              allVideos.map((video) => (
-                <TableRow key={video.id} data-testid={`row-video-${video.id}`} className="group hover:bg-muted/50 transition-colors">
+              allVideos.map((video) => {
+                const isSelected = selectedIds.has(video.id);
+                return (
+                <TableRow
+                  key={video.id}
+                  data-testid={`row-video-${video.id}`}
+                  className={`group hover:bg-muted/50 transition-colors ${isSelected ? 'bg-primary/5' : ''}`}
+                >
+                  {isSelectable && (
+                    <TableCell className="pl-4 pr-0">
+                      <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={() => onToggleSelection?.(video.id)}
+                        aria-label={`Select ${video.title}`}
+                      />
+                    </TableCell>
+                  )}
                   <TableCell>
                     <div className="flex items-center gap-4">
                       <div
@@ -140,7 +190,8 @@ export function VideoList({
                     </DropdownMenu>
                   </TableCell>
                 </TableRow>
-              ))
+                )
+              })
             )}
           </TableBody>
         </Table>
@@ -148,6 +199,18 @@ export function VideoList({
 
       {/* Mobile List */}
       <div className="md:hidden flex flex-col gap-3">
+        {isSelectable && allVideos.length > 0 && (
+          <div className="flex items-center gap-2 px-1 mb-1">
+            <Checkbox
+              id="select-all-mobile"
+              checked={allSelected ? true : someSelected ? "indeterminate" : false}
+              onCheckedChange={handleSelectAll}
+            />
+            <label htmlFor="select-all-mobile" className="text-sm font-medium cursor-pointer">
+              Select All
+            </label>
+          </div>
+        )}
         {isLoading && !allVideos.length ? (
           Array.from({ length: 4 }).map((_, i) => (
             <Card key={i} className="overflow-hidden shadow-sm">
@@ -161,9 +224,24 @@ export function VideoList({
             </Card>
           ))
         ) : (
-          allVideos.map(video => (
-            <Card key={video.id} className="overflow-hidden shadow-sm border" data-testid={`card-video-${video.id}`}>
-              <div className="flex p-3 gap-4">
+          allVideos.map(video => {
+            const isSelected = selectedIds.has(video.id);
+            return (
+            <Card
+              key={video.id}
+              className={`overflow-hidden shadow-sm border ${isSelected ? 'bg-primary/5 border-primary/20' : ''}`}
+              data-testid={`card-video-${video.id}`}
+            >
+              <div className="flex p-3 gap-4 relative">
+                {isSelectable && (
+                  <div className="absolute top-2 left-2 z-10 bg-background/80 rounded-sm">
+                    <Checkbox
+                      checked={isSelected}
+                      onCheckedChange={() => onToggleSelection?.(video.id)}
+                      aria-label={`Select ${video.title}`}
+                    />
+                  </div>
+                )}
                 <div
                   className="w-28 h-16 rounded-md overflow-hidden flex items-center justify-center text-white flex-shrink-0"
                   style={{ backgroundColor: video.thumbnailColor || '#333' }}
@@ -215,7 +293,8 @@ export function VideoList({
                 </div>
               </div>
             </Card>
-          ))
+            )
+          })
         )}
       </div>
 

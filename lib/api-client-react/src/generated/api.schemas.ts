@@ -276,6 +276,88 @@ export interface VideoUpdate {
   folderId?: string | null;
 }
 
+export type BulkVideoMoveInputOperation = typeof BulkVideoMoveInputOperation[keyof typeof BulkVideoMoveInputOperation];
+
+
+export const BulkVideoMoveInputOperation = {
+  move: 'move',
+} as const;
+
+export interface BulkVideoMoveInput {
+  operation: BulkVideoMoveInputOperation;
+  /**
+     * @minItems 1
+     * @maxItems 50
+     * @items.pattern ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$
+     */
+  videoIds: string[];
+  /**
+     * @nullable
+     * @pattern ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$
+     */
+  folderId: string | null;
+}
+
+export type BulkVideoVisibilityInputOperation = typeof BulkVideoVisibilityInputOperation[keyof typeof BulkVideoVisibilityInputOperation];
+
+
+export const BulkVideoVisibilityInputOperation = {
+  visibility: 'visibility',
+} as const;
+
+export type BulkVideoVisibilityInputVisibility = typeof BulkVideoVisibilityInputVisibility[keyof typeof BulkVideoVisibilityInputVisibility];
+
+
+export const BulkVideoVisibilityInputVisibility = {
+  private: 'private',
+  unlisted: 'unlisted',
+  public: 'public',
+} as const;
+
+export interface BulkVideoVisibilityInput {
+  operation: BulkVideoVisibilityInputOperation;
+  /**
+     * @minItems 1
+     * @maxItems 50
+     * @items.pattern ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$
+     */
+  videoIds: string[];
+  visibility: BulkVideoVisibilityInputVisibility;
+}
+
+export type BulkVideoUpdate = BulkVideoMoveInput | BulkVideoVisibilityInput;
+
+export interface BulkVideoDeleteInput {
+  /**
+     * @minItems 1
+     * @maxItems 25
+     * @items.pattern ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$
+     */
+  videoIds: string[];
+}
+
+export type BulkVideoActionFailureStatus = typeof BulkVideoActionFailureStatus[keyof typeof BulkVideoActionFailureStatus];
+
+
+export const BulkVideoActionFailureStatus = {
+  NUMBER_404: 404,
+  NUMBER_409: 409,
+  NUMBER_503: 503,
+} as const;
+
+export interface BulkVideoActionFailure {
+  /** @pattern ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ */
+  videoId: string;
+  status: BulkVideoActionFailureStatus;
+  error: string;
+}
+
+export interface BulkVideoActionResult {
+  /** @items.pattern ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ */
+  succeeded: string[];
+  failed: BulkVideoActionFailure[];
+}
+
 export interface Folder {
   id: string;
   /** @nullable */
