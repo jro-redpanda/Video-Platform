@@ -33,9 +33,16 @@ export class Step7SmokeVideoProvider implements VideoProvider {
       expiresAt: "2030-01-01T00:10:00.000Z",
     };
   }
-  async getAssetStatus(_space: TenantSpace, _asset: Asset): Promise<AssetStatus> { throw new Error("Test-only provider supports provisioning only"); }
+  async getAssetStatus(_space: TenantSpace, _asset: Asset): Promise<AssetStatus> { throw new Error("Test-only provider does not simulate status polling"); }
   async deleteAsset(_space: TenantSpace, _asset: Asset) { this.deleteAssetCalls += 1; }
-  async getPlaybackSources(_space: TenantSpace, _asset: Asset): Promise<PlaybackSources> { throw new Error("Test-only provider supports provisioning only"); }
+  async getPlaybackSources(_space: TenantSpace, asset: Asset): Promise<PlaybackSources> {
+    const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    return {
+      hlsUrl: `https://playback.test.invalid/${stable(asset.id)}/master.m3u8?expires=${encodeURIComponent(expiresAt)}`,
+      posterUrl: `https://playback.test.invalid/${stable(asset.id)}/poster.jpg?expires=${encodeURIComponent(expiresAt)}`,
+      expiresAt,
+    };
+  }
   verifyEncodeCompletionCallback(_rawBody: Buffer, _headers: Readonly<Record<string, string | string[] | undefined>>): EncodeCompletionEvent | null { return null; }
 }
 

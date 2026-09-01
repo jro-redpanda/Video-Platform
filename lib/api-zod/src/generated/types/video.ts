@@ -5,6 +5,7 @@
  * Multi-tenant video platform API
  * OpenAPI spec version: 0.1.0
  */
+import type { VideoObject } from './videoObject';
 import type { VideoStatus } from './videoStatus';
 import type { VideoVisibility } from './videoVisibility';
 
@@ -19,4 +20,8 @@ export interface Video {
   thumbnailColor: string;
   plays: number;
   completionRate: number;
+  embedUrl?: string;
+  embedPath?: string;
+  embedCode?: string;
+  videoObject?: VideoObject;
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react"
 import { useParams, Link } from "wouter"
-import { useGetVideo, useUpdateVideo, getGetVideoQueryKey } from "@workspace/api-client-react"
+import { useGetVideo, useUpdateVideo, getGetVideoQueryKey, useGetAuthenticatedVideoPlayback, getGetAuthenticatedVideoPlaybackQueryKey } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,20 +10,31 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ArrowLeft, Play, Copy, ExternalLink, Activity } from "lucide-react"
+import { ArrowLeft, Copy, ExternalLink, Activity, Check, XCircle } from "lucide-react"
 import { formatDate, formatDuration, formatNumber } from "@/lib/utils"
+import { Player } from "@/components/player"
 
 export default function VideoDetail() {
   const { id } = useParams<{ id: string }>()
   const { data: video, isLoading } = useGetVideo(id)
-  
+  const { data: playbackData } = useGetAuthenticatedVideoPlayback(id, {
+    query: {
+      queryKey: getGetAuthenticatedVideoPlaybackQueryKey(id),
+      retry: (failureCount, error: any) => {
+        if (error?.status === 404 || error?.status === 503) return false;
+        return failureCount < 3;
+      }
+    }
+  })
+
   const queryClient = useQueryClient()
   const updateVideo = useUpdateVideo()
-  
-  // Local state for debounced saves
+
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
   const initializedId = useRef<string | null>(null)
+
+  const [copyStatus, setCopyStatus] = useState<"idle" | "success" | "error">("idle")
 
   useEffect(() => {
     if (video && initializedId.current !== id) {
@@ -36,17 +47,27 @@ export default function VideoDetail() {
   const handleUpdate = (updates: any) => {
     updateVideo.mutate({ videoId: id, data: updates }, {
       onSuccess: (updatedData) => {
-        // Optimistic update
-        queryClient.setQueryData(getGetVideoQueryKey(id), (old: any) => 
+        queryClient.setQueryData(getGetVideoQueryKey(id), (old: any) =>
           old ? { ...old, ...updatedData } : old
         )
       }
     })
   }
 
-  // Handle visibility change immediately
   const handleVisibilityChange = (value: string) => {
-    handleUpdate({ visibility: value as any })
+    handleUpdate({ visibility: value })
+  }
+
+  const handleCopy = async () => {
+    if (!video?.embedCode) return;
+    try {
+      await navigator.clipboard.writeText(video.embedCode);
+      setCopyStatus("success");
+    } catch (err) {
+      setCopyStatus("error");
+    } finally {
+      setTimeout(() => setCopyStatus("idle"), 2000);
+    }
   }
 
   if (isLoading && !video) {
@@ -57,11 +78,18 @@ export default function VideoDetail() {
     return <div className="p-8 text-center">Video not found.</div>
   }
 
-  // PRELIMINARY SCAFFOLDING: replace this embed generation at Step 11.
-  // MOCK: replaced at step 11
-  const basePath = import.meta.env.BASE_URL.replace(/\/$/, "")
-  const embedUrl = new URL(`${basePath}/v/${video.id}`, window.location.origin).toString()
-  const embedCode = `<iframe src="${embedUrl}" width="100%" height="100%" frameborder="0" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen></iframe>`
+  const embedUrl = video.embedUrl || ""
+  const embedCode = video.embedCode || ""
+  const embedReady = !!video.embedCode && video.status === 'ready'
+
+  const src = playbackData?.sourceUrl
+    ? {
+        src: playbackData.sourceUrl,
+        type: playbackData.sourceType === 'hls' ? 'application/x-mpegurl' : 'video/mp4'
+      }
+    : null;
+
+  const isPlayable = video.status === 'ready' && !!src;
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-secondary/30">
@@ -80,9 +108,9 @@ export default function VideoDetail() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="outline" className="gap-2" asChild>
-            <a href={embedUrl} target="_blank" rel="noreferrer">
-            <ExternalLink className="h-4 w-4" /> Preview
+          <Button variant="outline" className="gap-2" asChild disabled={!embedUrl}>
+            <a href={embedUrl || '#'} target="_blank" rel="noreferrer">
+              <ExternalLink className="h-4 w-4" /> Preview
             </a>
           </Button>
           <Button className="gap-2" onClick={() => handleUpdate({ title, description })}>
@@ -93,19 +121,27 @@ export default function VideoDetail() {
 
       <div className="flex-1 overflow-y-auto p-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-6xl mx-auto">
-          
+
           <div className="lg:col-span-2 space-y-8">
             {/* Player Preview */}
-            <div 
-              className="aspect-video bg-black rounded-lg overflow-hidden relative shadow-lg ring-1 ring-border flex items-center justify-center group cursor-pointer"
-              style={{ background: `linear-gradient(to bottom right, ${video.thumbnailColor || '#333'}, #111)` }}
-            >
-              <div className="w-16 h-16 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white transition-transform group-hover:scale-110">
-                <Play className="h-8 w-8 ml-1" />
-              </div>
-              <div className="absolute bottom-4 right-4 bg-black/60 backdrop-blur-md text-white text-xs font-mono px-2 py-1 rounded">
-                {formatDuration(video.durationSeconds)}
-              </div>
+            <div className="w-full shadow-lg ring-1 ring-border rounded-lg overflow-hidden bg-black relative">
+               <Player
+                 title={video.title}
+                 src={isPlayable ? src : null}
+                 poster={playbackData?.posterUrl || null}
+                 accentColor={playbackData?.playerAccent || video.thumbnailColor}
+                 controlForegroundColor={playbackData?.playerControlForeground || '#ffffff'}
+                 controlBackgroundColor={playbackData?.playerControlBackground || '#000000'}
+                 posterTreatment={playbackData?.posterTreatment || 'default'}
+                 status={!isPlayable ? video.status : undefined}
+                 message={video.status === 'ready' && !src ? "Playback source is not connected." : undefined}
+                 className="rounded-lg"
+               />
+               {isPlayable && (
+                 <div className="absolute top-4 right-4 bg-black/60 backdrop-blur-md text-white text-xs font-mono px-2 py-1 rounded pointer-events-none z-10">
+                   {formatDuration(video.durationSeconds)}
+                 </div>
+               )}
             </div>
 
             <Tabs defaultValue="metadata" className="w-full">
@@ -114,46 +150,48 @@ export default function VideoDetail() {
                 <TabsTrigger value="embed" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:bg-transparent px-0 py-2">Embed & Links</TabsTrigger>
                 <TabsTrigger value="analytics" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:bg-transparent px-0 py-2">Analytics</TabsTrigger>
               </TabsList>
-              
+
               <TabsContent value="metadata" className="space-y-6">
                 <div className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="title">Title</Label>
-                    <Input 
-                      id="title" 
-                      value={title} 
+                    <Input
+                      id="title"
+                      value={title}
                       onChange={e => setTitle(e.target.value)}
                       className="text-base"
                     />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="description">Description</Label>
-                    <Textarea 
-                      id="description" 
-                      value={description} 
+                    <Textarea
+                      id="description"
+                      value={description}
                       onChange={e => setDescription(e.target.value)}
                       className="min-h-[150px]"
                     />
                   </div>
                 </div>
               </TabsContent>
-              
+
               <TabsContent value="embed" className="space-y-6">
                 <div className="space-y-2">
                   <Label>Embed Code</Label>
                   <div className="relative">
-                    <Textarea 
-                      readOnly 
-                      value={embedCode}
+                    <Textarea
+                      readOnly
+                      value={embedReady ? embedCode : "Embed code will be available once the video is ready."}
                       className="font-mono text-xs bg-muted min-h-[100px]"
                     />
-                    <Button 
-                      size="sm" 
-                      variant="secondary" 
+                    <Button
+                      size="sm"
+                      variant={copyStatus === "error" ? "destructive" : "secondary"}
                       className="absolute top-2 right-2 gap-1.5 h-7"
-                      onClick={() => navigator.clipboard.writeText(embedCode)}
+                      onClick={handleCopy}
+                      disabled={!embedReady || copyStatus !== "idle"}
                     >
-                      <Copy className="h-3 w-3" /> Copy
+                      {copyStatus === "success" ? <Check className="h-3 w-3" /> : copyStatus === "error" ? <XCircle className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                      {copyStatus === "success" ? "Copied!" : copyStatus === "error" ? "Failed" : "Copy"}
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground mt-2">Place this iframe in your HTML to embed the player.</p>
@@ -217,7 +255,7 @@ export default function VideoDetail() {
               </div>
             </div>
           </div>
-          
+
         </div>
       </div>
     </div>

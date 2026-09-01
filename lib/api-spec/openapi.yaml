@@ -151,6 +151,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Video"
+  /videos/{videoId}/playback:
+    get:
+      operationId: getAuthenticatedVideoPlayback
+      tags: [videos]
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      responses:
+        "200":
+          description: Tenant-scoped provider-neutral playback metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthenticatedPlaybackVideo"
+  /videos/{videoId}/playback/source:
+    get:
+      operationId: getAuthenticatedVideoPlaybackSource
+      tags: [videos]
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      responses:
+        "307":
+          description: Authenticated redirect to a short-lived signed playback manifest
+          headers:
+            Location:
+              schema: { type: string }
   /videos/{videoId}/upload-complete:
     post:
       operationId: completeVideoUpload
@@ -321,6 +346,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PublicVideo"
+  /public/videos/{videoId}/source:
+    get:
+      operationId: getPublicVideoSource
+      tags: [videos]
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      responses:
+        "307":
+          description: Redirect to a short-lived signed playback manifest
+          headers:
+            Location:
+              schema: { type: string }
   /public/playback-events:
     post:
       operationId: createPlaybackEvents
@@ -465,6 +502,22 @@ components:
         thumbnailColor: { type: string }
         plays: { type: number }
         completionRate: { type: number }
+        embedUrl: { type: string }
+        embedPath: { type: string }
+        embedCode: { type: string }
+        videoObject:
+          $ref: "#/components/schemas/VideoObject"
+    VideoObject:
+      type: object
+      required: ["@context", "@type", name, description, embedUrl, duration]
+      properties:
+        "@context": { type: string, enum: ["https://schema.org"] }
+        "@type": { type: string, enum: [VideoObject] }
+        name: { type: string }
+        description: { type: string }
+        embedUrl: { type: string }
+        duration: { type: string }
+        thumbnailUrl: { type: string }
     VideoUploadInput:
       type: object
       required: [title, fileName, contentType, contentLength]
@@ -593,7 +646,7 @@ components:
         expiresAt: { type: string, format: date-time }
     PublicVideo:
       type: object
-      required: [id, title, description, status, visibility, durationSeconds, thumbnailColor, playerAccent]
+      required: [id, title, description, status, visibility, durationSeconds, thumbnailColor, playerAccent, playerControlForeground, playerControlBackground, posterTreatment]
       properties:
         id: { type: string }
         title: { type: string }
@@ -607,7 +660,46 @@ components:
         durationSeconds: { type: number }
         thumbnailColor: { type: string }
         playerAccent: { type: string }
+        playerControlForeground: { type: string }
+        playerControlBackground: { type: string }
+        posterTreatment: { type: string }
         sourceUrl: { type: string }
+        sourceType:
+          type: string
+          enum: [hls, native]
+        sourceExpiresAt: { type: string, format: date-time }
+        posterUrl:
+          type: ["string", "null"]
+        logoUrl: { type: string }
+        watermarkUrl: { type: string }
+    AuthenticatedPlaybackVideo:
+      type: object
+      required: [id, title, description, status, visibility, durationSeconds, thumbnailColor, playerAccent, playerControlForeground, playerControlBackground, posterTreatment]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        status:
+          type: string
+          enum: [created, uploading, processing, ready, error]
+        visibility:
+          type: string
+          enum: [private, unlisted, public]
+        durationSeconds: { type: number }
+        thumbnailColor: { type: string }
+        playerAccent: { type: string }
+        playerControlForeground: { type: string }
+        playerControlBackground: { type: string }
+        posterTreatment: { type: string }
+        sourceUrl: { type: string }
+        sourceType:
+          type: string
+          enum: [hls, native]
+        sourceExpiresAt: { type: string, format: date-time }
+        posterUrl:
+          type: ["string", "null"]
+        logoUrl: { type: string }
+        watermarkUrl: { type: string }
     PlaybackEventInput:
       type: object
       required: [videoId, sessionId, eventType, positionSeconds, occurredAt]

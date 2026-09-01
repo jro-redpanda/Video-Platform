@@ -7,6 +7,10 @@
  */
 
 export * from './activityItem';
+export * from './authenticatedPlaybackVideo';
+export * from './authenticatedPlaybackVideoSourceType';
+export * from './authenticatedPlaybackVideoStatus';
+export * from './authenticatedPlaybackVideoVisibility';
 export * from './createPlaybackEvents202';
 export * from './dashboard';
 export * from './healthStatus';
@@ -29,6 +33,7 @@ export * from './playbackEventBatch';
 export * from './playbackEventInput';
 export * from './playbackEventInputEventType';
 export * from './publicVideo';
+export * from './publicVideoSourceType';
 export * from './publicVideoStatus';
 export * from './publicVideoVisibility';
 export * from './runtimeConfig';
@@ -38,6 +43,9 @@ export * from './tusUploadCredentials';
 export * from './tusUploadCredentialsHeaders';
 export * from './tusUploadCredentialsKind';
 export * from './video';
+export * from './videoObject';
+export * from './videoObjectContext';
+export * from './videoObjectType';
 export * from './videoStatus';
 export * from './videoUpdate';
 export * from './videoUpdateVisibility';

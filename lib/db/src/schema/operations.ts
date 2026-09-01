@@ -79,6 +79,7 @@ export const embedGenerationOutboxTable = pgTable("embed_generation_outbox", {
   claimedAt: timestamp("claimed_at", { withTimezone: true }),
   attemptedAt: timestamp("attempted_at", { withTimezone: true }),
   dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
   attempts: integer("attempts").notNull().default(0),
   diagnosticCode: text("diagnostic_code"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

@@ -130,6 +130,30 @@ export const VideoVisibility = {
   public: 'public',
 } as const;
 
+export type VideoObjectContext = typeof VideoObjectContext[keyof typeof VideoObjectContext];
+
+
+export const VideoObjectContext = {
+  'https://schemaorg': 'https://schema.org',
+} as const;
+
+export type VideoObjectType = typeof VideoObjectType[keyof typeof VideoObjectType];
+
+
+export const VideoObjectType = {
+  VideoObject: 'VideoObject',
+} as const;
+
+export interface VideoObject {
+  '@context': VideoObjectContext;
+  '@type': VideoObjectType;
+  name: string;
+  description: string;
+  embedUrl: string;
+  duration: string;
+  thumbnailUrl?: string;
+}
+
 export interface Video {
   id: string;
   title: string;
@@ -141,6 +165,10 @@ export interface Video {
   thumbnailColor: string;
   plays: number;
   completionRate: number;
+  embedUrl?: string;
+  embedPath?: string;
+  embedCode?: string;
+  videoObject?: VideoObject;
 }
 
 export interface VideoUploadInput {
@@ -330,6 +358,14 @@ export const PublicVideoVisibility = {
   public: 'public',
 } as const;
 
+export type PublicVideoSourceType = typeof PublicVideoSourceType[keyof typeof PublicVideoSourceType];
+
+
+export const PublicVideoSourceType = {
+  hls: 'hls',
+  native: 'native',
+} as const;
+
 export interface PublicVideo {
   id: string;
   title: string;
@@ -339,7 +375,65 @@ export interface PublicVideo {
   durationSeconds: number;
   thumbnailColor: string;
   playerAccent: string;
+  playerControlForeground: string;
+  playerControlBackground: string;
+  posterTreatment: string;
   sourceUrl?: string;
+  sourceType?: PublicVideoSourceType;
+  sourceExpiresAt?: string;
+  /** @nullable */
+  posterUrl?: string | null;
+  logoUrl?: string;
+  watermarkUrl?: string;
+}
+
+export type AuthenticatedPlaybackVideoStatus = typeof AuthenticatedPlaybackVideoStatus[keyof typeof AuthenticatedPlaybackVideoStatus];
+
+
+export const AuthenticatedPlaybackVideoStatus = {
+  created: 'created',
+  uploading: 'uploading',
+  processing: 'processing',
+  ready: 'ready',
+  error: 'error',
+} as const;
+
+export type AuthenticatedPlaybackVideoVisibility = typeof AuthenticatedPlaybackVideoVisibility[keyof typeof AuthenticatedPlaybackVideoVisibility];
+
+
+export const AuthenticatedPlaybackVideoVisibility = {
+  private: 'private',
+  unlisted: 'unlisted',
+  public: 'public',
+} as const;
+
+export type AuthenticatedPlaybackVideoSourceType = typeof AuthenticatedPlaybackVideoSourceType[keyof typeof AuthenticatedPlaybackVideoSourceType];
+
+
+export const AuthenticatedPlaybackVideoSourceType = {
+  hls: 'hls',
+  native: 'native',
+} as const;
+
+export interface AuthenticatedPlaybackVideo {
+  id: string;
+  title: string;
+  description: string;
+  status: AuthenticatedPlaybackVideoStatus;
+  visibility: AuthenticatedPlaybackVideoVisibility;
+  durationSeconds: number;
+  thumbnailColor: string;
+  playerAccent: string;
+  playerControlForeground: string;
+  playerControlBackground: string;
+  posterTreatment: string;
+  sourceUrl?: string;
+  sourceType?: AuthenticatedPlaybackVideoSourceType;
+  sourceExpiresAt?: string;
+  /** @nullable */
+  posterUrl?: string | null;
+  logoUrl?: string;
+  watermarkUrl?: string;
 }
 
 export type PlaybackEventInputEventType = typeof PlaybackEventInputEventType[keyof typeof PlaybackEventInputEventType];

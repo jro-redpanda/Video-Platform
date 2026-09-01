@@ -62,6 +62,24 @@ export const videosTable = pgTable("videos", {
   ),
 ]);
 
+export type VideoEmbedMetadata = {
+  title: string;
+  description: string;
+  durationSeconds: number;
+};
+
+/** Durable provider-neutral embed generation state. Never stores playback URLs or provider linkage. */
+export const videoEmbedsTable = pgTable("video_embeds", {
+  videoId: uuid("video_id").primaryKey().references(() => videosTable.id, { onDelete: "cascade" }),
+  embedPath: text("embed_path").notNull(),
+  generationVersion: integer("generation_version").notNull(),
+  generationStatus: text("generation_status").notNull(),
+  generatedMetadata: jsonb("generated_metadata").$type<VideoEmbedMetadata>().notNull(),
+  generatedAt: timestamp("generated_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
 export const videoAnalyticsRollupsTable = pgTable("video_analytics_rollups", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: uuid("organization_id").notNull().references(() => organizationsTable.id, { onDelete: "cascade" }),

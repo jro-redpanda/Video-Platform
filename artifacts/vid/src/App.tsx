@@ -19,7 +19,6 @@ import Analytics from "@/pages/analytics";
 import Members from "@/pages/members";
 import Customization from "@/pages/customization";
 import Settings from "@/pages/settings";
-// PRELIMINARY SCAFFOLDING: this route is replaced, not extended, at Step 11.
 import EmbedPlayer from "@/pages/embed-player";
 import Login from "@/pages/login";
 import { authClient } from "@/lib/auth-client";

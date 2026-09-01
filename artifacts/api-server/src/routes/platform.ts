@@ -12,12 +12,14 @@ import {
   providerTenantSpacesTable,
   usersTable,
   videoAnalyticsRollupsTable,
+  videoEmbedsTable,
   videosTable,
 } from "@workspace/db";
 import {
   GetDashboardResponse,
   GetVideoParams,
   GetVideoResponse,
+  GetAuthenticatedVideoPlaybackResponse,
   GetWorkspaceResponse,
   ListActivityResponse,
   ListVideosQueryParams,
@@ -36,6 +38,7 @@ import { requirePermission } from "../lib/permissions";
 import { hasEntitlement, resolveEntitlements, type EntitlementKey } from "../lib/entitlements";
 import { resolveProvisioningProvider, videoProviders } from "../lib/provider-registry";
 import { AssetCreationRejectedError } from "@workspace/providers";
+import { serializeEmbed, trustedRequestOrigin } from "../lib/video-embeds";
 
 const router: IRouter = Router();
 const videoStatuses = ["created", "uploading", "processing", "ready", "error"] as const;
@@ -523,7 +526,105 @@ router.get("/videos/:videoId", requirePermission("videos.read"), async (req, res
   const { videoId } = GetVideoParams.parse(req.params);
   const video = await withTenantDb(req.tenant, (tx) => readVideo(tx, req.tenant.organizationId, videoId));
   if (!video) return void res.status(404).json({ error: "Video not found" });
-  res.json(GetVideoResponse.parse(video));
+  const [embed] = await withTenantDb(req.tenant, (tx) => tx.select().from(videoEmbedsTable)
+    .where(eq(videoEmbedsTable.videoId, videoId)).limit(1));
+  res.json(GetVideoResponse.parse({
+    ...video,
+    ...(embed?.generationStatus === "generated"
+      ? serializeEmbed(embed, trustedRequestOrigin(req), {
+        title: video.title, description: video.description, durationSeconds: video.durationSeconds,
+      })
+      : {}),
+  }));
+});
+
+router.get("/videos/:videoId/playback", requirePermission("videos.read"), async (req, res): Promise<void> => {
+  const { videoId } = GetVideoParams.parse(req.params);
+  const video = await withTenantDb(req.tenant, async (tx) => {
+    const [row] = await tx.select({
+      id: videosTable.id, title: videosTable.title, description: videosTable.description,
+      status: videosTable.status, visibility: videosTable.visibility,
+      durationSeconds: videosTable.durationSeconds, thumbnailColor: videosTable.thumbnailColor,
+      playerAccent: organizationCustomizationTable.playerAccent,
+      playerControlForeground: organizationCustomizationTable.playerControlForeground,
+      playerControlBackground: organizationCustomizationTable.playerControlBackground,
+      posterTreatment: organizationCustomizationTable.posterTreatment,
+      providerAssetId: videosTable.providerAssetId, providerTenantSpaceId: videosTable.providerTenantSpaceId,
+      account: providerAccountsTable, space: providerTenantSpacesTable,
+    }).from(videosTable)
+      .innerJoin(organizationCustomizationTable, eq(organizationCustomizationTable.organizationId, videosTable.organizationId))
+      .leftJoin(providerAccountsTable, eq(providerAccountsTable.id, videosTable.providerAccountId))
+      .leftJoin(providerTenantSpacesTable, and(
+        eq(providerTenantSpacesTable.organizationId, videosTable.organizationId),
+        eq(providerTenantSpacesTable.providerAccountId, videosTable.providerAccountId),
+        eq(providerTenantSpacesTable.providerSpaceId, videosTable.providerTenantSpaceId),
+      ))
+      .where(scopedVideoWhere(req.tenant.organizationId, videoId)).limit(1);
+    return row;
+  });
+  if (!video) {
+    res.status(404).json({ error: "Video not found" });
+    return;
+  }
+  const { providerAssetId, providerTenantSpaceId, account, space, ...metadata } = video;
+  if (video.status !== "ready") {
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json(GetAuthenticatedVideoPlaybackResponse.parse(metadata));
+    return;
+  }
+  if (!providerAssetId || !providerTenantSpaceId || !account || !space) {
+    res.status(503).json({ error: "Playback source is unavailable" });
+    return;
+  }
+  try {
+    const provider = process.env.NODE_ENV === "test"
+      ? videoProviders.resolve(account.providerKey)
+      : await resolveProvisioningProvider(account, space);
+    const sources = await provider.getPlaybackSources({ id: providerTenantSpaceId }, { id: providerAssetId });
+    if (!sources.hlsUrl || new Date(sources.expiresAt).getTime() <= Date.now()) throw new Error("No current playback source");
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json(GetAuthenticatedVideoPlaybackResponse.parse({
+      ...metadata, sourceUrl: `/api/videos/${videoId}/playback/source`, sourceType: "hls",
+      sourceExpiresAt: new Date(sources.expiresAt).toISOString(), posterUrl: null,
+    }));
+  } catch (error) {
+    req.log.error({ err: error, videoId }, "Authenticated playback source resolution failed");
+    res.status(503).json({ error: "Playback source is unavailable" });
+  }
+});
+
+router.get("/videos/:videoId/playback/source", requirePermission("videos.read"), async (req, res): Promise<void> => {
+  const { videoId } = GetVideoParams.parse(req.params);
+  const linkage = await withTenantDb(req.tenant, async (tx) => {
+    const [row] = await tx.select({
+      providerAssetId: videosTable.providerAssetId, providerTenantSpaceId: videosTable.providerTenantSpaceId,
+      account: providerAccountsTable, space: providerTenantSpacesTable,
+    }).from(videosTable)
+      .innerJoin(providerAccountsTable, eq(providerAccountsTable.id, videosTable.providerAccountId))
+      .innerJoin(providerTenantSpacesTable, and(
+        eq(providerTenantSpacesTable.organizationId, videosTable.organizationId),
+        eq(providerTenantSpacesTable.providerAccountId, videosTable.providerAccountId),
+        eq(providerTenantSpacesTable.providerSpaceId, videosTable.providerTenantSpaceId),
+      ))
+      .where(and(scopedVideoWhere(req.tenant.organizationId, videoId), eq(videosTable.status, "ready"))).limit(1);
+    return row;
+  });
+  if (!linkage?.providerAssetId || !linkage.providerTenantSpaceId) {
+    res.status(404).json({ error: "Video not found" });
+    return;
+  }
+  try {
+    const provider = process.env.NODE_ENV === "test"
+      ? videoProviders.resolve(linkage.account.providerKey)
+      : await resolveProvisioningProvider(linkage.account, linkage.space);
+    const sources = await provider.getPlaybackSources({ id: linkage.providerTenantSpaceId }, { id: linkage.providerAssetId });
+    if (!sources.hlsUrl || new Date(sources.expiresAt).getTime() <= Date.now()) throw new Error("No current playback source");
+    res.setHeader("Cache-Control", "private, no-store");
+    res.redirect(307, sources.hlsUrl);
+  } catch (error) {
+    req.log.error({ err: error, videoId }, "Authenticated playback redirect resolution failed");
+    res.status(503).json({ error: "Playback source is unavailable" });
+  }
 });
 
 router.patch("/videos/:videoId", requirePermission("videos.update"), async (req, res) => {

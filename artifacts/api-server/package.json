@@ -11,6 +11,7 @@
     "provider:smoke": "node ./scripts/provider-smoke.mjs",
     "upload:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/upload-step9-smoke.mjs",
     "webhook:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/webhook-step10-smoke.mjs",
+    "embed:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/embed-step11-smoke.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

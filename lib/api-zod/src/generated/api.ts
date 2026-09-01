@@ -120,7 +120,19 @@ export const ListVideosResponseItem = zod.object({
   "createdAt": zod.coerce.date(),
   "thumbnailColor": zod.string(),
   "plays": zod.number(),
-  "completionRate": zod.number()
+  "completionRate": zod.number(),
+  "embedUrl": zod.string().optional(),
+  "embedPath": zod.string().optional(),
+  "embedCode": zod.string().optional(),
+  "videoObject": zod.object({
+  "@context": zod.enum(['https://schema.org']),
+  "@type": zod.enum(['VideoObject']),
+  "name": zod.string(),
+  "description": zod.string(),
+  "embedUrl": zod.string(),
+  "duration": zod.string(),
+  "thumbnailUrl": zod.string().optional()
+}).optional()
 })
 export const ListVideosResponse = zod.array(ListVideosResponseItem)
 
@@ -187,7 +199,19 @@ export const GetVideoResponse = zod.object({
   "createdAt": zod.coerce.date(),
   "thumbnailColor": zod.string(),
   "plays": zod.number(),
-  "completionRate": zod.number()
+  "completionRate": zod.number(),
+  "embedUrl": zod.string().optional(),
+  "embedPath": zod.string().optional(),
+  "embedCode": zod.string().optional(),
+  "videoObject": zod.object({
+  "@context": zod.enum(['https://schema.org']),
+  "@type": zod.enum(['VideoObject']),
+  "name": zod.string(),
+  "description": zod.string(),
+  "embedUrl": zod.string(),
+  "duration": zod.string(),
+  "thumbnailUrl": zod.string().optional()
+}).optional()
 })
 
 
@@ -214,8 +238,52 @@ export const UpdateVideoResponse = zod.object({
   "createdAt": zod.coerce.date(),
   "thumbnailColor": zod.string(),
   "plays": zod.number(),
-  "completionRate": zod.number()
+  "completionRate": zod.number(),
+  "embedUrl": zod.string().optional(),
+  "embedPath": zod.string().optional(),
+  "embedCode": zod.string().optional(),
+  "videoObject": zod.object({
+  "@context": zod.enum(['https://schema.org']),
+  "@type": zod.enum(['VideoObject']),
+  "name": zod.string(),
+  "description": zod.string(),
+  "embedUrl": zod.string(),
+  "duration": zod.string(),
+  "thumbnailUrl": zod.string().optional()
+}).optional()
 })
+
+
+export const GetAuthenticatedVideoPlaybackParams = zod.object({
+  "videoId": zod.coerce.string()
+})
+
+export const GetAuthenticatedVideoPlaybackResponse = zod.object({
+  "id": zod.string(),
+  "title": zod.string(),
+  "description": zod.string(),
+  "status": zod.enum(['created', 'uploading', 'processing', 'ready', 'error']),
+  "visibility": zod.enum(['private', 'unlisted', 'public']),
+  "durationSeconds": zod.number(),
+  "thumbnailColor": zod.string(),
+  "playerAccent": zod.string(),
+  "playerControlForeground": zod.string(),
+  "playerControlBackground": zod.string(),
+  "posterTreatment": zod.string(),
+  "sourceUrl": zod.string().optional(),
+  "sourceType": zod.enum(['hls', 'native']).optional(),
+  "sourceExpiresAt": zod.coerce.date().optional(),
+  "posterUrl": zod.string().nullish(),
+  "logoUrl": zod.string().optional(),
+  "watermarkUrl": zod.string().optional()
+})
+
+
+export const GetAuthenticatedVideoPlaybackSourceParams = zod.object({
+  "videoId": zod.coerce.string()
+})
+
+export const GetAuthenticatedVideoPlaybackSourceResponse = zod.void()
 
 
 export const CompleteVideoUploadParams = zod.object({
@@ -232,7 +300,19 @@ export const CompleteVideoUploadResponse = zod.object({
   "createdAt": zod.coerce.date(),
   "thumbnailColor": zod.string(),
   "plays": zod.number(),
-  "completionRate": zod.number()
+  "completionRate": zod.number(),
+  "embedUrl": zod.string().optional(),
+  "embedPath": zod.string().optional(),
+  "embedCode": zod.string().optional(),
+  "videoObject": zod.object({
+  "@context": zod.enum(['https://schema.org']),
+  "@type": zod.enum(['VideoObject']),
+  "name": zod.string(),
+  "description": zod.string(),
+  "embedUrl": zod.string(),
+  "duration": zod.string(),
+  "thumbnailUrl": zod.string().optional()
+}).optional()
 })
 
 
@@ -250,7 +330,19 @@ export const CancelVideoUploadResponse = zod.object({
   "createdAt": zod.coerce.date(),
   "thumbnailColor": zod.string(),
   "plays": zod.number(),
-  "completionRate": zod.number()
+  "completionRate": zod.number(),
+  "embedUrl": zod.string().optional(),
+  "embedPath": zod.string().optional(),
+  "embedCode": zod.string().optional(),
+  "videoObject": zod.object({
+  "@context": zod.enum(['https://schema.org']),
+  "@type": zod.enum(['VideoObject']),
+  "name": zod.string(),
+  "description": zod.string(),
+  "embedUrl": zod.string(),
+  "duration": zod.string(),
+  "thumbnailUrl": zod.string().optional()
+}).optional()
 })
 
 
@@ -401,8 +493,23 @@ export const GetPublicVideoResponse = zod.object({
   "durationSeconds": zod.number(),
   "thumbnailColor": zod.string(),
   "playerAccent": zod.string(),
-  "sourceUrl": zod.string().optional()
+  "playerControlForeground": zod.string(),
+  "playerControlBackground": zod.string(),
+  "posterTreatment": zod.string(),
+  "sourceUrl": zod.string().optional(),
+  "sourceType": zod.enum(['hls', 'native']).optional(),
+  "sourceExpiresAt": zod.coerce.date().optional(),
+  "posterUrl": zod.string().nullish(),
+  "logoUrl": zod.string().optional(),
+  "watermarkUrl": zod.string().optional()
 })
+
+
+export const GetPublicVideoSourceParams = zod.object({
+  "videoId": zod.coerce.string()
+})
+
+export const GetPublicVideoSourceResponse = zod.void()
 
 
 export const createPlaybackEventsBodyEventsItemPositionSecondsMin = 0;

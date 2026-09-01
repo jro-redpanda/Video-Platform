@@ -5,16 +5,16 @@
  * Multi-tenant video platform API
  * OpenAPI spec version: 0.1.0
  */
-import type { PublicVideoSourceType } from './publicVideoSourceType';
-import type { PublicVideoStatus } from './publicVideoStatus';
-import type { PublicVideoVisibility } from './publicVideoVisibility';
+import type { AuthenticatedPlaybackVideoSourceType } from './authenticatedPlaybackVideoSourceType';
+import type { AuthenticatedPlaybackVideoStatus } from './authenticatedPlaybackVideoStatus';
+import type { AuthenticatedPlaybackVideoVisibility } from './authenticatedPlaybackVideoVisibility';
 
-export interface PublicVideo {
+export interface AuthenticatedPlaybackVideo {
   id: string;
   title: string;
   description: string;
-  status: PublicVideoStatus;
-  visibility: PublicVideoVisibility;
+  status: AuthenticatedPlaybackVideoStatus;
+  visibility: AuthenticatedPlaybackVideoVisibility;
   durationSeconds: number;
   thumbnailColor: string;
   playerAccent: string;
@@ -22,7 +22,7 @@ export interface PublicVideo {
   playerControlBackground: string;
   posterTreatment: string;
   sourceUrl?: string;
-  sourceType?: PublicVideoSourceType;
+  sourceType?: AuthenticatedPlaybackVideoSourceType;
   sourceExpiresAt?: Date;
   /** @nullable */
   posterUrl?: string | null;

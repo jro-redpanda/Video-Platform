@@ -10,10 +10,12 @@ import {
   plansTable,
   usersTable,
   videoAnalyticsRollupsTable,
+  videoEmbedsTable,
   videosTable,
 } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { runtimeConfig } from "./config";
+import { EMBED_GENERATION_VERSION } from "./video-embeds";
 
 export const developmentTenant = {
   organizationId: "a23d95cc-33a5-4ca9-8220-cd2192bf86e8",
@@ -175,6 +177,19 @@ export async function bootstrapDevelopmentTenant() {
       thumbnailColor,
       createdAt: new Date(Date.UTC(2026, 7, 22 + index * 2, 12, 0)),
     }))).onConflictDoNothing();
+
+    // Development-only owned embed records let the library exercise generated
+    // embed code without inventing provider linkage or playback sources.
+    await tx.insert(videoEmbedsTable).values(demoVideos
+      .filter(([, , , status]) => status === "ready")
+      .map(([id, title, description, , , durationSeconds]) => ({
+        videoId: id,
+        embedPath: `/v/${id}`,
+        generationVersion: EMBED_GENERATION_VERSION,
+        generationStatus: "generated",
+        generatedMetadata: { title, description, durationSeconds },
+        generatedAt: new Date(),
+      }))).onConflictDoNothing();
 
     // MOCK: replaced at step 16
     await tx.insert(videoAnalyticsRollupsTable).values([

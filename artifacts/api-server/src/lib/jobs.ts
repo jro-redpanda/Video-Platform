@@ -4,6 +4,7 @@ import { runBunnyRoundTrip } from "./bunny-roundtrip";
 import { provisionTenantOrganization } from "./tenant-provisioning";
 import { resolveProvisioningProvider, type ProvisioningProviderResolver } from "./provider-registry";
 import { cleanupExpiredUploads } from "./upload-expiry-cleanup";
+import { generateVideoEmbed } from "./video-embeds";
 import { and, eq, gte, lt, or, sql } from "drizzle-orm";
 import { db, embedGenerationOutboxTable } from "@workspace/db";
 import { randomUUID } from "node:crypto";
@@ -88,8 +89,6 @@ export async function startJobs(options: { resolveProvisioningProvider?: Provisi
     expireInSeconds: 600,
     retentionSeconds: 86400,
   });
-  // MOCK: replaced at step 11
-  // The embed-generation worker is intentionally not registered in Step 10.
   await instance.schedule(UPLOAD_EXPIRY_QUEUE, "*/15 * * * *", {}, { tz: "UTC" });
   await instance.schedule(EMBED_DISPATCH_QUEUE, "* * * * *", {}, { tz: "UTC" });
   await instance.work<HealthJob>(QUEUE_NAME, async ([job]: Job<HealthJob>[]) => {
@@ -117,7 +116,16 @@ export async function startJobs(options: { resolveProvisioningProvider?: Provisi
   await instance.work(UPLOAD_EXPIRY_QUEUE, { batchSize: 1 }, async () => cleanupExpiredUploads(
     options.resolveProvisioningProvider ?? resolveProvisioningProvider,
   ));
-  await instance.work(EMBED_DISPATCH_QUEUE, { batchSize: 1 }, async () => dispatchPendingEmbedOutbox(instance));
+  await instance.work<{ videoId: string }>(
+    EMBED_GENERATION_QUEUE,
+    { batchSize: 1 },
+    async ([job]) => generateVideoEmbed(job.data.videoId, job.id),
+  );
+  await instance.work(EMBED_DISPATCH_QUEUE, { batchSize: 1 }, async () => {
+    const dispatched = await dispatchPendingEmbedOutbox(instance);
+    const reconciled = await reconcileEmbedGenerationOutbox(instance);
+    return { ...dispatched, ...reconciled };
+  });
 
   boss = instance;
   logger.info({ queue: QUEUE_NAME }, "Job queue and worker started");
@@ -221,6 +229,46 @@ export async function dispatchPendingEmbedOutbox(instance?: PgBoss) {
     }
   }
   return { dispatched };
+}
+
+/**
+ * Repairs only known terminal generation jobs. A missing job is ambiguous until
+ * pg-boss retention has elapsed, then it is quarantined instead of replayed.
+ * Recovery is DB-only and retains the original deterministic outbox/job id.
+ */
+export async function reconcileEmbedGenerationOutbox(instance?: PgBoss) {
+  const queue = instance ?? boss ?? await startJobs();
+  const staleBefore = new Date(Date.now() - 5 * 60_000);
+  const retentionHorizon = new Date(Date.now() - 23 * 60 * 60_000);
+  const candidates = await db.select({
+    id: embedGenerationOutboxTable.id,
+    videoId: embedGenerationOutboxTable.videoId,
+    dispatchedAt: embedGenerationOutboxTable.dispatchedAt,
+  }).from(embedGenerationOutboxTable).where(and(
+    eq(embedGenerationOutboxTable.state, "dispatched"),
+    lt(embedGenerationOutboxTable.dispatchedAt, staleBefore),
+  )).limit(100);
+  let recovered = 0;
+  let quarantined = 0;
+  for (const candidate of candidates) {
+    const [job] = await queue.findJobs(EMBED_GENERATION_QUEUE, { id: candidate.id });
+    if (job?.state === "failed" || job?.state === "completed") {
+      await generateVideoEmbed(candidate.videoId, candidate.id);
+      recovered++;
+      continue;
+    }
+    if (!job && candidate.dispatchedAt && candidate.dispatchedAt < retentionHorizon) {
+      const changed = await db.update(embedGenerationOutboxTable).set({
+        state: "reconciliation_required",
+        diagnosticCode: "generation_job_missing_after_retention_horizon",
+      }).where(and(
+        eq(embedGenerationOutboxTable.id, candidate.id),
+        eq(embedGenerationOutboxTable.state, "dispatched"),
+      )).returning({ id: embedGenerationOutboxTable.id });
+      quarantined += changed.length;
+    }
+  }
+  return { recovered, quarantined };
 }
 
 async function sendEmbedGenerationJob(queue: PgBoss, videoId: string, outboxId: string) {

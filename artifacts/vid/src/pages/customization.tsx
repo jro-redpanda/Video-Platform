@@ -5,9 +5,12 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Maximize, Play, Settings2 } from "lucide-react"
+import { Player } from "@/components/player"
 
 const SWATCHES = ["#4f46e5", "#0ea5e9", "#10b981", "#f97316", "#ef4444", "#a855f7"]
+
+// Simple SVG gradient placeholder for preview poster
+const cssPoster = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"><defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="%231a1a2e" /><stop offset="100%" stop-color="%2316213e" /></linearGradient></defs><rect width="100%" height="100%" fill="url(%23g)"/></svg>`;
 
 export default function Customization() {
   const { data: workspace, isLoading } = useGetWorkspace()
@@ -26,7 +29,7 @@ export default function Customization() {
     setForeground(workspace.playerControlForeground)
     setBackground(workspace.playerControlBackground)
     setInitials(workspace.logoInitials)
-    setPosterTreatment(workspace.posterTreatment)
+    setPosterTreatment(workspace.posterTreatment as any)
     setCustomDomain(workspace.customDomain ?? "")
   }, [workspace])
 
@@ -66,8 +69,8 @@ export default function Customization() {
                 <ColorField label="Control foreground" value={foreground} onChange={setForeground} disabled={!playerColors} />
                 <ColorField label="Control background" value={background} onChange={setBackground} disabled={!playerColors} />
               </div>
-              <div className="flex flex-wrap gap-2">{SWATCHES.map((color) => <button type="button" key={color} disabled={!playerColors} onClick={() => setAccent(color)} className="w-7 h-7 rounded-full border disabled:opacity-40" style={{ backgroundColor: color }} aria-label={`Select ${color}`} />)}</div>
-              <div className="space-y-2"><Label>Poster treatment</Label><select value={posterTreatment} disabled={!playerColors} onChange={(event) => setPosterTreatment(event.target.value as typeof posterTreatment)} className="h-9 w-full rounded-md border bg-background px-3 text-sm disabled:opacity-50"><option value="default">Default</option><option value="darken">Darken</option><option value="gradient">Gradient</option></select></div>
+              <div className="flex flex-wrap gap-2">{SWATCHES.map((color) => <button type="button" key={color} disabled={!playerColors} onClick={() => setAccent(color)} className="w-7 h-7 rounded-full border disabled:opacity-40 cursor-pointer" style={{ backgroundColor: color }} aria-label={`Select ${color}`} />)}</div>
+              <div className="space-y-2"><Label>Poster treatment</Label><select value={posterTreatment} disabled={!playerColors} onChange={(event) => setPosterTreatment(event.target.value as any)} className="h-9 w-full rounded-md border bg-background px-3 text-sm disabled:opacity-50"><option value="default">Default</option><option value="darken">Darken</option><option value="gradient">Gradient</option></select></div>
             </section>
             <section className="space-y-3 border rounded-lg p-6 bg-card">
               <h2 className="text-lg font-semibold">Workspace logo</h2>{restriction(logo)}
@@ -89,12 +92,22 @@ export default function Customization() {
           </div>
           <div className="space-y-4">
             <h2 className="text-lg font-semibold text-muted-foreground">Live Player Preview</h2>
-            <div className="rounded-xl overflow-hidden shadow-2xl ring-1 ring-border bg-black aspect-video relative flex flex-col justify-between group" style={{ backgroundColor: background, color: foreground }}>
-              {/* // MOCK: replaced at step 11 */}
-              <div className="absolute inset-0 bg-gradient-to-br from-zinc-800 to-black flex items-center justify-center pointer-events-none" />
-              <div className="z-10 m-auto flex items-center justify-center"><div className="w-20 h-20 rounded-full flex items-center justify-center shadow-xl" style={{ backgroundColor: accent }}><Play className="h-10 w-10 ml-2" color={foreground} /></div></div>
-              <div className="w-full p-4 z-10 flex justify-between items-center" style={{ backgroundColor: background, color: foreground }}><Settings2 className="h-5 w-5" /><Maximize className="h-4 w-4" /></div>
+            <div className="rounded-xl shadow-2xl ring-1 ring-border bg-black overflow-hidden relative">
+              <Player
+                title="Preview Visuals"
+                src={null}
+                poster={cssPoster}
+                accentColor={accent}
+                controlForegroundColor={foreground}
+                controlBackgroundColor={background}
+                posterTreatment={posterTreatment}
+                logoInitials={initials}
+                className="rounded-xl"
+              />
             </div>
+            <p className="text-sm text-muted-foreground text-center mt-2">
+              Preview represents visual styling only; interactivity requires an active video source.
+            </p>
           </div>
         </div>
       </div>

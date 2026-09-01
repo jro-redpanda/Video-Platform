@@ -20,6 +20,7 @@ async function buildAll() {
       path.resolve(artifactDir, "src/queue-smoke.ts"),
       path.resolve(artifactDir, "src/upload-step9-smoke.ts"),
       path.resolve(artifactDir, "src/webhook-step10-smoke.ts"),
+      path.resolve(artifactDir, "src/embed-step11-smoke.ts"),
     ],
     platform: "node",
     bundle: true,

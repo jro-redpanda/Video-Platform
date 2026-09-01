@@ -21,6 +21,7 @@ import type {
 
 import type {
   ActivityItem,
+  AuthenticatedPlaybackVideo,
   CreatePlaybackEvents202,
   Dashboard,
   HealthStatus,
@@ -698,6 +699,148 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       > => {
       return useMutation(getUpdateVideoMutationOptions(options));
     }
+
+export const getGetAuthenticatedVideoPlaybackUrl = (videoId: string,) => {
+
+
+
+
+  return `/api/videos/${videoId}/playback`
+}
+
+export const getAuthenticatedVideoPlayback = async (videoId: string, options?: Parameters<typeof customFetch>[1]): Promise<AuthenticatedPlaybackVideo> => {
+
+  return customFetch<AuthenticatedPlaybackVideo>(getGetAuthenticatedVideoPlaybackUrl(videoId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAuthenticatedVideoPlaybackQueryKey = (videoId: string,) => {
+    return [
+    `/api/videos/${videoId}/playback`
+    ] as const;
+    }
+
+
+export const getGetAuthenticatedVideoPlaybackQueryOptions = <TData = Awaited<ReturnType<typeof getAuthenticatedVideoPlayback>>, TError = ErrorType<unknown>>(videoId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAuthenticatedVideoPlayback>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAuthenticatedVideoPlaybackQueryKey(videoId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAuthenticatedVideoPlayback>>> = ({ signal }) => getAuthenticatedVideoPlayback(videoId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: videoId !== null && videoId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAuthenticatedVideoPlayback>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAuthenticatedVideoPlaybackQueryResult = NonNullable<Awaited<ReturnType<typeof getAuthenticatedVideoPlayback>>>
+export type GetAuthenticatedVideoPlaybackQueryError = ErrorType<unknown>
+
+
+
+export function useGetAuthenticatedVideoPlayback<TData = Awaited<ReturnType<typeof getAuthenticatedVideoPlayback>>, TError = ErrorType<unknown>>(
+ videoId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAuthenticatedVideoPlayback>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAuthenticatedVideoPlaybackQueryOptions(videoId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetAuthenticatedVideoPlaybackSourceUrl = (videoId: string,) => {
+
+
+
+
+  return `/api/videos/${videoId}/playback/source`
+}
+
+export const getAuthenticatedVideoPlaybackSource = async (videoId: string, options?: Parameters<typeof customFetch>[1]): Promise<unknown> => {
+
+  return customFetch<unknown>(getGetAuthenticatedVideoPlaybackSourceUrl(videoId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAuthenticatedVideoPlaybackSourceQueryKey = (videoId: string,) => {
+    return [
+    `/api/videos/${videoId}/playback/source`
+    ] as const;
+    }
+
+
+export const getGetAuthenticatedVideoPlaybackSourceQueryOptions = <TData = Awaited<ReturnType<typeof getAuthenticatedVideoPlaybackSource>>, TError = ErrorType<void>>(videoId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAuthenticatedVideoPlaybackSource>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAuthenticatedVideoPlaybackSourceQueryKey(videoId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAuthenticatedVideoPlaybackSource>>> = ({ signal }) => getAuthenticatedVideoPlaybackSource(videoId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: videoId !== null && videoId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAuthenticatedVideoPlaybackSource>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAuthenticatedVideoPlaybackSourceQueryResult = NonNullable<Awaited<ReturnType<typeof getAuthenticatedVideoPlaybackSource>>>
+export type GetAuthenticatedVideoPlaybackSourceQueryError = ErrorType<void>
+
+
+
+export function useGetAuthenticatedVideoPlaybackSource<TData = Awaited<ReturnType<typeof getAuthenticatedVideoPlaybackSource>>, TError = ErrorType<void>>(
+ videoId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAuthenticatedVideoPlaybackSource>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAuthenticatedVideoPlaybackSourceQueryOptions(videoId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getCompleteVideoUploadUrl = (videoId: string,) => {
 
@@ -1499,6 +1642,77 @@ export function useGetPublicVideo<TData = Awaited<ReturnType<typeof getPublicVid
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetPublicVideoQueryOptions(videoId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetPublicVideoSourceUrl = (videoId: string,) => {
+
+
+
+
+  return `/api/public/videos/${videoId}/source`
+}
+
+export const getPublicVideoSource = async (videoId: string, options?: Parameters<typeof customFetch>[1]): Promise<unknown> => {
+
+  return customFetch<unknown>(getGetPublicVideoSourceUrl(videoId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPublicVideoSourceQueryKey = (videoId: string,) => {
+    return [
+    `/api/public/videos/${videoId}/source`
+    ] as const;
+    }
+
+
+export const getGetPublicVideoSourceQueryOptions = <TData = Awaited<ReturnType<typeof getPublicVideoSource>>, TError = ErrorType<void>>(videoId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPublicVideoSource>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPublicVideoSourceQueryKey(videoId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPublicVideoSource>>> = ({ signal }) => getPublicVideoSource(videoId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: videoId !== null && videoId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPublicVideoSource>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPublicVideoSourceQueryResult = NonNullable<Awaited<ReturnType<typeof getPublicVideoSource>>>
+export type GetPublicVideoSourceQueryError = ErrorType<void>
+
+
+
+export function useGetPublicVideoSource<TData = Awaited<ReturnType<typeof getPublicVideoSource>>, TError = ErrorType<void>>(
+ videoId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPublicVideoSource>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPublicVideoSourceQueryOptions(videoId,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
