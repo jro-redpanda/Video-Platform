@@ -44,6 +44,10 @@ import type {
   PlaybackEventBatch,
   PublicVideo,
   RuntimeConfig,
+  Thumbnail,
+  ThumbnailFinalizeInput,
+  ThumbnailUploadIntent,
+  ThumbnailUploadIntentInput,
   Video,
   VideoList,
   VideoUpdate,
@@ -1320,6 +1324,277 @@ export function useGetAuthenticatedVideoPlayback<TData = Awaited<ReturnType<type
 
 
 
+export const getCreateThumbnailUploadIntentUrl = (videoId: string,) => {
+
+
+
+
+  return `/api/videos/${videoId}/thumbnail-upload-intent`
+}
+
+export const createThumbnailUploadIntent = async (videoId: string,
+    thumbnailUploadIntentInput: ThumbnailUploadIntentInput, options?: Parameters<typeof customFetch>[1]): Promise<ThumbnailUploadIntent> => {
+
+  return customFetch<ThumbnailUploadIntent>(getCreateThumbnailUploadIntentUrl(videoId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(thumbnailUploadIntentInput)
+  }
+);}
+
+
+
+
+
+export const getCreateThumbnailUploadIntentMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createThumbnailUploadIntent>>, TError,{videoId: string;data: BodyType<ThumbnailUploadIntentInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createThumbnailUploadIntent>>, TError,{videoId: string;data: BodyType<ThumbnailUploadIntentInput>}, TContext> => {
+
+const mutationKey = ['createThumbnailUploadIntent'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createThumbnailUploadIntent>>, {videoId: string;data: BodyType<ThumbnailUploadIntentInput>}> = (props) => {
+          const {videoId,data} = props ?? {};
+
+          return  createThumbnailUploadIntent(videoId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateThumbnailUploadIntentMutationResult = NonNullable<Awaited<ReturnType<typeof createThumbnailUploadIntent>>>
+    export type CreateThumbnailUploadIntentMutationBody = BodyType<ThumbnailUploadIntentInput>
+    export type CreateThumbnailUploadIntentMutationError = ErrorType<unknown>
+
+    export const useCreateThumbnailUploadIntent = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createThumbnailUploadIntent>>, TError,{videoId: string;data: BodyType<ThumbnailUploadIntentInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createThumbnailUploadIntent>>,
+        TError,
+        {videoId: string;data: BodyType<ThumbnailUploadIntentInput>},
+        TContext
+      > => {
+      return useMutation(getCreateThumbnailUploadIntentMutationOptions(options));
+    }
+
+export const getFinalizeThumbnailUrl = (videoId: string,) => {
+
+
+
+
+  return `/api/videos/${videoId}/thumbnail-finalize`
+}
+
+export const finalizeThumbnail = async (videoId: string,
+    thumbnailFinalizeInput: ThumbnailFinalizeInput, options?: Parameters<typeof customFetch>[1]): Promise<Thumbnail> => {
+
+  return customFetch<Thumbnail>(getFinalizeThumbnailUrl(videoId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(thumbnailFinalizeInput)
+  }
+);}
+
+
+
+
+
+export const getFinalizeThumbnailMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof finalizeThumbnail>>, TError,{videoId: string;data: BodyType<ThumbnailFinalizeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof finalizeThumbnail>>, TError,{videoId: string;data: BodyType<ThumbnailFinalizeInput>}, TContext> => {
+
+const mutationKey = ['finalizeThumbnail'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof finalizeThumbnail>>, {videoId: string;data: BodyType<ThumbnailFinalizeInput>}> = (props) => {
+          const {videoId,data} = props ?? {};
+
+          return  finalizeThumbnail(videoId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type FinalizeThumbnailMutationResult = NonNullable<Awaited<ReturnType<typeof finalizeThumbnail>>>
+    export type FinalizeThumbnailMutationBody = BodyType<ThumbnailFinalizeInput>
+    export type FinalizeThumbnailMutationError = ErrorType<unknown>
+
+    export const useFinalizeThumbnail = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof finalizeThumbnail>>, TError,{videoId: string;data: BodyType<ThumbnailFinalizeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof finalizeThumbnail>>,
+        TError,
+        {videoId: string;data: BodyType<ThumbnailFinalizeInput>},
+        TContext
+      > => {
+      return useMutation(getFinalizeThumbnailMutationOptions(options));
+    }
+
+export const getGetVideoThumbnailUrl = (videoId: string,) => {
+
+
+
+
+  return `/api/videos/${videoId}/thumbnail`
+}
+
+/**
+ * Requires the opaque current `v` query value returned in thumbnailUrl.
+ */
+export const getVideoThumbnail = async (videoId: string, options?: Parameters<typeof customFetch>[1]): Promise<Blob> => {
+
+  return customFetch<Blob>(getGetVideoThumbnailUrl(videoId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetVideoThumbnailQueryKey = (videoId: string,) => {
+    return [
+    `/api/videos/${videoId}/thumbnail`
+    ] as const;
+    }
+
+
+export const getGetVideoThumbnailQueryOptions = <TData = Awaited<ReturnType<typeof getVideoThumbnail>>, TError = ErrorType<unknown>>(videoId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVideoThumbnail>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetVideoThumbnailQueryKey(videoId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getVideoThumbnail>>> = ({ signal }) => getVideoThumbnail(videoId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: videoId !== null && videoId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getVideoThumbnail>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetVideoThumbnailQueryResult = NonNullable<Awaited<ReturnType<typeof getVideoThumbnail>>>
+export type GetVideoThumbnailQueryError = ErrorType<unknown>
+
+
+
+export function useGetVideoThumbnail<TData = Awaited<ReturnType<typeof getVideoThumbnail>>, TError = ErrorType<unknown>>(
+ videoId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVideoThumbnail>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetVideoThumbnailQueryOptions(videoId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getDeleteVideoThumbnailUrl = (videoId: string,) => {
+
+
+
+
+  return `/api/videos/${videoId}/thumbnail`
+}
+
+export const deleteVideoThumbnail = async (videoId: string, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeleteVideoThumbnailUrl(videoId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteVideoThumbnailMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteVideoThumbnail>>, TError,{videoId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteVideoThumbnail>>, TError,{videoId: string}, TContext> => {
+
+const mutationKey = ['deleteVideoThumbnail'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteVideoThumbnail>>, {videoId: string}> = (props) => {
+          const {videoId} = props ?? {};
+
+          return  deleteVideoThumbnail(videoId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteVideoThumbnailMutationResult = NonNullable<Awaited<ReturnType<typeof deleteVideoThumbnail>>>
+
+    export type DeleteVideoThumbnailMutationError = ErrorType<unknown>
+
+    export const useDeleteVideoThumbnail = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteVideoThumbnail>>, TError,{videoId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteVideoThumbnail>>,
+        TError,
+        {videoId: string},
+        TContext
+      > => {
+      return useMutation(getDeleteVideoThumbnailMutationOptions(options));
+    }
+
 export const getGetAuthenticatedVideoPlaybackSourceUrl = (videoId: string,) => {
 
 
@@ -2262,6 +2537,80 @@ export function useGetPublicVideoSource<TData = Awaited<ReturnType<typeof getPub
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetPublicVideoSourceQueryOptions(videoId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetPublicVideoThumbnailUrl = (videoId: string,) => {
+
+
+
+
+  return `/api/public/videos/${videoId}/thumbnail`
+}
+
+/**
+ * Requires the opaque current `v` query value returned in thumbnailUrl.
+ */
+export const getPublicVideoThumbnail = async (videoId: string, options?: Parameters<typeof customFetch>[1]): Promise<Blob> => {
+
+  return customFetch<Blob>(getGetPublicVideoThumbnailUrl(videoId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPublicVideoThumbnailQueryKey = (videoId: string,) => {
+    return [
+    `/api/public/videos/${videoId}/thumbnail`
+    ] as const;
+    }
+
+
+export const getGetPublicVideoThumbnailQueryOptions = <TData = Awaited<ReturnType<typeof getPublicVideoThumbnail>>, TError = ErrorType<unknown>>(videoId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPublicVideoThumbnail>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPublicVideoThumbnailQueryKey(videoId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPublicVideoThumbnail>>> = ({ signal }) => getPublicVideoThumbnail(videoId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: videoId !== null && videoId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPublicVideoThumbnail>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPublicVideoThumbnailQueryResult = NonNullable<Awaited<ReturnType<typeof getPublicVideoThumbnail>>>
+export type GetPublicVideoThumbnailQueryError = ErrorType<unknown>
+
+
+
+export function useGetPublicVideoThumbnail<TData = Awaited<ReturnType<typeof getPublicVideoThumbnail>>, TError = ErrorType<unknown>>(
+ videoId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPublicVideoThumbnail>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPublicVideoThumbnailQueryOptions(videoId,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

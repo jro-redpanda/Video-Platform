@@ -8,14 +8,18 @@
     "./schema": "./src/schema/index.ts"
   },
   "scripts": {
-    "push": "drizzle-kit push --config ./drizzle.config.ts",
-    "push-force": "drizzle-kit push --force --config ./drizzle.config.ts"
+    "migrate": "node --experimental-strip-types ./scripts/migrate.ts",
+    "adopt-baseline": "node --experimental-strip-types ./scripts/migrate.ts adopt-baseline",
+    "verify-schema": "node --experimental-strip-types ./scripts/verify-schema.ts",
+    "accept-migrations": "node --experimental-strip-types ./scripts/accept-migrations.ts",
+    "prototype:push": "test \"$NODE_ENV\" != production || { echo 'prototype:push is local-only' >&2; exit 1; }; drizzle-kit push --config ./drizzle.config.ts"
   },
   "dependencies": {
     "drizzle-orm": "catalog:",
     "drizzle-zod": "^0.8.3",
     "kysely": "0.29.5",
     "pg": "^8.23.0",
+    "pg-boss": "12.29.0",
     "zod": "catalog:"
   },
   "devDependencies": {

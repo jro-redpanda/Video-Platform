@@ -126,10 +126,11 @@ export function VideoList({
                   <TableCell>
                     <div className="flex items-center gap-4">
                       <div
-                        className="w-20 h-12 rounded-md overflow-hidden flex items-center justify-center text-white flex-shrink-0 shadow-sm relative"
-                        style={{ backgroundColor: video.thumbnailColor || '#333' }}
+                        className="w-20 h-12 rounded-md overflow-hidden flex items-center justify-center text-white flex-shrink-0 shadow-sm relative group/thumb bg-muted"
+                        style={video.thumbnailUrl ? {} : { backgroundColor: video.thumbnailColor || '#333' }}
                       >
-                        <Play className="h-5 w-5 opacity-40 group-hover:opacity-100 transition-opacity" />
+                        {video.thumbnailUrl && <img src={video.thumbnailUrl} alt={`Thumbnail for ${video.title}`} className="absolute inset-0 w-full h-full object-cover z-0" />}
+                        <Play className="h-5 w-5 opacity-40 group-hover:opacity-100 transition-opacity relative z-10" />
                       </div>
                       <div className="min-w-0">
                         <div className="font-semibold text-foreground truncate max-w-[280px]" title={video.title}>{video.title}</div>
@@ -243,10 +244,11 @@ export function VideoList({
                   </div>
                 )}
                 <div
-                  className="w-28 h-16 rounded-md overflow-hidden flex items-center justify-center text-white flex-shrink-0"
-                  style={{ backgroundColor: video.thumbnailColor || '#333' }}
+                  className="w-28 h-16 rounded-md overflow-hidden flex items-center justify-center text-white flex-shrink-0 relative bg-muted"
+                  style={video.thumbnailUrl ? {} : { backgroundColor: video.thumbnailColor || '#333' }}
                 >
-                  <Play className="h-6 w-6 opacity-50" />
+                  {video.thumbnailUrl && <img src={video.thumbnailUrl} alt={`Thumbnail for ${video.title}`} className="absolute inset-0 w-full h-full object-cover z-0" />}
+                  <Play className="h-6 w-6 opacity-50 relative z-10" />
                 </div>
                 <div className="flex-1 min-w-0 py-0.5 flex flex-col justify-between">
                   <div className="flex justify-between items-start gap-2">

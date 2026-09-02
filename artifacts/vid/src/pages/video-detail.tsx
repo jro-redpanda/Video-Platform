@@ -14,6 +14,7 @@ import { ArrowLeft, Copy, ExternalLink, Activity, Check, XCircle, Folder as Fold
 import { formatDate, formatDuration, formatNumber } from "@/lib/utils"
 import { Player } from "@/components/player"
 import { MoveVideoDialog } from "@/components/video-library/move-video-dialog"
+import { ThumbnailManager } from "@/components/thumbnail-manager"
 
 export default function VideoDetail() {
   const { id } = useParams<{ id: string }>()
@@ -171,11 +172,15 @@ export default function VideoDetail() {
                )}
             </div>
 
-            <Tabs defaultValue="metadata" className="w-full">
-              <TabsList className="w-full justify-start border-b rounded-none h-auto p-0 bg-transparent mb-6 space-x-6">
-                <TabsTrigger value="metadata" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:bg-transparent px-0 py-2">Metadata</TabsTrigger>
-                <TabsTrigger value="embed" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:bg-transparent px-0 py-2">Embed & Links</TabsTrigger>
-                <TabsTrigger value="analytics" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:bg-transparent px-0 py-2">Analytics</TabsTrigger>
+            <Tabs defaultValue="metadata" className="w-full min-w-0">
+              <TabsList
+                className="w-full flex overflow-x-auto justify-start border-b rounded-none h-auto p-0 bg-transparent mb-6 gap-6 space-x-0"
+                data-testid="tabs-video-detail"
+              >
+                <TabsTrigger data-testid="tab-metadata" value="metadata" className="whitespace-nowrap rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:bg-transparent px-0 py-2">Metadata</TabsTrigger>
+                <TabsTrigger data-testid="tab-thumbnail" value="thumbnail" className="whitespace-nowrap rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:bg-transparent px-0 py-2">Thumbnail</TabsTrigger>
+                <TabsTrigger data-testid="tab-embed" value="embed" className="whitespace-nowrap rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:bg-transparent px-0 py-2">Embed & Links</TabsTrigger>
+                <TabsTrigger data-testid="tab-analytics" value="analytics" className="whitespace-nowrap rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:shadow-none data-[state=active]:bg-transparent px-0 py-2">Analytics</TabsTrigger>
               </TabsList>
 
               <TabsContent value="metadata" className="space-y-6">
@@ -201,6 +206,10 @@ export default function VideoDetail() {
                     />
                   </div>
                 </div>
+              </TabsContent>
+
+              <TabsContent value="thumbnail" className="space-y-6">
+                <ThumbnailManager video={video} canUpdate={canUpdate} />
               </TabsContent>
 
               <TabsContent value="embed" className="space-y-6">

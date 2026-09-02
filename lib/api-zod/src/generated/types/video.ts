@@ -19,6 +19,8 @@ export interface Video {
   durationSeconds: number;
   createdAt: Date;
   thumbnailColor: string;
+  /** @nullable */
+  thumbnailUrl?: string | null;
   plays: number;
   completionRate: number;
   /** @nullable */

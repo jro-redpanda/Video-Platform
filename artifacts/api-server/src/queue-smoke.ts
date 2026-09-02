@@ -14,7 +14,7 @@ const testProvider = new Step7SmokeVideoProvider();
 const queueName = `vid.tenant.provision.smoke.${suffix}`;
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error("DATABASE_URL is required");
-const boss = new PgBoss({ connectionString, schema: "vid_jobs", application_name: "vid-step7-smoke" });
+const boss = new PgBoss({ connectionString, schema: "vid_jobs", migrate: false, application_name: "vid-step7-smoke" });
 
 try {
   const [plan] = await db.insert(plansTable).values({

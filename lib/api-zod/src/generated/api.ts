@@ -141,6 +141,7 @@ export const ListVideosResponse = zod.object({
   "durationSeconds": zod.number(),
   "createdAt": zod.coerce.date(),
   "thumbnailColor": zod.string(),
+  "thumbnailUrl": zod.string().nullish(),
   "plays": zod.number(),
   "completionRate": zod.number(),
   "folderId": zod.string().nullable(),
@@ -403,6 +404,7 @@ export const GetVideoResponse = zod.object({
   "durationSeconds": zod.number(),
   "createdAt": zod.coerce.date(),
   "thumbnailColor": zod.string(),
+  "thumbnailUrl": zod.string().nullish(),
   "plays": zod.number(),
   "completionRate": zod.number(),
   "folderId": zod.string().nullable(),
@@ -449,6 +451,7 @@ export const UpdateVideoResponse = zod.object({
   "durationSeconds": zod.number(),
   "createdAt": zod.coerce.date(),
   "thumbnailColor": zod.string(),
+  "thumbnailUrl": zod.string().nullish(),
   "plays": zod.number(),
   "completionRate": zod.number(),
   "folderId": zod.string().nullable(),
@@ -491,6 +494,7 @@ export const GetAuthenticatedVideoPlaybackResponse = zod.object({
   "visibility": zod.enum(['private', 'unlisted', 'public']),
   "durationSeconds": zod.number(),
   "thumbnailColor": zod.string(),
+  "thumbnailUrl": zod.string().nullish(),
   "playerAccent": zod.string(),
   "playerControlForeground": zod.string(),
   "playerControlBackground": zod.string(),
@@ -502,6 +506,63 @@ export const GetAuthenticatedVideoPlaybackResponse = zod.object({
   "logoUrl": zod.string().optional(),
   "watermarkUrl": zod.string().optional()
 })
+
+
+export const CreateThumbnailUploadIntentParams = zod.object({
+  "videoId": zod.coerce.string()
+})
+
+export const createThumbnailUploadIntentBodySizeBytesMax = 10485760;
+
+
+
+export const CreateThumbnailUploadIntentBody = zod.object({
+  "contentType": zod.enum(['image/jpeg', 'image/png', 'image/webp']),
+  "sizeBytes": zod.number().min(1).max(createThumbnailUploadIntentBodySizeBytesMax)
+})
+
+export const CreateThumbnailUploadIntentResponse = zod.object({
+  "intentId": zod.string(),
+  "uploadUrl": zod.string(),
+  "requiredHeaders": zod.record(zod.string(), zod.string()),
+  "expiresAt": zod.coerce.date()
+})
+
+
+export const FinalizeThumbnailParams = zod.object({
+  "videoId": zod.coerce.string()
+})
+
+export const FinalizeThumbnailBody = zod.object({
+  "intentId": zod.string()
+})
+
+export const finalizeThumbnailResponseSizeBytesMax = 10485760;
+
+
+
+export const FinalizeThumbnailResponse = zod.object({
+  "thumbnailUrl": zod.string().describe('Versioned owned application URL. The object key and storage generation are never exposed.'),
+  "contentType": zod.enum(['image/jpeg', 'image/png', 'image/webp']),
+  "sizeBytes": zod.number().min(1).max(finalizeThumbnailResponseSizeBytesMax)
+})
+
+
+/**
+ * Requires the opaque current `v` query value returned in thumbnailUrl.
+ */
+export const GetVideoThumbnailParams = zod.object({
+  "videoId": zod.coerce.string()
+})
+
+export const GetVideoThumbnailResponse = zod.unknown()
+
+
+export const DeleteVideoThumbnailParams = zod.object({
+  "videoId": zod.coerce.string()
+})
+
+export const DeleteVideoThumbnailResponse = zod.void()
 
 
 export const GetAuthenticatedVideoPlaybackSourceParams = zod.object({
@@ -524,6 +585,7 @@ export const CompleteVideoUploadResponse = zod.object({
   "durationSeconds": zod.number(),
   "createdAt": zod.coerce.date(),
   "thumbnailColor": zod.string(),
+  "thumbnailUrl": zod.string().nullish(),
   "plays": zod.number(),
   "completionRate": zod.number(),
   "folderId": zod.string().nullable(),
@@ -560,6 +622,7 @@ export const CancelVideoUploadResponse = zod.object({
   "durationSeconds": zod.number(),
   "createdAt": zod.coerce.date(),
   "thumbnailColor": zod.string(),
+  "thumbnailUrl": zod.string().nullish(),
   "plays": zod.number(),
   "completionRate": zod.number(),
   "folderId": zod.string().nullable(),
@@ -729,6 +792,7 @@ export const GetPublicVideoResponse = zod.object({
   "visibility": zod.enum(['unlisted', 'public']),
   "durationSeconds": zod.number(),
   "thumbnailColor": zod.string(),
+  "thumbnailUrl": zod.string().nullish(),
   "playerAccent": zod.string(),
   "playerControlForeground": zod.string(),
   "playerControlBackground": zod.string(),
@@ -747,6 +811,16 @@ export const GetPublicVideoSourceParams = zod.object({
 })
 
 export const GetPublicVideoSourceResponse = zod.void()
+
+
+/**
+ * Requires the opaque current `v` query value returned in thumbnailUrl.
+ */
+export const GetPublicVideoThumbnailParams = zod.object({
+  "videoId": zod.coerce.string()
+})
+
+export const GetPublicVideoThumbnailResponse = zod.unknown()
 
 
 export const createPlaybackEventsBodyEventsItemPositionSecondsMin = 0;

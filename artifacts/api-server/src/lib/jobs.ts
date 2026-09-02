@@ -5,6 +5,8 @@ import { provisionTenantOrganization } from "./tenant-provisioning";
 import { resolveProvisioningProvider, type ProvisioningProviderResolver } from "./provider-registry";
 import { cleanupExpiredUploads } from "./upload-expiry-cleanup";
 import { generateVideoEmbed } from "./video-embeds";
+import { cleanupThumbnailObjects } from "./thumbnail-cleanup";
+import type { ThumbnailStorage } from "./thumbnail-storage";
 import { and, eq, gte, lt, or, sql } from "drizzle-orm";
 import { db, embedGenerationOutboxTable } from "@workspace/db";
 import { randomUUID } from "node:crypto";
@@ -17,6 +19,7 @@ export const TENANT_PROVISION_QUEUE = `vid.tenant.provision${queueSuffix}`;
 export const UPLOAD_EXPIRY_QUEUE = `vid.upload.expiry-cleanup${queueSuffix}`;
 export const EMBED_GENERATION_QUEUE = `vid.video.embed-generation${queueSuffix}`;
 export const EMBED_DISPATCH_QUEUE = `vid.video.embed-dispatch${queueSuffix}`;
+export const THUMBNAIL_CLEANUP_QUEUE = `vid.thumbnail.cleanup${queueSuffix}`;
 
 type HealthJob = {
   requestedAt: string;
@@ -29,7 +32,10 @@ type TenantProvisionJob = { organizationId: string };
 
 let boss: PgBoss | undefined;
 
-export async function startJobs(options: { resolveProvisioningProvider?: ProvisioningProviderResolver } = {}) {
+export async function startJobs(options: {
+  resolveProvisioningProvider?: ProvisioningProviderResolver;
+  thumbnailStorage?: ThumbnailStorage;
+} = {}) {
   if (boss) return boss;
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error("DATABASE_URL is required for the job queue");
@@ -37,6 +43,7 @@ export async function startJobs(options: { resolveProvisioningProvider?: Provisi
   const instance = new PgBoss({
     connectionString,
     schema: "vid_jobs",
+    migrate: false,
     application_name: "vid-api-worker",
   });
   instance.on(events.error, (error) => logger.error({ error }, "Job queue error"));
@@ -89,8 +96,17 @@ export async function startJobs(options: { resolveProvisioningProvider?: Provisi
     expireInSeconds: 600,
     retentionSeconds: 86400,
   });
+  await instance.createQueue(THUMBNAIL_CLEANUP_QUEUE, {
+    // The durable outbox exclusively owns object-level retries/backoff.
+    // This periodic wake-up is never itself retried.
+    retryLimit: 0,
+    deadLetter: DEAD_LETTER_QUEUE,
+    expireInSeconds: 600,
+    retentionSeconds: 86400,
+  });
   await instance.schedule(UPLOAD_EXPIRY_QUEUE, "*/15 * * * *", {}, { tz: "UTC" });
   await instance.schedule(EMBED_DISPATCH_QUEUE, "* * * * *", {}, { tz: "UTC" });
+  await instance.schedule(THUMBNAIL_CLEANUP_QUEUE, "*/5 * * * *", {}, { tz: "UTC" });
   await instance.work<HealthJob>(QUEUE_NAME, async ([job]: Job<HealthJob>[]) => {
     logger.info({ jobId: job.id, requestedAt: job.data.requestedAt }, "Job worker processed health check");
     return { processedAt: new Date().toISOString() };
@@ -126,6 +142,8 @@ export async function startJobs(options: { resolveProvisioningProvider?: Provisi
     const reconciled = await reconcileEmbedGenerationOutbox(instance);
     return { ...dispatched, ...reconciled };
   });
+  await instance.work(THUMBNAIL_CLEANUP_QUEUE, { batchSize: 1 }, async () =>
+    cleanupThumbnailObjects(options.thumbnailStorage));
 
   boss = instance;
   logger.info({ queue: QUEUE_NAME }, "Job queue and worker started");

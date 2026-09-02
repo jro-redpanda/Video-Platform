@@ -169,6 +169,8 @@ export interface Video {
   durationSeconds: number;
   createdAt: string;
   thumbnailColor: string;
+  /** @nullable */
+  thumbnailUrl?: string | null;
   plays: number;
   completionRate: number;
   /** @nullable */
@@ -211,6 +213,57 @@ export interface VideoUploadInput {
   contentLength: number;
   /** @nullable */
   folderId?: string | null;
+}
+
+export type ThumbnailUploadIntentInputContentType = typeof ThumbnailUploadIntentInputContentType[keyof typeof ThumbnailUploadIntentInputContentType];
+
+
+export const ThumbnailUploadIntentInputContentType = {
+  'image/jpeg': 'image/jpeg',
+  'image/png': 'image/png',
+  'image/webp': 'image/webp',
+} as const;
+
+export interface ThumbnailUploadIntentInput {
+  contentType: ThumbnailUploadIntentInputContentType;
+  /**
+     * @minimum 1
+     * @maximum 10485760
+     */
+  sizeBytes: number;
+}
+
+export type ThumbnailUploadIntentRequiredHeaders = {[key: string]: string};
+
+export interface ThumbnailUploadIntent {
+  intentId: string;
+  uploadUrl: string;
+  requiredHeaders: ThumbnailUploadIntentRequiredHeaders;
+  expiresAt: string;
+}
+
+export interface ThumbnailFinalizeInput {
+  intentId: string;
+}
+
+export type ThumbnailContentType = typeof ThumbnailContentType[keyof typeof ThumbnailContentType];
+
+
+export const ThumbnailContentType = {
+  'image/jpeg': 'image/jpeg',
+  'image/png': 'image/png',
+  'image/webp': 'image/webp',
+} as const;
+
+export interface Thumbnail {
+  /** Versioned owned application URL. The object key and storage generation are never exposed. */
+  thumbnailUrl: string;
+  contentType: ThumbnailContentType;
+  /**
+     * @minimum 1
+     * @maximum 10485760
+     */
+  sizeBytes: number;
 }
 
 export type TusUploadCredentialsKind = typeof TusUploadCredentialsKind[keyof typeof TusUploadCredentialsKind];
@@ -526,6 +579,8 @@ export interface PublicVideo {
   visibility: PublicVideoVisibility;
   durationSeconds: number;
   thumbnailColor: string;
+  /** @nullable */
+  thumbnailUrl?: string | null;
   playerAccent: string;
   playerControlForeground: string;
   playerControlBackground: string;
@@ -575,6 +630,8 @@ export interface AuthenticatedPlaybackVideo {
   visibility: AuthenticatedPlaybackVideoVisibility;
   durationSeconds: number;
   thumbnailColor: string;
+  /** @nullable */
+  thumbnailUrl?: string | null;
   playerAccent: string;
   playerControlForeground: string;
   playerControlBackground: string;

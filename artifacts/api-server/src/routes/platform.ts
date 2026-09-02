@@ -9,10 +9,12 @@ import {
   groupPermissionsTable,
   membershipsTable,
   organizationCustomizationTable,
+  objectCleanupOutboxTable,
   organizationsTable,
   plansTable,
   providerAccountsTable,
   providerTenantSpacesTable,
+  thumbnailUploadIntentsTable,
   usersTable,
   videoAnalyticsRollupsTable,
   videoEmbedsTable,
@@ -70,6 +72,9 @@ const videoProjection = {
   durationSeconds: videosTable.durationSeconds,
   createdAt: videosTable.createdAt,
   thumbnailColor: videosTable.thumbnailColor,
+  thumbnailUrl: sql<string | null>`case when ${videosTable.thumbnailObjectKey} is not null and ${videosTable.thumbnailVersion} is not null
+    and (${videosTable.thumbnailMutableUntil} is null or ${videosTable.thumbnailMutableUntil} <= now()) then
+    '/api/videos/' || ${videosTable.id}::text || '/thumbnail?v=' || ${videosTable.thumbnailVersion}::text else null end`,
   plays: sql<number>`coalesce(sum(${videoAnalyticsRollupsTable.plays}), 0)::int`,
   completionRate: sql<number>`coalesce(
     sum(${videoAnalyticsRollupsTable.completionRate} * ${videoAnalyticsRollupsTable.plays})
@@ -777,6 +782,9 @@ router.get("/videos/:videoId/playback", requirePermission("videos.read"), async 
       id: videosTable.id, title: videosTable.title, description: videosTable.description,
       status: videosTable.status, visibility: videosTable.visibility,
       durationSeconds: videosTable.durationSeconds, thumbnailColor: videosTable.thumbnailColor,
+      thumbnailObjectKey: videosTable.thumbnailObjectKey,
+      thumbnailVersion: videosTable.thumbnailVersion,
+      thumbnailMutableUntil: videosTable.thumbnailMutableUntil,
       playerAccent: organizationCustomizationTable.playerAccent,
       playerControlForeground: organizationCustomizationTable.playerControlForeground,
       playerControlBackground: organizationCustomizationTable.playerControlBackground,
@@ -798,7 +806,14 @@ router.get("/videos/:videoId/playback", requirePermission("videos.read"), async 
     res.status(404).json({ error: "Video not found" });
     return;
   }
-  const { providerAssetId, providerTenantSpaceId, account, space, ...metadata } = video;
+  const {
+    providerAssetId, providerTenantSpaceId, account, space, thumbnailObjectKey, thumbnailVersion,
+    thumbnailMutableUntil, ...baseMetadata
+  } = video;
+  const thumbnailUrl = thumbnailObjectKey && thumbnailVersion
+    && (!thumbnailMutableUntil || thumbnailMutableUntil.getTime() <= Date.now())
+    ? `/api/videos/${videoId}/thumbnail?v=${thumbnailVersion}` : null;
+  const metadata = { ...baseMetadata, thumbnailUrl, posterUrl: thumbnailUrl };
   if (video.status !== "ready") {
     res.setHeader("Cache-Control", "private, no-store");
     res.json(GetAuthenticatedVideoPlaybackResponse.parse(metadata));
@@ -817,7 +832,8 @@ router.get("/videos/:videoId/playback", requirePermission("videos.read"), async 
     res.setHeader("Cache-Control", "private, no-store");
     res.json(GetAuthenticatedVideoPlaybackResponse.parse({
       ...metadata, sourceUrl: `/api/videos/${videoId}/playback/source`, sourceType: "hls",
-      sourceExpiresAt: new Date(sources.expiresAt).toISOString(), posterUrl: null,
+      sourceExpiresAt: new Date(sources.expiresAt).toISOString(),
+      posterUrl: thumbnailUrl,
     }));
   } catch (error) {
     req.log.error({ err: error, videoId }, "Authenticated playback source resolution failed");
@@ -1038,7 +1054,9 @@ async function deleteVideoDurably(
   }
 
   if (!video.providerAssetId) {
-    await withTenantDb(req.tenant, (tx) => deleteOwnedVideoMetadata(tx, organizationId, videoId));
+    const claim = await claimVideoForDeletion(req, organizationId, videoId);
+    if (!claim) return { status: 409, error: "Video deletion is already in progress or requires reconciliation." };
+    await withTenantDb(req.tenant, (tx) => deleteOwnedVideoMetadata(tx, organizationId, videoId, claim));
     return { status: 204 };
   }
   if (!video.providerAccountId || !video.providerTenantSpaceId) {
@@ -1051,16 +1069,8 @@ async function deleteVideoDurably(
     return { status: 409, error: "Video deletion requires provider reconciliation." };
   }
 
-  const claim = randomUUID();
-  const [claimed] = await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
-    deletionClaim: claim,
-    deletionClaimedAt: new Date(),
-  }).where(and(
-    scopedVideoWhere(organizationId, videoId),
-    sql`${videosTable.deletionClaim} is null`,
-    sql`${videosTable.reconciliationRequired} is null`,
-  )).returning({ id: videosTable.id }));
-  if (!claimed) {
+  const claim = await claimVideoForDeletion(req, organizationId, videoId);
+  if (!claim) {
     return { status: 409, error: "Video deletion is already in progress or requires reconciliation." };
   }
 
@@ -1123,6 +1133,26 @@ async function deleteVideoDurably(
   }
 }
 
+async function claimVideoForDeletion(req: Request, organizationId: string, videoId: string) {
+  return withTenantDb(req.tenant, async (tx) => {
+    const [locked] = await tx.select({
+      deletionClaim: videosTable.deletionClaim,
+      reconciliationRequired: videosTable.reconciliationRequired,
+    }).from(videosTable).where(scopedVideoWhere(organizationId, videoId)).for("update").limit(1);
+    if (!locked || locked.deletionClaim || locked.reconciliationRequired) return undefined;
+    const claim = randomUUID();
+    const [claimed] = await tx.update(videosTable).set({
+      deletionClaim: claim,
+      deletionClaimedAt: new Date(),
+    }).where(and(
+      scopedVideoWhere(organizationId, videoId),
+      sql`${videosTable.deletionClaim} is null`,
+      sql`${videosTable.reconciliationRequired} is null`,
+    )).returning({ id: videosTable.id });
+    return claimed ? claim : undefined;
+  });
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -1131,17 +1161,40 @@ async function deleteOwnedVideoMetadata(
   tx: TenantTransaction,
   organizationId: string,
   videoId: string,
-  deletionClaim?: string,
+  deletionClaim: string,
 ) {
+  // Serialize with every thumbnail mutation and verify the persisted lifecycle
+  // claim before enumerating object keys or cascading upload intents.
+  const [lockedVideo] = await tx.select({
+    deletionClaim: videosTable.deletionClaim,
+  }).from(videosTable).where(scopedVideoWhere(organizationId, videoId)).for("update").limit(1);
+  if (!lockedVideo || !deletionClaim || lockedVideo.deletionClaim !== deletionClaim) {
+    throw new Error("Owned video deletion claim changed before metadata deletion");
+  }
   await releaseReservationInTransaction(tx, organizationId, videoId);
+  const [thumbnail] = await tx.select({ objectKey: videosTable.thumbnailObjectKey })
+    .from(videosTable).where(scopedVideoWhere(organizationId, videoId)).limit(1);
+  if (thumbnail?.objectKey) {
+    await tx.insert(objectCleanupOutboxTable).values({ organizationId, objectKey: thumbnail.objectKey })
+      .onConflictDoNothing({ target: objectCleanupOutboxTable.objectKey });
+  }
+  const candidateThumbnails = await tx.select({ objectKey: thumbnailUploadIntentsTable.objectKey })
+    .from(thumbnailUploadIntentsTable).where(and(
+      eq(thumbnailUploadIntentsTable.organizationId, organizationId),
+      eq(thumbnailUploadIntentsTable.videoId, videoId),
+    ));
+  if (candidateThumbnails.length) {
+    await tx.insert(objectCleanupOutboxTable).values(candidateThumbnails.map(({ objectKey }) => ({
+      organizationId, objectKey,
+    })))
+      .onConflictDoNothing({ target: objectCleanupOutboxTable.objectKey });
+  }
   await tx.delete(embedGenerationOutboxTable).where(eq(embedGenerationOutboxTable.videoId, videoId));
   await tx.delete(webhookEventsTable).where(and(
     eq(webhookEventsTable.organizationId, organizationId),
     eq(webhookEventsTable.ownedVideoId, videoId),
   ));
-  const condition = deletionClaim
-    ? and(scopedVideoWhere(organizationId, videoId), eq(videosTable.deletionClaim, deletionClaim))
-    : scopedVideoWhere(organizationId, videoId);
+  const condition = and(scopedVideoWhere(organizationId, videoId), eq(videosTable.deletionClaim, deletionClaim));
   const [deleted] = await tx.delete(videosTable).where(condition).returning({ id: videosTable.id });
   if (!deleted) throw new Error("Owned video deletion claim changed before metadata deletion");
 }

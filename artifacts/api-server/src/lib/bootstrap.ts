@@ -38,9 +38,8 @@ const permissionCatalog = [
 
 // MOCK: replaced at step 18
 export async function bootstrapDevelopmentTenant() {
-  // Security initialization is required in every environment; only fixtures
-  // below are development-only.
-  await ensureTenantIsolation();
+  // DDL, grants, and RLS are owned by immutable migrations, never by a replica.
+  await assertMigratedSchema();
   await reconcileSystemVideoDeletePermission();
   if (process.env.NODE_ENV === "production") return;
 
@@ -230,45 +229,12 @@ export async function reconcileSystemVideoDeletePermission() {
   });
 }
 
-const tenantTables = [
-  "organization_customization",
-  "permission_groups",
-  "memberships",
-  "invitations",
-  "folders",
-  "videos",
-  "video_analytics_rollups",
-  "playback_events",
-  "provider_tenant_spaces",
-  "organization_entitlement_overrides",
-  "audit_logs",
-] as const;
-
-async function ensureTenantIsolation() {
-  await db.execute(sql.raw(`
-    do $$
-    begin
-      if not exists (select 1 from pg_roles where rolname = 'vid_app') then
-        create role vid_app nologin;
-      end if;
-    end
-    $$;
-    grant usage on schema public to vid_app;
-    grant select, insert, update, delete on all tables in schema public to vid_app;
-    grant usage, select on all sequences in schema public to vid_app;
-    alter default privileges in schema public grant select, insert, update, delete on tables to vid_app;
-    alter default privileges in schema public grant usage, select on sequences to vid_app;
-  `));
-
-  for (const table of tenantTables) {
-    const expression = "organization_id = nullif(current_setting('app.organization_id', true), '')::uuid";
-    await db.execute(sql.raw(`
-      alter table "${table}" enable row level security;
-      drop policy if exists tenant_isolation on "${table}";
-      create policy tenant_isolation on "${table}"
-        for all to vid_app
-        using (${expression})
-        with check (${expression});
-    `));
+async function assertMigratedSchema() {
+  const result = await db.execute(sql`
+    select count(*)::int as count from public.schema_migrations
+    where name in ('0000_baseline.sql', '0015_thumbnails.sql', '0016_thumbnail_integrity.sql')
+  `);
+  if (result.rows[0]?.count !== 3) {
+    throw new Error("database schema is not migrated; run @workspace/db migrate (or adopt-baseline --confirm for a reviewed existing database) before starting the API");
   }
 }

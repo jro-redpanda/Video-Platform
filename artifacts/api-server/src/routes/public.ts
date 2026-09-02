@@ -17,6 +17,8 @@ import {
   GetPublicVideoResponse,
 } from "@workspace/api-zod";
 import { resolveProvisioningProvider, videoProviders } from "../lib/provider-registry";
+import { getThumbnailStorage, ThumbnailObjectNotFoundError } from "../lib/thumbnail-storage";
+import { streamThumbnail } from "./thumbnails";
 
 const router: IRouter = Router();
 
@@ -68,6 +70,50 @@ router.get("/videos/:videoId/source", async (req, res): Promise<void> => {
   }
 });
 
+router.get("/videos/:videoId/thumbnail", async (req, res): Promise<void> => {
+  const { videoId } = GetPublicVideoParams.parse(req.params);
+  const [thumbnail] = await db.select({
+    objectKey: videosTable.thumbnailObjectKey,
+    contentType: videosTable.thumbnailContentType,
+    sizeBytes: videosTable.thumbnailSizeBytes,
+    version: videosTable.thumbnailVersion,
+    generation: videosTable.thumbnailGeneration,
+    mutableUntil: videosTable.thumbnailMutableUntil,
+  }).from(videosTable).where(and(
+    eq(videosTable.id, videoId),
+    ne(videosTable.visibility, "private"),
+  )).limit(1);
+  if (!thumbnail?.objectKey || !thumbnail.contentType || !thumbnail.sizeBytes || !thumbnail.version
+    || (thumbnail.mutableUntil && thumbnail.mutableUntil.getTime() > Date.now())
+    || req.query.v !== thumbnail.version) {
+    res.status(404).json({ error: "Thumbnail not found" });
+    return;
+  }
+  const objectStorage = getThumbnailStorage(req.app.locals);
+  try {
+    const actual = await objectStorage.getMetadata(thumbnail.objectKey, thumbnail.generation ?? undefined);
+    if (actual.contentType !== thumbnail.contentType || actual.size !== thumbnail.sizeBytes) {
+      throw new Error("Stored thumbnail metadata changed after finalization");
+    }
+    if (thumbnail.generation && actual.generation !== thumbnail.generation) {
+      throw new Error("Stored thumbnail generation changed after finalization");
+    }
+    streamThumbnail(res, objectStorage, {
+      objectKey: thumbnail.objectKey,
+      contentType: thumbnail.contentType,
+      sizeBytes: thumbnail.sizeBytes,
+      generation: thumbnail.generation ?? undefined,
+    }, true);
+  } catch (error) {
+    if (error instanceof ThumbnailObjectNotFoundError) {
+      res.status(404).json({ error: "Thumbnail not found" });
+      return;
+    }
+    req.log.error({ err: error, videoId }, "Public thumbnail serving failed");
+    res.status(503).json({ error: "Thumbnail storage is unavailable" });
+  }
+});
+
 router.get("/videos/:videoId", async (req, res): Promise<void> => {
   const { videoId } = GetPublicVideoParams.parse(req.params);
   const [video] = await db.select({
@@ -78,6 +124,9 @@ router.get("/videos/:videoId", async (req, res): Promise<void> => {
     visibility: videosTable.visibility,
     durationSeconds: videosTable.durationSeconds,
     thumbnailColor: videosTable.thumbnailColor,
+    thumbnailObjectKey: videosTable.thumbnailObjectKey,
+    thumbnailVersion: videosTable.thumbnailVersion,
+    thumbnailMutableUntil: videosTable.thumbnailMutableUntil,
     playerAccent: organizationCustomizationTable.playerAccent,
     playerControlForeground: organizationCustomizationTable.playerControlForeground,
     playerControlBackground: organizationCustomizationTable.playerControlBackground,
@@ -107,7 +156,18 @@ router.get("/videos/:videoId", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Video not found" });
     return;
   }
-  const { providerAssetId, providerTenantSpaceId, account, space, ...metadata } = video;
+  const {
+    providerAssetId, providerTenantSpaceId, account, space, thumbnailObjectKey, thumbnailVersion,
+    thumbnailMutableUntil, ...rest
+  } = video;
+  const thumbnailUrl = thumbnailObjectKey && thumbnailVersion
+    && (!thumbnailMutableUntil || thumbnailMutableUntil.getTime() <= Date.now())
+    ? `/api/public/videos/${videoId}/thumbnail?v=${thumbnailVersion}` : null;
+  const metadata = {
+    ...rest,
+    thumbnailUrl,
+    posterUrl: thumbnailUrl,
+  };
   if (video.status !== "ready") {
     res.setHeader("Cache-Control", "private, no-store");
     res.json(GetPublicVideoResponse.parse(metadata));
@@ -135,7 +195,7 @@ router.get("/videos/:videoId", async (req, res): Promise<void> => {
       sourceUrl: `/api/public/videos/${videoId}/source`,
       sourceType: "hls",
       sourceExpiresAt: expiry.toISOString(),
-      posterUrl: null,
+      posterUrl: metadata.thumbnailUrl,
     }));
   } catch (error) {
     req.log.error({ err: error, videoId }, "Playback source resolution failed");

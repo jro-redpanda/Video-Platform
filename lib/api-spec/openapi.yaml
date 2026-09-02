@@ -311,6 +311,66 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuthenticatedPlaybackVideo"
+  /videos/{videoId}/thumbnail-upload-intent:
+    post:
+      operationId: createThumbnailUploadIntent
+      tags: [videos]
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThumbnailUploadIntentInput"
+      responses:
+        "201":
+          description: Short-lived exact-object upload capability
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThumbnailUploadIntent"
+  /videos/{videoId}/thumbnail-finalize:
+    post:
+      operationId: finalizeThumbnail
+      tags: [videos]
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThumbnailFinalizeInput"
+      responses:
+        "200":
+          description: Finalized thumbnail application route
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Thumbnail"
+  /videos/{videoId}/thumbnail:
+    get:
+      operationId: getVideoThumbnail
+      tags: [videos]
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      description: Requires the opaque current `v` query value returned in thumbnailUrl.
+      responses:
+        "200":
+          description: Authenticated thumbnail bytes
+          content:
+            image/jpeg: {}
+            image/png: {}
+            image/webp: {}
+    delete:
+      operationId: deleteVideoThumbnail
+      tags: [videos]
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      responses:
+        "204":
+          description: Thumbnail removed
   /videos/{videoId}/playback/source:
     get:
       operationId: getAuthenticatedVideoPlaybackSource
@@ -505,6 +565,20 @@ paths:
           headers:
             Location:
               schema: { type: string }
+  /public/videos/{videoId}/thumbnail:
+    get:
+      operationId: getPublicVideoThumbnail
+      tags: [videos]
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      description: Requires the opaque current `v` query value returned in thumbnailUrl.
+      responses:
+        "200":
+          description: Public or unlisted thumbnail bytes
+          content:
+            image/jpeg: {}
+            image/png: {}
+            image/webp: {}
   /public/playback-events:
     post:
       operationId: createPlaybackEvents
@@ -656,6 +730,7 @@ components:
         durationSeconds: { type: number }
         createdAt: { type: string, format: date-time }
         thumbnailColor: { type: string }
+        thumbnailUrl: { type: ["string", "null"] }
         plays: { type: number }
         completionRate: { type: number }
         folderId: { type: ["string", "null"] }
@@ -703,6 +778,42 @@ components:
         contentType: { type: string, minLength: 1, maxLength: 127 }
         contentLength: { type: number, minimum: 1, maximum: 2147483647 }
         folderId: { type: ["string", "null"] }
+    ThumbnailUploadIntentInput:
+      type: object
+      additionalProperties: false
+      required: [contentType, sizeBytes]
+      properties:
+        contentType:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+        sizeBytes: { type: number, minimum: 1, maximum: 10485760 }
+    ThumbnailUploadIntent:
+      type: object
+      required: [intentId, uploadUrl, requiredHeaders, expiresAt]
+      properties:
+        intentId: { type: string }
+        uploadUrl: { type: string }
+        requiredHeaders:
+          type: object
+          additionalProperties: { type: string }
+        expiresAt: { type: string, format: date-time }
+    ThumbnailFinalizeInput:
+      type: object
+      additionalProperties: false
+      required: [intentId]
+      properties:
+        intentId: { type: string }
+    Thumbnail:
+      type: object
+      required: [thumbnailUrl, contentType, sizeBytes]
+      properties:
+        thumbnailUrl:
+          type: string
+          description: Versioned owned application URL. The object key and storage generation are never exposed.
+        contentType:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+        sizeBytes: { type: number, minimum: 1, maximum: 10485760 }
     VideoUploadInitialization:
       type: object
       required: [videoId, upload]
@@ -942,6 +1053,7 @@ components:
           enum: [unlisted, public]
         durationSeconds: { type: number }
         thumbnailColor: { type: string }
+        thumbnailUrl: { type: ["string", "null"] }
         playerAccent: { type: string }
         playerControlForeground: { type: string }
         playerControlBackground: { type: string }
@@ -970,6 +1082,7 @@ components:
           enum: [private, unlisted, public]
         durationSeconds: { type: number }
         thumbnailColor: { type: string }
+        thumbnailUrl: { type: ["string", "null"] }
         playerAccent: { type: string }
         playerControlForeground: { type: string }
         playerControlBackground: { type: string }

@@ -42,6 +42,14 @@ export const videosTable = pgTable("videos", {
   visibility: videoVisibilityEnum("visibility").notNull().default("private"),
   durationSeconds: integer("duration_seconds").notNull().default(0),
   thumbnailColor: text("thumbnail_color").notNull().default("#5B5BD6"),
+  /** Private App Storage linkage. Never project this key in an API response. */
+  thumbnailObjectKey: text("thumbnail_object_key"),
+  thumbnailContentType: text("thumbnail_content_type"),
+  thumbnailSizeBytes: integer("thumbnail_size_bytes"),
+  thumbnailVersion: uuid("thumbnail_version"),
+  thumbnailGeneration: text("thumbnail_generation"),
+  /** Legacy signed-key safety horizon; null for immutable promoted finals. */
+  thumbnailMutableUntil: timestamp("thumbnail_mutable_until", { withTimezone: true }),
   /** Legacy pre-adapter linkage retained for non-destructive migration only. */
   legacyProviderKey: text("provider_key"),
   legacyProviderVideoId: text("provider_video_id"),
@@ -85,6 +93,14 @@ export const videosTable = pgTable("videos", {
     table.providerTenantSpaceId,
     table.providerAssetId,
   ),
+  check("videos_thumbnail_metadata_check", sql`(
+    ${table.thumbnailObjectKey} is null and ${table.thumbnailContentType} is null and ${table.thumbnailSizeBytes} is null and ${table.thumbnailVersion} is null and ${table.thumbnailGeneration} is null and ${table.thumbnailMutableUntil} is null
+  ) or (
+    ${table.thumbnailObjectKey} is not null
+    and ${table.thumbnailContentType} in ('image/jpeg', 'image/png', 'image/webp')
+    and ${table.thumbnailSizeBytes} between 1 and 10485760
+    and ${table.thumbnailVersion} is not null
+  )`),
 ]);
 
 export type VideoEmbedMetadata = {

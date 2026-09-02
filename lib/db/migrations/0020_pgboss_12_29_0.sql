@@ -1,0 +1,8 @@
+-- PG_BOSS_GENERATED_CONSTRUCTION
+-- package: pg-boss@12.29.0
+-- schema: vid_jobs
+-- getConstructionPlans sha256: 6fad7e7a63dcb10b485264302adf912af39c8c4f8255c5566adf754ffd0525ba
+-- getMigrationPlans(schema,0) sha256: cb04acf6911ff52414c553887b393dea298ec261ba58cbb5df067ce51afadfa9
+-- The repository runner expands the version-pinned exported construction plan,
+-- verifies these frozen hashes, and inserts this migration's ledger row before
+-- the exported plan's COMMIT so construction and recording remain atomic.

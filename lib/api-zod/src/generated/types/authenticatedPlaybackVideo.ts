@@ -17,6 +17,8 @@ export interface AuthenticatedPlaybackVideo {
   visibility: AuthenticatedPlaybackVideoVisibility;
   durationSeconds: number;
   thumbnailColor: string;
+  /** @nullable */
+  thumbnailUrl?: string | null;
   playerAccent: string;
   playerControlForeground: string;
   playerControlBackground: string;
