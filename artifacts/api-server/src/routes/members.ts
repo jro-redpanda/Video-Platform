@@ -27,6 +27,7 @@ import {
 } from "@workspace/api-zod";
 import { requirePermission } from "../lib/permissions";
 import { withTenantDb } from "../lib/tenant-db";
+import { requireCreateAccess, requireEntitlement, resolveEntitlements } from "../lib/entitlements";
 
 const router: IRouter = Router();
 
@@ -93,7 +94,7 @@ router.get("/permissions", requirePermission("members.manage"), async (req, res)
   res.json(ListPermissionsResponse.parse(permissions));
 });
 
-router.post("/permission-groups", requirePermission("members.manage"), async (req, res) => {
+router.post("/permission-groups", requirePermission("members.manage"), requireCreateAccess, requireEntitlement("feature.custom_groups"), async (req, res) => {
   const input = CreatePermissionGroupBody.parse(req.body);
   const group = await withTenantDb(req.tenant, async (tx) => {
     const valid = input.permissions.length
@@ -281,9 +282,17 @@ router.patch("/members/:membershipId", requirePermission("members.manage"), asyn
   res.json(UpdateMemberResponse.parse(result.member));
 });
 
-router.post("/invitations", requirePermission("members.manage"), async (req, res) => {
+router.post("/invitations", requirePermission("members.manage"), requireCreateAccess, async (req, res) => {
   const input = CreateInvitationBody.parse(req.body);
   const invitation = await withTenantDb(req.tenant, async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${req.tenant.organizationId}))`);
+    const entitlements = await resolveEntitlements(tx, req.tenant.organizationId);
+    const [{ count }] = await tx.select({ count: sql<number>`count(*)::int` }).from(membershipsTable)
+      .where(and(eq(membershipsTable.organizationId, req.tenant.organizationId), eq(membershipsTable.status, "active")));
+    const [{ invites }] = await tx.select({ invites: sql<number>`count(*)::int` }).from(invitationsTable)
+      .where(and(eq(invitationsTable.organizationId, req.tenant.organizationId), isNull(invitationsTable.acceptedAt)));
+    const limit = Number(entitlements["limits.max_users"]);
+    if (!Number.isFinite(limit) || count + invites >= limit) return { limitReached: true as const, limit, current: count + invites };
     const [group] = await tx.select({ id: permissionGroupsTable.id, name: permissionGroupsTable.name })
       .from(permissionGroupsTable)
       .where(and(
@@ -313,6 +322,9 @@ router.post("/invitations", requirePermission("members.manage"), async (req, res
     };
   });
 
+  if (invitation && "limitReached" in invitation) return void res.status(409).json({
+    error: "Member limit reached", code: "member_limit_reached", limit: invitation.limit, current: invitation.current,
+  });
   if (!invitation) return void res.status(400).json({ error: "Invalid permission group" });
   res.status(201).json(CreateInvitationResponse.parse(invitation));
 });

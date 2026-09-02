@@ -27,6 +27,7 @@ async function buildAll() {
       path.resolve(artifactDir, "src/thumbnail-step15-smoke.ts"),
       path.resolve(artifactDir, "src/thumbnail-storage-roundtrip-smoke.ts"),
       path.resolve(artifactDir, "src/thumbnail-cleanup-once.ts"),
+      path.resolve(artifactDir, "src/billing-step18-smoke.ts"),
     ],
     platform: "node",
     bundle: true,

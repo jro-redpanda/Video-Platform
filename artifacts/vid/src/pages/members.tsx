@@ -23,9 +23,9 @@ export default function Members() {
   const membersQuery = useListMembers()
   const groupsQuery = useListPermissionGroups()
   const members = membersQuery.data ?? []
-  
-  const filtered = members.filter(m => 
-    m.name.toLowerCase().includes(search.toLowerCase()) || 
+
+  const filtered = members.filter(m =>
+    m.name.toLowerCase().includes(search.toLowerCase()) ||
     m.email.toLowerCase().includes(search.toLowerCase())
   )
 
@@ -42,8 +42,8 @@ export default function Members() {
       <div className="flex items-center gap-4 mb-6">
         <div className="relative w-full max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input 
-            placeholder="Search members..." 
+          <Input
+            placeholder="Search members..."
             className="pl-9"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -159,12 +159,12 @@ function InviteDialog({ groups }: { groups: PermissionGroup[] }) {
           <div className="py-6 space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email">Email Address</Label>
-              <Input 
-                id="email" 
+              <Input
+                id="email"
                 type="email"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                placeholder="colleague@example.com" 
+                placeholder="colleague@example.com"
                 autoFocus
               />
             </div>

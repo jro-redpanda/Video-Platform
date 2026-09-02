@@ -18,6 +18,7 @@ import {
   UpdateFolderResponse,
 } from "@workspace/api-zod";
 import { requirePermission } from "../lib/permissions";
+import { requireCreateAccess } from "../lib/entitlements";
 import { withTenantDb, type TenantTransaction } from "../lib/tenant-db";
 
 const router: IRouter = Router();
@@ -135,7 +136,7 @@ router.get("/folders", requirePermission("videos.read"), async (req, res): Promi
   res.json(ListFoldersResponse.parse(result));
 });
 
-router.post("/folders", requirePermission("videos.update"), async (req, res): Promise<void> => {
+router.post("/folders", requirePermission("videos.update"), requireCreateAccess, async (req, res): Promise<void> => {
   const parsed = CreateFolderBody.safeParse(req.body);
   const name = parsed.success ? normalizeName(parsed.data.name) : undefined;
   if (!parsed.success || !name) {

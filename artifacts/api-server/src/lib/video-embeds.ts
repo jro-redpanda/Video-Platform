@@ -65,6 +65,10 @@ export function trustedRequestOrigin(req: Request) {
   }
   const host = req.get("host");
   if (!host || !/^[a-z0-9.[\]:-]+$/i.test(host)) throw new Error("A valid request host is required");
+  const allowedHosts = process.env.REPLIT_DOMAINS?.split(",").map((value) => value.trim().toLowerCase()).filter(Boolean) ?? [];
+  const normalizedHost = host.toLowerCase().replace(/:443$/, "");
+  if (allowedHosts.length && !allowedHosts.includes(normalizedHost)) throw new Error("Request host is not allowlisted");
+  if (process.env.NODE_ENV === "production" && !allowedHosts.length) throw new Error("A trusted public origin is not configured");
   return `${req.protocol}://${host}`;
 }
 

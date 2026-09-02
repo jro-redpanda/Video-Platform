@@ -121,7 +121,12 @@ async function main() {
         await client.query(source);
         await assertStage(client, file.name === "0000_baseline.sql"
           ? "pre15"
-          : file.name === "0015_thumbnails.sql" ? "step15" : "thumbnailIntegrity");
+          : file.name === "0015_thumbnails.sql" ? "step15"
+          : file.name === "0016_thumbnail_integrity.sql" ? "thumbnailIntegrity"
+          : file.name === "0021_billing.sql" ? "billingBase"
+          : file.name === "0022_billing_checkout_claim.sql" ? "billingCheckoutBase"
+          : file.name === "0023_billing_provider_status.sql" ? "billingProviderBase"
+          : file.name === "0024_billing_customer_generation.sql" ? "billing" : "thumbnailIntegrity");
         await client.query("insert into public.schema_migrations(name, checksum) values($1,$2)", [file.name, file.checksum]);
         await client.query("commit");
       } catch (error) {

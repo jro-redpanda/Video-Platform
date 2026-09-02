@@ -1,6 +1,6 @@
-import app from "./app";
 import { logger } from "./lib/logger";
 import { startJobs, stopJobs } from "./lib/jobs";
+import { initializeStripeSync } from "./lib/stripe-startup";
 
 const rawPort = process.env["PORT"];
 
@@ -16,6 +16,8 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
+await initializeStripeSync();
+const { default: app } = await import("./app");
 await startJobs();
 
 const server = app.listen(port, (err) => {

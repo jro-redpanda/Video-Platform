@@ -5,6 +5,7 @@
  * Multi-tenant video platform API
  * OpenAPI spec version: 0.1.0
  */
+import type { WorkspaceBillingAccess } from './workspaceBillingAccess';
 import type { WorkspaceEntitlements } from './workspaceEntitlements';
 import type { WorkspacePosterTreatment } from './workspacePosterTreatment';
 
@@ -17,6 +18,7 @@ export interface Workspace {
   storageUsedGb: number;
   storageLimitGb: number;
   entitlements: WorkspaceEntitlements;
+  billingAccess: WorkspaceBillingAccess;
   permissions: string[];
   playerAccent: string;
   playerControlForeground: string;

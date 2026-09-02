@@ -18,6 +18,7 @@
     "thumbnail:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/thumbnail-step15-smoke.mjs",
     "thumbnail:storage-smoke": "pnpm run build && node ./dist/thumbnail-storage-roundtrip-smoke.mjs",
     "thumbnail:cleanup-once": "pnpm run build && node ./dist/thumbnail-cleanup-once.mjs",
+    "billing:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/billing-step18-smoke.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -34,7 +35,9 @@
     "google-auth-library": "^11.0.2",
     "pg-boss": "^12.29.0",
     "pino": "^9.14.0",
-    "pino-http": "^10.5.0"
+    "pino-http": "^10.5.0",
+    "stripe": "^22.6.0",
+    "stripe-replit-sync": "^1.0.0"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",

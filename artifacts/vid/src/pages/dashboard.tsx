@@ -18,33 +18,33 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <MetricCard 
-          title="Total Videos" 
-          value={dashboard?.totalVideos} 
-          isLoading={isLoadingDash} 
-          icon={PlayCircle} 
+        <MetricCard
+          title="Total Videos"
+          value={dashboard?.totalVideos}
+          isLoading={isLoadingDash}
+          icon={PlayCircle}
         />
-        <MetricCard 
-          title="Total Plays" 
-          value={dashboard?.totalPlays} 
+        <MetricCard
+          title="Total Plays"
+          value={dashboard?.totalPlays}
           formatter={formatNumber}
-          isLoading={isLoadingDash} 
-          icon={TrendingUp} 
+          isLoading={isLoadingDash}
+          icon={TrendingUp}
         />
-        <MetricCard 
-          title="Watch Time" 
+        <MetricCard
+          title="Watch Time"
           value={dashboard?.watchTimeHours}
           suffix=" hrs"
           formatter={formatNumber}
-          isLoading={isLoadingDash} 
-          icon={Clock} 
+          isLoading={isLoadingDash}
+          icon={Clock}
         />
-        <MetricCard 
-          title="Avg Completion" 
-          value={dashboard?.completionRate} 
+        <MetricCard
+          title="Avg Completion"
+          value={dashboard?.completionRate}
           suffix="%"
-          isLoading={isLoadingDash} 
-          icon={CheckCircle2} 
+          isLoading={isLoadingDash}
+          icon={CheckCircle2}
         />
       </div>
 
@@ -117,17 +117,17 @@ export default function Dashboard() {
   )
 }
 
-function MetricCard({ 
-  title, 
-  value, 
-  isLoading, 
+function MetricCard({
+  title,
+  value,
+  isLoading,
   icon: Icon,
   formatter = (v: any) => v,
   suffix = ""
-}: { 
-  title: string; 
-  value?: number; 
-  isLoading: boolean; 
+}: {
+  title: string;
+  value?: number;
+  isLoading: boolean;
   icon: React.ElementType;
   formatter?: (val: number) => string;
   suffix?: string;

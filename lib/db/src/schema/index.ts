@@ -22,3 +22,4 @@ export * from "./identity";
 export * from "./videos";
 export * from "./operations";
 export * from "./thumbnails";
+export * from "./billing";

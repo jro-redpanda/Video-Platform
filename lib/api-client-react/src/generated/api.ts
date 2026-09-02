@@ -22,6 +22,15 @@ import type {
 import type {
   ActivityItem,
   AuthenticatedPlaybackVideo,
+  BillingActionInput,
+  BillingCancellation,
+  BillingCatalog,
+  BillingChangeResult,
+  BillingInvoiceList,
+  BillingPlanInput,
+  BillingReconcileResult,
+  BillingSubscription,
+  BillingUrl,
   BulkVideoActionResult,
   BulkVideoDeleteInput,
   BulkVideoUpdate,
@@ -34,6 +43,7 @@ import type {
   HealthStatus,
   Invitation,
   InvitationInput,
+  ListBillingInvoicesParams,
   ListFoldersParams,
   ListVideosParams,
   Member,
@@ -83,6 +93,616 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getGetBillingCatalogUrl = () => {
+
+
+
+
+  return `/api/billing/catalog`
+}
+
+export const getBillingCatalog = async ( options?: Parameters<typeof customFetch>[1]): Promise<BillingCatalog> => {
+
+  return customFetch<BillingCatalog>(getGetBillingCatalogUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetBillingCatalogQueryKey = () => {
+    return [
+    `/api/billing/catalog`
+    ] as const;
+    }
+
+
+export const getGetBillingCatalogQueryOptions = <TData = Awaited<ReturnType<typeof getBillingCatalog>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBillingCatalog>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBillingCatalogQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBillingCatalog>>> = ({ signal }) => getBillingCatalog({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBillingCatalog>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetBillingCatalogQueryResult = NonNullable<Awaited<ReturnType<typeof getBillingCatalog>>>
+export type GetBillingCatalogQueryError = ErrorType<unknown>
+
+
+
+export function useGetBillingCatalog<TData = Awaited<ReturnType<typeof getBillingCatalog>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBillingCatalog>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetBillingCatalogQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetBillingSubscriptionUrl = () => {
+
+
+
+
+  return `/api/billing/subscription`
+}
+
+export const getBillingSubscription = async ( options?: Parameters<typeof customFetch>[1]): Promise<BillingSubscription> => {
+
+  return customFetch<BillingSubscription>(getGetBillingSubscriptionUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetBillingSubscriptionQueryKey = () => {
+    return [
+    `/api/billing/subscription`
+    ] as const;
+    }
+
+
+export const getGetBillingSubscriptionQueryOptions = <TData = Awaited<ReturnType<typeof getBillingSubscription>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBillingSubscription>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetBillingSubscriptionQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getBillingSubscription>>> = ({ signal }) => getBillingSubscription({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getBillingSubscription>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetBillingSubscriptionQueryResult = NonNullable<Awaited<ReturnType<typeof getBillingSubscription>>>
+export type GetBillingSubscriptionQueryError = ErrorType<unknown>
+
+
+
+export function useGetBillingSubscription<TData = Awaited<ReturnType<typeof getBillingSubscription>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBillingSubscription>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetBillingSubscriptionQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateBillingCheckoutUrl = () => {
+
+
+
+
+  return `/api/billing/checkout`
+}
+
+export const createBillingCheckout = async (billingPlanInput: BillingPlanInput, options?: Parameters<typeof customFetch>[1]): Promise<BillingUrl> => {
+
+  return customFetch<BillingUrl>(getCreateBillingCheckoutUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(billingPlanInput)
+  }
+);}
+
+
+
+
+
+export const getCreateBillingCheckoutMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createBillingCheckout>>, TError,{data: BodyType<BillingPlanInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createBillingCheckout>>, TError,{data: BodyType<BillingPlanInput>}, TContext> => {
+
+const mutationKey = ['createBillingCheckout'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createBillingCheckout>>, {data: BodyType<BillingPlanInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createBillingCheckout(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateBillingCheckoutMutationResult = NonNullable<Awaited<ReturnType<typeof createBillingCheckout>>>
+    export type CreateBillingCheckoutMutationBody = BodyType<BillingPlanInput>
+    export type CreateBillingCheckoutMutationError = ErrorType<unknown>
+
+    export const useCreateBillingCheckout = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createBillingCheckout>>, TError,{data: BodyType<BillingPlanInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createBillingCheckout>>,
+        TError,
+        {data: BodyType<BillingPlanInput>},
+        TContext
+      > => {
+      return useMutation(getCreateBillingCheckoutMutationOptions(options));
+    }
+
+export const getChangeBillingPlanUrl = () => {
+
+
+
+
+  return `/api/billing/change-plan`
+}
+
+export const changeBillingPlan = async (billingPlanInput: BillingPlanInput, options?: Parameters<typeof customFetch>[1]): Promise<BillingChangeResult> => {
+
+  return customFetch<BillingChangeResult>(getChangeBillingPlanUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(billingPlanInput)
+  }
+);}
+
+
+
+
+
+export const getChangeBillingPlanMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changeBillingPlan>>, TError,{data: BodyType<BillingPlanInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof changeBillingPlan>>, TError,{data: BodyType<BillingPlanInput>}, TContext> => {
+
+const mutationKey = ['changeBillingPlan'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof changeBillingPlan>>, {data: BodyType<BillingPlanInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  changeBillingPlan(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ChangeBillingPlanMutationResult = NonNullable<Awaited<ReturnType<typeof changeBillingPlan>>>
+    export type ChangeBillingPlanMutationBody = BodyType<BillingPlanInput>
+    export type ChangeBillingPlanMutationError = ErrorType<unknown>
+
+    export const useChangeBillingPlan = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changeBillingPlan>>, TError,{data: BodyType<BillingPlanInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof changeBillingPlan>>,
+        TError,
+        {data: BodyType<BillingPlanInput>},
+        TContext
+      > => {
+      return useMutation(getChangeBillingPlanMutationOptions(options));
+    }
+
+export const getCancelBillingSubscriptionUrl = () => {
+
+
+
+
+  return `/api/billing/cancel`
+}
+
+export const cancelBillingSubscription = async (billingActionInput: BillingActionInput, options?: Parameters<typeof customFetch>[1]): Promise<BillingCancellation> => {
+
+  return customFetch<BillingCancellation>(getCancelBillingSubscriptionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(billingActionInput)
+  }
+);}
+
+
+
+
+
+export const getCancelBillingSubscriptionMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelBillingSubscription>>, TError,{data: BodyType<BillingActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelBillingSubscription>>, TError,{data: BodyType<BillingActionInput>}, TContext> => {
+
+const mutationKey = ['cancelBillingSubscription'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelBillingSubscription>>, {data: BodyType<BillingActionInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  cancelBillingSubscription(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelBillingSubscriptionMutationResult = NonNullable<Awaited<ReturnType<typeof cancelBillingSubscription>>>
+    export type CancelBillingSubscriptionMutationBody = BodyType<BillingActionInput>
+    export type CancelBillingSubscriptionMutationError = ErrorType<unknown>
+
+    export const useCancelBillingSubscription = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelBillingSubscription>>, TError,{data: BodyType<BillingActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof cancelBillingSubscription>>,
+        TError,
+        {data: BodyType<BillingActionInput>},
+        TContext
+      > => {
+      return useMutation(getCancelBillingSubscriptionMutationOptions(options));
+    }
+
+export const getResumeBillingSubscriptionUrl = () => {
+
+
+
+
+  return `/api/billing/resume`
+}
+
+export const resumeBillingSubscription = async (billingActionInput: BillingActionInput, options?: Parameters<typeof customFetch>[1]): Promise<BillingCancellation> => {
+
+  return customFetch<BillingCancellation>(getResumeBillingSubscriptionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(billingActionInput)
+  }
+);}
+
+
+
+
+
+export const getResumeBillingSubscriptionMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resumeBillingSubscription>>, TError,{data: BodyType<BillingActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resumeBillingSubscription>>, TError,{data: BodyType<BillingActionInput>}, TContext> => {
+
+const mutationKey = ['resumeBillingSubscription'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resumeBillingSubscription>>, {data: BodyType<BillingActionInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  resumeBillingSubscription(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResumeBillingSubscriptionMutationResult = NonNullable<Awaited<ReturnType<typeof resumeBillingSubscription>>>
+    export type ResumeBillingSubscriptionMutationBody = BodyType<BillingActionInput>
+    export type ResumeBillingSubscriptionMutationError = ErrorType<unknown>
+
+    export const useResumeBillingSubscription = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resumeBillingSubscription>>, TError,{data: BodyType<BillingActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof resumeBillingSubscription>>,
+        TError,
+        {data: BodyType<BillingActionInput>},
+        TContext
+      > => {
+      return useMutation(getResumeBillingSubscriptionMutationOptions(options));
+    }
+
+export const getCreateBillingPortalUrl = () => {
+
+
+
+
+  return `/api/billing/portal`
+}
+
+export const createBillingPortal = async (billingActionInput: BillingActionInput, options?: Parameters<typeof customFetch>[1]): Promise<BillingUrl> => {
+
+  return customFetch<BillingUrl>(getCreateBillingPortalUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(billingActionInput)
+  }
+);}
+
+
+
+
+
+export const getCreateBillingPortalMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createBillingPortal>>, TError,{data: BodyType<BillingActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createBillingPortal>>, TError,{data: BodyType<BillingActionInput>}, TContext> => {
+
+const mutationKey = ['createBillingPortal'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createBillingPortal>>, {data: BodyType<BillingActionInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createBillingPortal(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateBillingPortalMutationResult = NonNullable<Awaited<ReturnType<typeof createBillingPortal>>>
+    export type CreateBillingPortalMutationBody = BodyType<BillingActionInput>
+    export type CreateBillingPortalMutationError = ErrorType<unknown>
+
+    export const useCreateBillingPortal = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createBillingPortal>>, TError,{data: BodyType<BillingActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createBillingPortal>>,
+        TError,
+        {data: BodyType<BillingActionInput>},
+        TContext
+      > => {
+      return useMutation(getCreateBillingPortalMutationOptions(options));
+    }
+
+export const getListBillingInvoicesUrl = (params?: ListBillingInvoicesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/billing/invoices?${stringifiedParams}` : `/api/billing/invoices`
+}
+
+export const listBillingInvoices = async (params?: ListBillingInvoicesParams, options?: Parameters<typeof customFetch>[1]): Promise<BillingInvoiceList> => {
+
+  return customFetch<BillingInvoiceList>(getListBillingInvoicesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListBillingInvoicesQueryKey = (params?: ListBillingInvoicesParams,) => {
+    return [
+    `/api/billing/invoices`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListBillingInvoicesQueryOptions = <TData = Awaited<ReturnType<typeof listBillingInvoices>>, TError = ErrorType<unknown>>(params?: ListBillingInvoicesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listBillingInvoices>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListBillingInvoicesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listBillingInvoices>>> = ({ signal }) => listBillingInvoices(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listBillingInvoices>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListBillingInvoicesQueryResult = NonNullable<Awaited<ReturnType<typeof listBillingInvoices>>>
+export type ListBillingInvoicesQueryError = ErrorType<unknown>
+
+
+
+export function useListBillingInvoices<TData = Awaited<ReturnType<typeof listBillingInvoices>>, TError = ErrorType<unknown>>(
+ params?: ListBillingInvoicesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listBillingInvoices>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListBillingInvoicesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getReconcileBillingSubscriptionUrl = () => {
+
+
+
+
+  return `/api/billing/reconcile`
+}
+
+export const reconcileBillingSubscription = async (billingActionInput: BillingActionInput, options?: Parameters<typeof customFetch>[1]): Promise<BillingReconcileResult> => {
+
+  return customFetch<BillingReconcileResult>(getReconcileBillingSubscriptionUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(billingActionInput)
+  }
+);}
+
+
+
+
+
+export const getReconcileBillingSubscriptionMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reconcileBillingSubscription>>, TError,{data: BodyType<BillingActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof reconcileBillingSubscription>>, TError,{data: BodyType<BillingActionInput>}, TContext> => {
+
+const mutationKey = ['reconcileBillingSubscription'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reconcileBillingSubscription>>, {data: BodyType<BillingActionInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  reconcileBillingSubscription(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReconcileBillingSubscriptionMutationResult = NonNullable<Awaited<ReturnType<typeof reconcileBillingSubscription>>>
+    export type ReconcileBillingSubscriptionMutationBody = BodyType<BillingActionInput>
+    export type ReconcileBillingSubscriptionMutationError = ErrorType<unknown>
+
+    export const useReconcileBillingSubscription = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reconcileBillingSubscription>>, TError,{data: BodyType<BillingActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof reconcileBillingSubscription>>,
+        TError,
+        {data: BodyType<BillingActionInput>},
+        TContext
+      > => {
+      return useMutation(getReconcileBillingSubscriptionMutationOptions(options));
+    }
 
 export const getHealthCheckUrl = () => {
 

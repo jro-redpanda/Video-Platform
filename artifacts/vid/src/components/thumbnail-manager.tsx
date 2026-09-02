@@ -1,12 +1,12 @@
 import { useState, useRef } from "react"
 import { Button } from "@/components/ui/button"
-import { 
-  useCreateThumbnailUploadIntent, 
-  useFinalizeThumbnail, 
-  useDeleteVideoThumbnail, 
-  getGetVideoQueryKey, 
-  getGetAuthenticatedVideoPlaybackQueryKey, 
-  ThumbnailUploadIntentInputContentType 
+import {
+  useCreateThumbnailUploadIntent,
+  useFinalizeThumbnail,
+  useDeleteVideoThumbnail,
+  getGetVideoQueryKey,
+  getGetAuthenticatedVideoPlaybackQueryKey,
+  ThumbnailUploadIntentInputContentType
 } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useToast } from "@/components/ui/use-toast"
@@ -41,7 +41,7 @@ export function ThumbnailManager({ video, canUpdate }: { video: any, canUpdate: 
       setError("File is empty.")
       return
     }
-    
+
     if (file.size > 10 * 1024 * 1024) {
       setError("File must be less than 10 MiB.")
       return
@@ -98,7 +98,7 @@ export function ThumbnailManager({ video, canUpdate }: { video: any, canUpdate: 
       queryClient.setQueryData(getGetVideoQueryKey(video.id), (old: any) =>
         old ? { ...old, thumbnailUrl: finalRes.thumbnailUrl } : old
       )
-      
+
       queryClient.setQueryData(getGetAuthenticatedVideoPlaybackQueryKey(video.id), (old: any) =>
         old ? { ...old, posterUrl: finalRes.thumbnailUrl } : old
       )
@@ -107,7 +107,7 @@ export function ThumbnailManager({ video, canUpdate }: { video: any, canUpdate: 
         title: "Thumbnail updated",
         description: "Your video thumbnail has been updated successfully.",
       })
-      
+
       handleCancel()
       invalidateCaches()
     } catch (err: any) {
@@ -121,14 +121,14 @@ export function ThumbnailManager({ video, canUpdate }: { video: any, canUpdate: 
     if (!window.confirm("Are you sure you want to remove the custom thumbnail?")) return
     setIsUploading(true)
     setError(null)
-    
+
     try {
       await deleteThumbnail.mutateAsync({ videoId: video.id })
-      
+
       queryClient.setQueryData(getGetVideoQueryKey(video.id), (old: any) =>
         old ? { ...old, thumbnailUrl: null } : old
       )
-      
+
       queryClient.setQueryData(getGetAuthenticatedVideoPlaybackQueryKey(video.id), (old: any) =>
         old ? { ...old, posterUrl: null } : old
       )
@@ -167,7 +167,7 @@ export function ThumbnailManager({ video, canUpdate }: { video: any, canUpdate: 
 
       <div className="grid gap-6 md:grid-cols-2">
         <div className="space-y-4">
-          <div 
+          <div
             className={`aspect-video w-full border-2 ${selectedFile ? 'border-primary' : 'border-border'} rounded-lg overflow-hidden relative flex flex-col items-center justify-center bg-muted transition-colors`}
             style={!selectedFile && !video.thumbnailUrl ? { backgroundColor: video.thumbnailColor || '#333' } : {}}
           >
@@ -234,7 +234,7 @@ export function ThumbnailManager({ video, canUpdate }: { video: any, canUpdate: 
             )}
           </div>
         )}
-        
+
         {!canUpdate && (
           <div className="flex flex-col justify-center text-sm text-muted-foreground">
             You do not have permission to update this video's thumbnail.

@@ -8,6 +8,147 @@
 import * as zod from 'zod';
 
 
+export const getBillingCatalogResponsePlansItemPricesMin = 2;
+export const getBillingCatalogResponsePlansItemPricesMax = 2;
+
+
+
+export const GetBillingCatalogResponse = zod.object({
+  "plans": zod.array(zod.object({
+  "code": zod.enum(['starter', 'growth', 'scale']),
+  "name": zod.string(),
+  "description": zod.string(),
+  "entitlements": zod.record(zod.string(), zod.unknown()),
+  "prices": zod.array(zod.object({
+  "interval": zod.enum(['month', 'year']),
+  "amount": zod.number(),
+  "currency": zod.enum(['usd'])
+})).min(getBillingCatalogResponsePlansItemPricesMin).max(getBillingCatalogResponsePlansItemPricesMax)
+}))
+})
+
+
+export const GetBillingSubscriptionResponse = zod.object({
+  "status": zod.enum(['unmanaged', 'incomplete', 'active', 'trialing', 'past_due', 'unpaid', 'canceled', 'restricted', 'quarantined']),
+  "plan": zod.string().nullish(),
+  "pendingPlan": zod.string().nullish(),
+  "pendingEffectiveAt": zod.coerce.date().nullish(),
+  "interval": zod.union([zod.literal('month'),zod.literal('year'),zod.literal(null)]).nullish(),
+  "periodStart": zod.coerce.date().nullish(),
+  "periodEnd": zod.coerce.date().nullish(),
+  "graceEndsAt": zod.coerce.date().nullish(),
+  "cancelAtPeriodEnd": zod.boolean(),
+  "capabilities": zod.object({
+  "canManage": zod.boolean(),
+  "canSubscribe": zod.boolean()
+})
+})
+
+
+export const createBillingCheckoutBodyIdempotencyKeyRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$');
+
+
+export const CreateBillingCheckoutBody = zod.object({
+  "plan": zod.enum(['starter', 'growth', 'scale']),
+  "interval": zod.enum(['month', 'year']),
+  "idempotencyKey": zod.string().regex(createBillingCheckoutBodyIdempotencyKeyRegExp)
+})
+
+export const CreateBillingCheckoutResponse = zod.object({
+  "url": zod.string()
+})
+
+
+export const changeBillingPlanBodyIdempotencyKeyRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$');
+
+
+export const ChangeBillingPlanBody = zod.object({
+  "plan": zod.enum(['starter', 'growth', 'scale']),
+  "interval": zod.enum(['month', 'year']),
+  "idempotencyKey": zod.string().regex(changeBillingPlanBodyIdempotencyKeyRegExp)
+})
+
+export const ChangeBillingPlanResponse = zod.object({
+  "scheduled": zod.boolean(),
+  "effectiveAt": zod.coerce.date().nullable(),
+  "reference": zod.string()
+})
+
+
+export const cancelBillingSubscriptionBodyIdempotencyKeyRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$');
+
+
+export const CancelBillingSubscriptionBody = zod.object({
+  "idempotencyKey": zod.string().regex(cancelBillingSubscriptionBodyIdempotencyKeyRegExp)
+})
+
+export const CancelBillingSubscriptionResponse = zod.object({
+  "cancelAtPeriodEnd": zod.boolean()
+})
+
+
+export const resumeBillingSubscriptionBodyIdempotencyKeyRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$');
+
+
+export const ResumeBillingSubscriptionBody = zod.object({
+  "idempotencyKey": zod.string().regex(resumeBillingSubscriptionBodyIdempotencyKeyRegExp)
+})
+
+export const ResumeBillingSubscriptionResponse = zod.object({
+  "cancelAtPeriodEnd": zod.boolean()
+})
+
+
+export const createBillingPortalBodyIdempotencyKeyRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$');
+
+
+export const CreateBillingPortalBody = zod.object({
+  "idempotencyKey": zod.string().regex(createBillingPortalBodyIdempotencyKeyRegExp)
+})
+
+export const CreateBillingPortalResponse = zod.object({
+  "url": zod.string()
+})
+
+
+export const listBillingInvoicesQueryLimitDefault = 20;
+export const listBillingInvoicesQueryLimitMax = 100;
+
+
+
+export const ListBillingInvoicesQueryParams = zod.object({
+  "limit": zod.coerce.number().int().min(1).max(listBillingInvoicesQueryLimitMax).default(listBillingInvoicesQueryLimitDefault),
+  "cursor": zod.coerce.string().optional()
+})
+
+export const ListBillingInvoicesResponse = zod.object({
+  "items": zod.array(zod.object({
+  "id": zod.string(),
+  "status": zod.string().nullish(),
+  "createdAt": zod.coerce.date(),
+  "amountDue": zod.number(),
+  "amountPaid": zod.number(),
+  "currency": zod.string(),
+  "hostedInvoiceUrl": zod.string().nullish(),
+  "invoicePdf": zod.string().nullish()
+})),
+  "nextCursor": zod.string().nullable()
+})
+
+
+export const reconcileBillingSubscriptionBodyIdempotencyKeyRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$');
+
+
+export const ReconcileBillingSubscriptionBody = zod.object({
+  "idempotencyKey": zod.string().regex(reconcileBillingSubscriptionBodyIdempotencyKeyRegExp)
+})
+
+export const ReconcileBillingSubscriptionResponse = zod.object({
+  "status": zod.string(),
+  "reconciledAt": zod.coerce.date()
+})
+
+
 export const HealthCheckResponse = zod.object({
   "status": zod.string()
 })
@@ -28,6 +169,11 @@ export const GetWorkspaceResponse = zod.object({
   "storageUsedGb": zod.number(),
   "storageLimitGb": zod.number(),
   "entitlements": zod.record(zod.string(), zod.union([zod.boolean(),zod.number(),zod.string()])),
+  "billingAccess": zod.object({
+  "status": zod.string(),
+  "canCreate": zod.boolean(),
+  "graceEndsAt": zod.coerce.date().nullable()
+}),
   "permissions": zod.array(zod.string()),
   "playerAccent": zod.string(),
   "playerControlForeground": zod.string(),
@@ -76,6 +222,11 @@ export const UpdateWorkspaceResponse = zod.object({
   "storageUsedGb": zod.number(),
   "storageLimitGb": zod.number(),
   "entitlements": zod.record(zod.string(), zod.union([zod.boolean(),zod.number(),zod.string()])),
+  "billingAccess": zod.object({
+  "status": zod.string(),
+  "canCreate": zod.boolean(),
+  "graceEndsAt": zod.coerce.date().nullable()
+}),
   "permissions": zod.array(zod.string()),
   "playerAccent": zod.string(),
   "playerControlForeground": zod.string(),

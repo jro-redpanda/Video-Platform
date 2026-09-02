@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react"
 import type { Video } from "@workspace/api-client-react"
 
-export type BulkResultContext = 
+export type BulkResultContext =
   | { action: 'move'; payload: BulkVideoMoveInput; result: BulkVideoActionResult }
   | { action: 'visibility'; payload: BulkVideoVisibilityInput; result: BulkVideoActionResult }
   | { action: 'delete'; payload: BulkVideoDeleteInput; result: BulkVideoActionResult };
@@ -186,14 +186,14 @@ export function BulkResultDialog({ resultContext, open, onOpenChange, allVideos,
   const { mutate: mutateUpdate, isPending: isUpdating } = useBulkUpdateVideos()
   const { mutate: mutateDelete, isPending: isDeleting } = useBulkDeleteVideos()
   const { toast } = useToast()
-  
+
   if (!resultContext) return null;
   const { action, result, payload } = resultContext;
 
   const isPending = isUpdating || isDeleting;
   const total = result.succeeded.length + result.failed.length;
   const hasFailures = result.failed.length > 0;
-  
+
   const getActionText = (pastTense: boolean) => {
     switch (action) {
       case 'move': return pastTense ? 'moved' : 'move';
@@ -204,7 +204,7 @@ export function BulkResultDialog({ resultContext, open, onOpenChange, allVideos,
 
   const handleRetry = () => {
     const failedIds = result.failed.map(f => f.videoId);
-    
+
     if (action === 'move') {
       const retryPayload: BulkVideoMoveInput = { ...(payload as BulkVideoMoveInput), videoIds: failedIds };
       mutateUpdate({ data: retryPayload }, {
@@ -250,7 +250,7 @@ export function BulkResultDialog({ resultContext, open, onOpenChange, allVideos,
             {result.succeeded.length} of {total} videos successfully {getActionText(true)}.
           </DialogDescription>
         </DialogHeader>
-        
+
         {hasFailures && (
           <div className="max-h-[300px] overflow-y-auto space-y-3 mt-4 border rounded-md p-3 bg-muted/30">
             {result.failed.map((failure, i) => {

@@ -18,6 +18,7 @@ import {
   GetVideoThumbnailParams,
 } from "@workspace/api-zod";
 import { requirePermission } from "../lib/permissions";
+import { requireCreateAccess } from "../lib/entitlements";
 import { withTenantDb } from "../lib/tenant-db";
 import {
   getThumbnailStorage,
@@ -32,6 +33,7 @@ const maxBytes = 10 * 1024 * 1024;
 router.post(
   "/videos/:videoId/thumbnail-upload-intent",
   requirePermission("videos.update"),
+  requireCreateAccess,
   async (req, res): Promise<void> => {
     const { videoId } = CreateThumbnailUploadIntentParams.parse(req.params);
     const parsed = CreateThumbnailUploadIntentBody.safeParse(req.body);

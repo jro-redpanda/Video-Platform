@@ -45,7 +45,7 @@ import {
 } from "@workspace/api-zod";
 import { withTenantDb, type TenantTransaction } from "../lib/tenant-db";
 import { requirePermission } from "../lib/permissions";
-import { hasEntitlement, resolveEntitlements, type EntitlementKey } from "../lib/entitlements";
+import { hasEntitlement, requireCreateAccess, resolveBillingAccess, resolveEntitlements, type EntitlementKey } from "../lib/entitlements";
 import { resolveProvisioningProvider, videoProviders } from "../lib/provider-registry";
 import { AssetCreationRejectedError } from "@workspace/providers";
 import { serializeEmbed, trustedRequestOrigin } from "../lib/video-embeds";
@@ -142,6 +142,17 @@ router.patch("/workspace", requirePermission("workspace.manage"), async (req, re
     return void res.status(400).json({ error: "customDomain must be a valid hostname without a protocol or path." });
   }
   const update = UpdateWorkspaceBody.parse(req.body);
+  const changesCustomization = Boolean(
+    update.playerAccent || update.playerControlForeground || update.playerControlBackground ||
+    update.logoInitials || update.logoObjectKey !== undefined || update.watermarkObjectKey !== undefined ||
+    update.posterTreatment || update.customDomain !== undefined
+  );
+  if (changesCustomization) {
+    const access = await withTenantDb(req.tenant, (tx) => resolveBillingAccess(tx, req.tenant.organizationId));
+    if (!access.canCreate) return void res.status(403).json({
+      error: "Billing access is restricted", code: "billing_create_restricted", billingStatus: access.status,
+    });
+  }
   const entitlementForField: Array<[EntitlementKey, boolean]> = [
     ["branding.player_colors", Boolean(update.playerAccent || update.playerControlForeground || update.playerControlBackground || update.posterTreatment)],
     ["branding.logo", Boolean(update.logoInitials || update.logoObjectKey !== undefined)],
@@ -234,6 +245,7 @@ async function fetchWorkspace(tx: TenantTransaction, organizationId: string, use
   return {
     ...workspace,
     entitlements: await resolveEntitlements(tx, organizationId),
+    billingAccess: await resolveBillingAccess(tx, organizationId),
     permissions: permissions.map(({ key }) => key),
   };
 }
@@ -463,7 +475,7 @@ function hashCursorScope(scope: CursorScope, organizationId: string) {
 }
 
 // PRD video.upload maps to the existing Step 4 videos.create permission.
-router.post("/videos/upload-init", requirePermission("videos.create"), async (req, res) => {
+router.post("/videos/upload-init", requirePermission("videos.create"), requireCreateAccess, async (req, res) => {
   const input = InitializeVideoUploadBody.parse(req.body);
   const requestedFolderId = input.folderId ?? null;
   if (requestedFolderId && !uuidPattern.test(requestedFolderId)) {
@@ -530,9 +542,9 @@ router.post("/videos/upload-init", requirePermission("videos.create"), async (re
       .where(eq(videosTable.organizationId, req.tenant.organizationId));
     const videoLimit = numericLimit(entitlements["limits.max_videos"]);
     const storageLimit = numericLimit(entitlements["limits.max_storage_gb"]) * 1024 ** 3;
-    if (count >= videoLimit) throw new UploadInputError("Video limit reached for this workspace.");
+    if (count >= videoLimit) throw new UploadLimitError("video_limit_reached", videoLimit, count);
     if (!organization || organization.storageUsedBytes + input.contentLength > storageLimit) {
-      throw new UploadInputError("Storage limit reached for this workspace.");
+      throw new UploadLimitError("storage_limit_reached", storageLimit, organization?.storageUsedBytes ?? 0);
     }
 
     const [video] = await tx.insert(videosTable).values({
@@ -560,13 +572,19 @@ router.post("/videos/upload-init", requirePermission("videos.create"), async (re
     }).where(eq(organizationsTable.id, req.tenant.organizationId));
     return { video, newlyReserved: true };
   }).catch((error: unknown) => {
+    if (error instanceof UploadLimitError) return {
+      error: error.message, code: error.code, limit: error.limit, current: error.current,
+    };
     if (error instanceof UploadInputError) return { error: error.message };
     if (error instanceof UploadReplayBlockedError) return { blocked: error.message };
     if (error instanceof UploadFolderNotFoundError) return { missingFolder: true };
     throw error;
   });
   if ("error" in reservation) {
-    res.status(403).json({ error: reservation.error });
+    res.status(403).json({
+      error: reservation.error,
+      ...("code" in reservation ? { code: reservation.code, limit: reservation.limit, current: reservation.current } : {}),
+    });
     return;
   }
   if ("blocked" in reservation) {
@@ -727,6 +745,11 @@ router.post("/videos/:videoId/upload-cancel", requirePermission("videos.create")
 });
 
 class UploadInputError extends Error {}
+class UploadLimitError extends UploadInputError {
+  constructor(readonly code: string, readonly limit: number, readonly current: number) {
+    super(code === "video_limit_reached" ? "Video limit reached for this workspace." : "Storage limit reached for this workspace.");
+  }
+}
 class UploadReplayBlockedError extends Error {}
 class UploadFolderNotFoundError extends Error {}
 

@@ -10,7 +10,6 @@ This file tracks every non-production implementation currently present. Each cod
 | `artifacts/api-server/src/lib/bootstrap.ts` audit activity | Seeds sample audit history. | Step 17 platform audit operations |
 | `artifacts/api-server/src/routes/platform.ts` dashboard trend | Returns fixed daily trend points around persisted totals. | Step 16 analytics rollups |
 | `artifacts/api-server/src/routes/public.ts` beacon ingestion | Preliminary direct event insert without rate limits or rollup processing. Do not extend this implementation. | Step 16 beacon and rollup pipeline |
-| `artifacts/vid/src/pages/settings.tsx` upgrade/billing controls | Buttons are visual placeholders with no commerce action. | Step 8 plan and entitlement flow |
 | `lib/providers/src/unconfigured.ts` second provider | Explicit fail-closed second adapter with no external implementation. | Step 18 provider hardening |
 | `VID_APP_DOMAIN=app.example.com` | Runtime-configured development domain placeholder. | Step 18 production hardening |
 | Cold-master storage | Intentionally unconfigured behind the provider-neutral cold-master boundary; no archival success is manufactured. | External R2/cold storage configuration |

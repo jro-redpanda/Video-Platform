@@ -1,12 +1,12 @@
 import * as React from "react"
 import { Link, useLocation } from "wouter"
 import { cn } from "@/lib/utils"
-import { 
-  LayoutDashboard, 
-  PlaySquare, 
-  BarChart2, 
-  Users, 
-  Palette, 
+import {
+  LayoutDashboard,
+  PlaySquare,
+  BarChart2,
+  Users,
+  Palette,
   Settings,
   MonitorPlay
 } from "lucide-react"
@@ -34,7 +34,7 @@ export function Sidebar() {
           {isLoading ? (
             <Skeleton className="h-8 w-8 rounded bg-sidebar-accent" />
           ) : (
-            <div 
+            <div
               className="h-8 w-8 rounded flex items-center justify-center text-white text-xs font-bold"
               style={{ backgroundColor: workspace?.playerAccent || 'var(--primary)' }}
             >
@@ -46,7 +46,7 @@ export function Sidebar() {
           </span>
         </div>
       </div>
-      
+
       <nav className="flex-1 overflow-y-auto p-4 space-y-1">
         <div className="text-xs font-semibold text-sidebar-foreground/50 uppercase tracking-wider mb-2 mt-4 px-2">
           Operations
@@ -54,13 +54,13 @@ export function Sidebar() {
         {navItems.map((item) => {
           const isActive = location === item.href || (item.href !== "/" && location.startsWith(item.href))
           return (
-            <Link 
-              key={item.href} 
+            <Link
+              key={item.href}
               href={item.href}
               className={cn(
                 "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
-                isActive 
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground" 
+                isActive
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
                   : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
               )}
             >
@@ -70,7 +70,7 @@ export function Sidebar() {
           )
         })}
       </nav>
-      
+
       <div className="p-4 border-t border-sidebar-border">
         {isLoading ? (
           <div className="space-y-2">
@@ -84,8 +84,8 @@ export function Sidebar() {
               <span className="font-medium text-sidebar-foreground">{workspace.storageUsedGb} / {workspace.storageLimitGb} GB</span>
             </div>
             <div className="h-1.5 w-full bg-sidebar-accent rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-primary" 
+              <div
+                className="h-full bg-primary"
                 style={{ width: `${Math.min(100, (workspace.storageUsedGb / workspace.storageLimitGb) * 100)}%` }}
               />
             </div>

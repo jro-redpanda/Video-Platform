@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import type { NextFunction, Request, Response } from "express";
 import {
   organizationEntitlementOverridesTable,
+  organizationBillingTable,
   organizationsTable,
   plansTable,
 } from "@workspace/db";
@@ -25,6 +26,7 @@ export const entitlementKeys = [
 export type EntitlementKey = (typeof entitlementKeys)[number];
 export type EntitlementValue = boolean | number | string;
 export type ResolvedEntitlements = Record<EntitlementKey, EntitlementValue>;
+export type BillingAccess = { status: string; canCreate: boolean; graceEndsAt: Date | null };
 
 const defaults: ResolvedEntitlements = {
   "branding.logo": false,
@@ -64,6 +66,38 @@ export async function resolveEntitlements(tx: TenantTransaction, organizationId:
     }
   }
   return resolved;
+}
+
+export async function resolveBillingAccess(tx: TenantTransaction, organizationId: string): Promise<BillingAccess> {
+  const [billing] = await tx.select({
+    status: organizationBillingTable.status,
+    graceEndsAt: organizationBillingTable.graceEndsAt,
+  }).from(organizationBillingTable)
+    .where(eq(organizationBillingTable.organizationId, organizationId)).limit(1);
+  if (!billing || billing.status === "unmanaged") return { status: "unmanaged", canCreate: true, graceEndsAt: null };
+  const canCreate = billing.status === "active" || billing.status === "trialing" ||
+    (billing.status === "past_due" && Boolean(billing.graceEndsAt && billing.graceEndsAt > new Date()));
+  return { status: billing.status, canCreate, graceEndsAt: billing.graceEndsAt };
+}
+
+export async function requireBillingCreateAccess(tx: TenantTransaction, organizationId: string) {
+  const access = await resolveBillingAccess(tx, organizationId);
+  if (!access.canCreate) throw new BillingRestrictedError(access.status);
+}
+
+export class BillingRestrictedError extends Error {
+  constructor(readonly billingStatus: string) {
+    super("Billing access is restricted");
+  }
+}
+
+export async function requireCreateAccess(req: Request, res: Response, next: NextFunction) {
+  const access = await withTenantDb(req.tenant, (tx) => resolveBillingAccess(tx, req.tenant.organizationId));
+  if (!access.canCreate) {
+    res.status(403).json({ error: "Billing access is restricted", code: "billing_create_restricted", billingStatus: access.status });
+    return;
+  }
+  next();
 }
 
 function isEnabled(value: EntitlementValue): boolean {

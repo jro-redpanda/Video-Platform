@@ -13,7 +13,101 @@ tags:
   - name: folders
   - name: workspace
   - name: members
+  - name: billing
 paths:
+  /billing/catalog:
+    get:
+      operationId: getBillingCatalog
+      tags: [billing]
+      responses:
+        "200":
+          description: Authoritative active billing catalog
+          content: { application/json: { schema: { $ref: "#/components/schemas/BillingCatalog" } } }
+  /billing/subscription:
+    get:
+      operationId: getBillingSubscription
+      tags: [billing]
+      responses:
+        "200":
+          description: Current tenant billing projection
+          content: { application/json: { schema: { $ref: "#/components/schemas/BillingSubscription" } } }
+  /billing/checkout:
+    post:
+      operationId: createBillingCheckout
+      tags: [billing]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/BillingPlanInput" } } }
+      responses:
+        "201":
+          description: Hosted Stripe Checkout session
+          content: { application/json: { schema: { $ref: "#/components/schemas/BillingUrl" } } }
+  /billing/change-plan:
+    post:
+      operationId: changeBillingPlan
+      tags: [billing]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/BillingPlanInput" } } }
+      responses:
+        "200":
+          description: Immediate upgrade or scheduled downgrade
+          content: { application/json: { schema: { $ref: "#/components/schemas/BillingChangeResult" } } }
+  /billing/cancel:
+    post:
+      operationId: cancelBillingSubscription
+      tags: [billing]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/BillingActionInput" } } }
+      responses:
+        "200":
+          description: Cancellation scheduled at period end
+          content: { application/json: { schema: { $ref: "#/components/schemas/BillingCancellation" } } }
+  /billing/resume:
+    post:
+      operationId: resumeBillingSubscription
+      tags: [billing]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/BillingActionInput" } } }
+      responses:
+        "200":
+          description: Period-end cancellation removed
+          content: { application/json: { schema: { $ref: "#/components/schemas/BillingCancellation" } } }
+  /billing/portal:
+    post:
+      operationId: createBillingPortal
+      tags: [billing]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/BillingActionInput" } } }
+      responses:
+        "200":
+          description: Hosted Stripe customer portal
+          content: { application/json: { schema: { $ref: "#/components/schemas/BillingUrl" } } }
+  /billing/invoices:
+    get:
+      operationId: listBillingInvoices
+      tags: [billing]
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { in: query, name: cursor, schema: { type: string } }
+      responses:
+        "200":
+          description: Tenant customer invoices
+          content: { application/json: { schema: { $ref: "#/components/schemas/BillingInvoiceList" } } }
+  /billing/reconcile:
+    post:
+      operationId: reconcileBillingSubscription
+      tags: [billing]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/BillingActionInput" } } }
+      responses:
+        "200":
+          description: Reconciled billing status
+          content: { application/json: { schema: { $ref: "#/components/schemas/BillingReconcileResult" } } }
   /healthz:
     get:
       operationId: healthCheck
@@ -626,6 +720,103 @@ components:
       schema:
         type: string
   schemas:
+    BillingPrice:
+      type: object
+      required: [interval, amount, currency]
+      properties:
+        interval: { type: string, enum: [month, year] }
+        amount: { type: number }
+        currency: { type: string, enum: [usd] }
+    BillingCatalogPlan:
+      type: object
+      required: [code, name, description, entitlements, prices]
+      properties:
+        code: { type: string, enum: [starter, growth, scale] }
+        name: { type: string }
+        description: { type: string }
+        entitlements: { type: object, additionalProperties: true }
+        prices: { type: array, minItems: 2, maxItems: 2, items: { $ref: "#/components/schemas/BillingPrice" } }
+    BillingCatalog:
+      type: object
+      required: [plans]
+      properties:
+        plans: { type: array, items: { $ref: "#/components/schemas/BillingCatalogPlan" } }
+    BillingPlanInput:
+      type: object
+      additionalProperties: false
+      required: [plan, interval, idempotencyKey]
+      properties:
+        plan: { type: string, enum: [starter, growth, scale] }
+        interval: { type: string, enum: [month, year] }
+        idempotencyKey:
+          type: string
+          pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    BillingActionInput:
+      type: object
+      additionalProperties: false
+      required: [idempotencyKey]
+      properties:
+        idempotencyKey:
+          type: string
+          pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    BillingUrl:
+      type: object
+      required: [url]
+      properties: { url: { type: string } }
+    BillingSubscription:
+      type: object
+      required: [status, cancelAtPeriodEnd, capabilities]
+      properties:
+        status: { type: string, enum: [unmanaged, incomplete, active, trialing, past_due, unpaid, canceled, restricted, quarantined] }
+        plan: { type: ["string", "null"] }
+        pendingPlan: { type: ["string", "null"] }
+        pendingEffectiveAt: { type: ["string", "null"], format: date-time }
+        interval: { type: ["string", "null"], enum: [month, year, null] }
+        periodStart: { type: ["string", "null"], format: date-time }
+        periodEnd: { type: ["string", "null"], format: date-time }
+        graceEndsAt: { type: ["string", "null"], format: date-time }
+        cancelAtPeriodEnd: { type: boolean }
+        capabilities:
+          type: object
+          required: [canManage, canSubscribe]
+          properties:
+            canManage: { type: boolean }
+            canSubscribe: { type: boolean }
+    BillingChangeResult:
+      type: object
+      required: [scheduled, effectiveAt, reference]
+      properties:
+        scheduled: { type: boolean }
+        effectiveAt: { type: ["string", "null"], format: date-time }
+        reference: { type: string }
+    BillingCancellation:
+      type: object
+      required: [cancelAtPeriodEnd]
+      properties: { cancelAtPeriodEnd: { type: boolean } }
+    BillingInvoice:
+      type: object
+      required: [id, createdAt, amountDue, amountPaid, currency]
+      properties:
+        id: { type: string }
+        status: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
+        amountDue: { type: number }
+        amountPaid: { type: number }
+        currency: { type: string }
+        hostedInvoiceUrl: { type: ["string", "null"] }
+        invoicePdf: { type: ["string", "null"] }
+    BillingInvoiceList:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/BillingInvoice" } }
+        nextCursor: { type: ["string", "null"] }
+    BillingReconcileResult:
+      type: object
+      required: [status, reconciledAt]
+      properties:
+        status: { type: string }
+        reconciledAt: { type: string, format: date-time }
     HealthStatus:
       type: object
       required: [status]
@@ -640,7 +831,7 @@ components:
         appDomain: { type: string }
     Workspace:
       type: object
-      required: [id, name, slug, plan, memberCount, storageUsedGb, storageLimitGb, entitlements, permissions, playerAccent, playerControlForeground, playerControlBackground, logoInitials, logoObjectKey, watermarkObjectKey, posterTreatment, customDomain, customDomainVerified]
+      required: [id, name, slug, plan, memberCount, storageUsedGb, storageLimitGb, entitlements, billingAccess, permissions, playerAccent, playerControlForeground, playerControlBackground, logoInitials, logoObjectKey, watermarkObjectKey, posterTreatment, customDomain, customDomainVerified]
       properties:
         id: { type: string }
         name: { type: string }
@@ -656,6 +847,13 @@ components:
               - { type: boolean }
               - { type: number }
               - { type: string }
+        billingAccess:
+          type: object
+          required: [status, canCreate, graceEndsAt]
+          properties:
+            status: { type: string }
+            canCreate: { type: boolean }
+            graceEndsAt: { type: ["string", "null"], format: date-time }
         permissions:
           type: array
           items: { type: string }

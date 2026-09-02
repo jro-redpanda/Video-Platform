@@ -5,10 +5,17 @@
   "type": "module",
   "scripts": {
     "hello": "tsx ./src/hello.ts",
+    "stripe:seed": "tsx ./src/seed-stripe-catalog.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "tsx": "catalog:"
+    "tsx": "catalog:",
+    "@types/pg": "^8.20.0"
+  },
+  "dependencies": {
+    "pg": "^8.23.0",
+    "stripe": "^22.6.0",
+    "stripe-replit-sync": "^1.0.0"
   }
 }

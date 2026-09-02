@@ -40,33 +40,33 @@ export default function Analytics() {
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
-                    <XAxis 
-                      dataKey="date" 
-                      tickFormatter={formatShortDate} 
+                    <XAxis
+                      dataKey="date"
+                      tickFormatter={formatShortDate}
                       tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }}
                       tickLine={false}
                       axisLine={false}
                       dy={10}
                     />
-                    <YAxis 
+                    <YAxis
                       tickFormatter={(val) => formatNumber(val)}
                       tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }}
                       tickLine={false}
                       axisLine={false}
                       dx={-10}
                     />
-                    <Tooltip 
+                    <Tooltip
                       contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }}
                       itemStyle={{ color: 'hsl(var(--foreground))' }}
                       labelFormatter={formatShortDate}
                     />
-                    <Area 
-                      type="monotone" 
-                      dataKey="plays" 
-                      stroke="hsl(var(--primary))" 
+                    <Area
+                      type="monotone"
+                      dataKey="plays"
+                      stroke="hsl(var(--primary))"
                       strokeWidth={2}
-                      fillOpacity={1} 
-                      fill="url(#colorPlays)" 
+                      fillOpacity={1}
+                      fill="url(#colorPlays)"
                     />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -94,7 +94,7 @@ export default function Analytics() {
                     <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="hsl(var(--border))" />
                     <XAxis type="number" domain={[0, 100]} hide />
                     <YAxis dataKey="title" type="category" hide />
-                    <Tooltip 
+                    <Tooltip
                       cursor={{fill: 'hsl(var(--muted))'}}
                       contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }}
                       formatter={(val: number) => [`${val}%`, 'Completion']}
@@ -112,7 +112,7 @@ export default function Analytics() {
           </CardContent>
         </Card>
       </div>
-      
+
       <h2 className="text-xl font-semibold mb-4 mt-12">Performance by Video</h2>
       <Card>
         <div className="overflow-x-auto">

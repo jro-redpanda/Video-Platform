@@ -5,6 +5,174 @@
  * Multi-tenant video platform API
  * OpenAPI spec version: 0.1.0
  */
+export type BillingPriceInterval = typeof BillingPriceInterval[keyof typeof BillingPriceInterval];
+
+
+export const BillingPriceInterval = {
+  month: 'month',
+  year: 'year',
+} as const;
+
+export type BillingPriceCurrency = typeof BillingPriceCurrency[keyof typeof BillingPriceCurrency];
+
+
+export const BillingPriceCurrency = {
+  usd: 'usd',
+} as const;
+
+export interface BillingPrice {
+  interval: BillingPriceInterval;
+  amount: number;
+  currency: BillingPriceCurrency;
+}
+
+export type BillingCatalogPlanCode = typeof BillingCatalogPlanCode[keyof typeof BillingCatalogPlanCode];
+
+
+export const BillingCatalogPlanCode = {
+  starter: 'starter',
+  growth: 'growth',
+  scale: 'scale',
+} as const;
+
+export type BillingCatalogPlanEntitlements = { [key: string]: unknown };
+
+export interface BillingCatalogPlan {
+  code: BillingCatalogPlanCode;
+  name: string;
+  description: string;
+  entitlements: BillingCatalogPlanEntitlements;
+  /**
+     * @minItems 2
+     * @maxItems 2
+     */
+  prices: BillingPrice[];
+}
+
+export interface BillingCatalog {
+  plans: BillingCatalogPlan[];
+}
+
+export type BillingPlanInputPlan = typeof BillingPlanInputPlan[keyof typeof BillingPlanInputPlan];
+
+
+export const BillingPlanInputPlan = {
+  starter: 'starter',
+  growth: 'growth',
+  scale: 'scale',
+} as const;
+
+export type BillingPlanInputInterval = typeof BillingPlanInputInterval[keyof typeof BillingPlanInputInterval];
+
+
+export const BillingPlanInputInterval = {
+  month: 'month',
+  year: 'year',
+} as const;
+
+export interface BillingPlanInput {
+  plan: BillingPlanInputPlan;
+  interval: BillingPlanInputInterval;
+  /** @pattern ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ */
+  idempotencyKey: string;
+}
+
+export interface BillingActionInput {
+  /** @pattern ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ */
+  idempotencyKey: string;
+}
+
+export interface BillingUrl {
+  url: string;
+}
+
+export type BillingSubscriptionStatus = typeof BillingSubscriptionStatus[keyof typeof BillingSubscriptionStatus];
+
+
+export const BillingSubscriptionStatus = {
+  unmanaged: 'unmanaged',
+  incomplete: 'incomplete',
+  active: 'active',
+  trialing: 'trialing',
+  past_due: 'past_due',
+  unpaid: 'unpaid',
+  canceled: 'canceled',
+  restricted: 'restricted',
+  quarantined: 'quarantined',
+} as const;
+
+/**
+ * @nullable
+ */
+export type BillingSubscriptionInterval = typeof BillingSubscriptionInterval[keyof typeof BillingSubscriptionInterval] | null;
+
+
+export const BillingSubscriptionInterval = {
+  month: 'month',
+  year: 'year',
+} as const;
+
+export type BillingSubscriptionCapabilities = {
+  canManage: boolean;
+  canSubscribe: boolean;
+};
+
+export interface BillingSubscription {
+  status: BillingSubscriptionStatus;
+  /** @nullable */
+  plan?: string | null;
+  /** @nullable */
+  pendingPlan?: string | null;
+  /** @nullable */
+  pendingEffectiveAt?: string | null;
+  /** @nullable */
+  interval?: BillingSubscriptionInterval;
+  /** @nullable */
+  periodStart?: string | null;
+  /** @nullable */
+  periodEnd?: string | null;
+  /** @nullable */
+  graceEndsAt?: string | null;
+  cancelAtPeriodEnd: boolean;
+  capabilities: BillingSubscriptionCapabilities;
+}
+
+export interface BillingChangeResult {
+  scheduled: boolean;
+  /** @nullable */
+  effectiveAt: string | null;
+  reference: string;
+}
+
+export interface BillingCancellation {
+  cancelAtPeriodEnd: boolean;
+}
+
+export interface BillingInvoice {
+  id: string;
+  /** @nullable */
+  status?: string | null;
+  createdAt: string;
+  amountDue: number;
+  amountPaid: number;
+  currency: string;
+  /** @nullable */
+  hostedInvoiceUrl?: string | null;
+  /** @nullable */
+  invoicePdf?: string | null;
+}
+
+export interface BillingInvoiceList {
+  items: BillingInvoice[];
+  /** @nullable */
+  nextCursor: string | null;
+}
+
+export interface BillingReconcileResult {
+  status: string;
+  reconciledAt: string;
+}
+
 export interface HealthStatus {
   status: string;
 }
@@ -15,6 +183,13 @@ export interface RuntimeConfig {
 }
 
 export type WorkspaceEntitlements = {[key: string]: boolean | number | string};
+
+export type WorkspaceBillingAccess = {
+  status: string;
+  canCreate: boolean;
+  /** @nullable */
+  graceEndsAt: string | null;
+};
 
 export type WorkspacePosterTreatment = typeof WorkspacePosterTreatment[keyof typeof WorkspacePosterTreatment];
 
@@ -34,6 +209,7 @@ export interface Workspace {
   storageUsedGb: number;
   storageLimitGb: number;
   entitlements: WorkspaceEntitlements;
+  billingAccess: WorkspaceBillingAccess;
   permissions: string[];
   playerAccent: string;
   playerControlForeground: string;
@@ -673,6 +849,15 @@ export interface PlaybackEventBatch {
      */
   events: PlaybackEventInput[];
 }
+
+export type ListBillingInvoicesParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+cursor?: string;
+};
 
 export type ListVideosParams = {
 /**

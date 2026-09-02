@@ -6,6 +6,7 @@ import { resolveProvisioningProvider, type ProvisioningProviderResolver } from "
 import { cleanupExpiredUploads } from "./upload-expiry-cleanup";
 import { generateVideoEmbed } from "./video-embeds";
 import { cleanupThumbnailObjects } from "./thumbnail-cleanup";
+import { reconcileActiveBilling } from "./billing-reconciliation";
 import type { ThumbnailStorage } from "./thumbnail-storage";
 import { and, eq, gte, lt, or, sql } from "drizzle-orm";
 import { db, embedGenerationOutboxTable } from "@workspace/db";
@@ -20,6 +21,7 @@ export const UPLOAD_EXPIRY_QUEUE = `vid.upload.expiry-cleanup${queueSuffix}`;
 export const EMBED_GENERATION_QUEUE = `vid.video.embed-generation${queueSuffix}`;
 export const EMBED_DISPATCH_QUEUE = `vid.video.embed-dispatch${queueSuffix}`;
 export const THUMBNAIL_CLEANUP_QUEUE = `vid.thumbnail.cleanup${queueSuffix}`;
+export const BILLING_RECONCILIATION_QUEUE = `vid.billing.reconcile${queueSuffix}`;
 
 type HealthJob = {
   requestedAt: string;
@@ -104,9 +106,18 @@ export async function startJobs(options: {
     expireInSeconds: 600,
     retentionSeconds: 86400,
   });
+  await instance.createQueue(BILLING_RECONCILIATION_QUEUE, {
+    retryLimit: 3,
+    retryDelay: 60,
+    retryBackoff: true,
+    deadLetter: DEAD_LETTER_QUEUE,
+    expireInSeconds: 900,
+    retentionSeconds: 86400,
+  });
   await instance.schedule(UPLOAD_EXPIRY_QUEUE, "*/15 * * * *", {}, { tz: "UTC" });
   await instance.schedule(EMBED_DISPATCH_QUEUE, "* * * * *", {}, { tz: "UTC" });
   await instance.schedule(THUMBNAIL_CLEANUP_QUEUE, "*/5 * * * *", {}, { tz: "UTC" });
+  await instance.schedule(BILLING_RECONCILIATION_QUEUE, "*/5 * * * *", {}, { tz: "UTC" });
   await instance.work<HealthJob>(QUEUE_NAME, async ([job]: Job<HealthJob>[]) => {
     logger.info({ jobId: job.id, requestedAt: job.data.requestedAt }, "Job worker processed health check");
     return { processedAt: new Date().toISOString() };
@@ -144,6 +155,8 @@ export async function startJobs(options: {
   });
   await instance.work(THUMBNAIL_CLEANUP_QUEUE, { batchSize: 1 }, async () =>
     cleanupThumbnailObjects(options.thumbnailStorage));
+  await instance.work(BILLING_RECONCILIATION_QUEUE, { batchSize: 1 }, async () =>
+    reconcileActiveBilling());
 
   boss = instance;
   logger.info({ queue: QUEUE_NAME }, "Job queue and worker started");

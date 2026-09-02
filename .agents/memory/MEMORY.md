@@ -6,3 +6,4 @@
 - [Folder hierarchy concurrency](folder-hierarchy-concurrency.md) — serialize every mutation that changes folder membership with hierarchy create/move/delete checks.
 - [Strict union request validation](strict-union-request-validation.md) — keep raw-key boundary guards for mutually exclusive OpenAPI bodies generated through Orval/Zod.
 - [App Storage thumbnail promotion](app-storage-thumbnail-promotion.md) — copied objects may lose Content-Type; patch metadata conditionally and pin the final generation.
+- [Billing lifecycle integrity](billing-lifecycle-integrity.md) — serialize Checkout and reconciliation per tenant; generation-scope Stripe customer creation so deleted IDs cannot replay.
