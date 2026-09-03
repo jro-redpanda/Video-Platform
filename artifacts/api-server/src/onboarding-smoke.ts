@@ -7,7 +7,7 @@ const { and, eq, inArray } = await import("drizzle-orm");
 const {
   auditLogsTable, db, groupPermissionsTable, membershipsTable,
   onboardingProvisioningIntentsTable, organizationsTable, permissionGroupsTable,
-  providerAccountsTable, sessionsTable, usersTable,
+  providerAccountsTable, providerTenantSpacesTable, sessionsTable, usersTable,
 } = await import("@workspace/db");
 const { Step7SmokeVideoProvider } = await import("@workspace/providers/test-only");
 const { default: app } = await import("./app");
@@ -100,11 +100,16 @@ try {
   const [account] = await db.insert(providerAccountsTable).values({
     providerKey: "step7-smoke", label: `Onboarding ${marker}`,
     encryptedCredentials: "test-only-not-a-production-credential",
-    maxZones: 2, zoneCountCached: 0, acceptingNewTenants: true,
+    maxZones: 4, zoneCountCached: 0, acceptingNewTenants: true,
   }).returning();
   accountIds.push(account!.id);
   const fakeProvider = new Step7SmokeVideoProvider();
   await processOnboardingProvisioningJob(organization!.id, async () => fakeProvider);
+  assert.equal(fakeProvider.callbackConfigurationCalls, 1);
+  assert.equal(
+    fakeProvider.lastConfiguredCallbackUrl,
+    "https://callbacks.test.invalid/provider/encode",
+  );
   const active = await request("/api/onboarding", {}, first.cookie);
   const activeBody = await active.json() as { state: string; provisioning: { state: string }; workspace: Record<string, unknown> };
   assert.equal(activeBody.state, "active");
@@ -119,12 +124,35 @@ try {
   assert.equal(conflict.status, 409);
   assert.equal((await db.select().from(membershipsTable).where(eq(membershipsTable.userId, second.user.id))).length, 0);
 
+  // Callback configuration occurs under the external-call claim. An ambiguous
+  // outcome preserves the provider ID and requires reconciliation.
+  await db.update(organizationsTable).set({ status: "provisioning" }).where(eq(organizationsTable.id, organization!.id));
+  await db.update(onboardingProvisioningIntentsTable).set({ state: "queued", retryable: true })
+    .where(eq(onboardingProvisioningIntentsTable.organizationId, organization!.id));
+  await db.delete(providerTenantSpacesTable)
+    .where(eq(providerTenantSpacesTable.organizationId, organization!.id));
+  const callbackFailureProvider = new Step7SmokeVideoProvider();
+  callbackFailureProvider.failNextCallbackConfiguration = true;
+  await processOnboardingProvisioningJob(
+    organization!.id,
+    async () => callbackFailureProvider,
+  ).then(() => assert.fail("callback-configuration failure succeeded"), () => undefined);
+  const [reconciliationSpace] = await db.select().from(providerTenantSpacesTable)
+    .where(eq(providerTenantSpacesTable.organizationId, organization!.id));
+  assert.ok(reconciliationSpace?.providerSpaceId);
+  assert.equal(reconciliationSpace?.reconciliationRequired, true);
+  assert.ok(reconciliationSpace?.externalCallClaim);
+  const [reconciliationIntent] = await db.select().from(onboardingProvisioningIntentsTable)
+    .where(eq(onboardingProvisioningIntentsTable.organizationId, organization!.id));
+  assert.equal(reconciliationIntent?.state, "reconciliation_required");
+  assert.equal(reconciliationIntent?.retryable, false);
+
   // A resolver failure occurs before an external call and is safely retryable.
   await db.update(organizationsTable).set({ status: "provisioning" }).where(eq(organizationsTable.id, organization!.id));
   await db.update(onboardingProvisioningIntentsTable).set({ state: "queued", retryable: true })
     .where(eq(onboardingProvisioningIntentsTable.organizationId, organization!.id));
-  await db.delete((await import("@workspace/db")).providerTenantSpacesTable)
-    .where(eq((await import("@workspace/db")).providerTenantSpacesTable.organizationId, organization!.id));
+  await db.delete(providerTenantSpacesTable)
+    .where(eq(providerTenantSpacesTable.organizationId, organization!.id));
   await processOnboardingProvisioningJob(organization!.id, async () => {
     throw new ProvisioningUnavailableError("test provider unavailable");
   }).then(() => assert.fail("provider-unavailable job succeeded"), () => undefined);

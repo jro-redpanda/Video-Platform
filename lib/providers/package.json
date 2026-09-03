@@ -9,7 +9,7 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "conformance:smoke": "tsc -p tsconfig.json && node dist/provider-conformance-smoke.js"
+    "conformance:smoke": "tsc -p tsconfig.json && node dist/provider-conformance-smoke.js && node dist/bunny-conformance-smoke.js"
   },
   "devDependencies": {
     "@types/node": "catalog:"

@@ -12,7 +12,8 @@ Current production behavior is explicitly fail-closed:
 - Bunny is registered as an unconfigured provider when `BUNNY_API_KEY` is
   absent. It does not fall back to the test fake.
 - `secondary` is always registered as an unconfigured provider.
-- Test-only fake providers are available only in the test runtime.
+- Test-only fake providers are installed only by explicit smoke-test entrypoints
+  in the test runtime; the production registry does not import or register them.
 
 Do not retry by adding credentials to requests, logs, tickets, or environment
 files. Correct configuration through the approved secret/configuration path,
@@ -66,6 +67,12 @@ record, reconcile manually, and never clear an external-call claim merely to
 force a replay. Details are in
 [ONBOARDING_OPERATIONS.md](ONBOARDING_OPERATIONS.md).
 
+Encode-callback configuration is part of tenant-space provisioning. A definite
+provider rejection and an ambiguous timeout/transport outcome use distinct
+diagnostic codes, but both keep the workspace inactive because the remote
+library already exists and callback delivery is not ready. Repair or reconcile
+the owned space; never create a replacement library as an automatic retry.
+
 Apply the same principle to upload/delete and other provider side effects:
 repeat only operations whose idempotency and prior outcome are established.
 Quarantine uncertain work and retain its durable state, job evidence, and
@@ -78,8 +85,10 @@ database/queue recovery.
 These tests need no provider credentials and may run in an isolated test
 environment: onboarding smoke (injected fake provider/queue), upload/webhook/
 embed/library/folder/bulk/thumbnail lifecycle smokes, queue smoke, and
-provider-independent audit/analytics/domain/master-storage lifecycle tests.
-They prove local contracts, not provider availability.
+provider-independent audit/analytics/domain/master-storage lifecycle tests. The
+provider conformance smoke also exercises a DASH/multipart fixture so its
+contract checks are not limited to Bunny's HLS/TUS shape. They prove local
+contracts, not provider availability.
 
 Defer until valid, approved credentials and a controlled external environment
 are available: Bunny adapter round trip, tenant-library provisioning, direct

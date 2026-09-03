@@ -915,7 +915,11 @@ router.get("/videos/:videoId/playback", requirePermission("videos.read"), async 
     const sources = await provider.getPlaybackSources({ id: providerTenantSpaceId }, { id: providerAssetId });
     if (!sources.hlsUrl || new Date(sources.expiresAt).getTime() <= Date.now()) throw new Error("No current playback source");
     const sourceUrl = new URL(sources.hlsUrl).toString();
-    if (!await provider.isPlaybackSourceTrusted({ id: providerTenantSpaceId }, sourceUrl)) {
+    if (!await provider.isPlaybackSourceTrusted(
+      { id: providerTenantSpaceId },
+      { id: providerAssetId },
+      sourceUrl,
+    )) {
       throw new Error("Provider returned an untrusted playback source");
     }
     res.setHeader("Cache-Control", "private, no-store");
@@ -957,7 +961,11 @@ router.get("/videos/:videoId/playback/source", requirePermission("videos.read"),
     const sources = await provider.getPlaybackSources({ id: linkage.providerTenantSpaceId }, { id: linkage.providerAssetId });
     if (!sources.hlsUrl || new Date(sources.expiresAt).getTime() <= Date.now()) throw new Error("No current playback source");
     const sourceUrl = new URL(sources.hlsUrl).toString();
-    if (!await provider.isPlaybackSourceTrusted({ id: linkage.providerTenantSpaceId }, sourceUrl)) {
+    if (!await provider.isPlaybackSourceTrusted(
+      { id: linkage.providerTenantSpaceId },
+      { id: linkage.providerAssetId },
+      sourceUrl,
+    )) {
       throw new Error("Provider returned an untrusted playback source");
     }
     res.setHeader("Cache-Control", "private, no-store");

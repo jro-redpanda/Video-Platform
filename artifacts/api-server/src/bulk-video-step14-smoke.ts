@@ -12,6 +12,8 @@ const {
 const { and, eq } = await import("drizzle-orm");
 const { default: app } = await import("./app");
 const { videoProviders } = await import("./lib/provider-registry");
+const { registerStep7SmokeProvider } = await import("./lib/test-only-provider-registry");
+registerStep7SmokeProvider();
 
 const marker = randomUUID();
 const planId = randomUUID();

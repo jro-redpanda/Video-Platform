@@ -69,7 +69,11 @@ router.get("/videos/:videoId/source", async (req, res): Promise<void> => {
       throw new Error("Provider returned no current maintained playback source");
     }
     const sourceUrl = new URL(sources.hlsUrl).toString();
-    if (!await provider.isPlaybackSourceTrusted({ id: linkage.providerTenantSpaceId }, sourceUrl)) {
+    if (!await provider.isPlaybackSourceTrusted(
+      { id: linkage.providerTenantSpaceId },
+      { id: linkage.providerAssetId },
+      sourceUrl,
+    )) {
       throw new Error("Provider returned an untrusted playback source");
     }
     res.setHeader("Cache-Control", "private, no-store");
@@ -223,7 +227,11 @@ router.get("/videos/:videoId", async (req, res): Promise<void> => {
       throw new Error("Provider returned an expired playback source");
     }
     const normalizedSourceUrl = new URL(sourceUrl).toString();
-    if (!await provider.isPlaybackSourceTrusted({ id: providerTenantSpaceId }, normalizedSourceUrl)) {
+    if (!await provider.isPlaybackSourceTrusted(
+      { id: providerTenantSpaceId },
+      { id: providerAssetId },
+      normalizedSourceUrl,
+    )) {
       throw new Error("Provider returned an untrusted playback source");
     }
     res.setHeader("Cache-Control", "private, no-store");

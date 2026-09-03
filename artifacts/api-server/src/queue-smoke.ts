@@ -37,6 +37,7 @@ try {
     async ([job]: Job<{ organizationId: string }>[]) => provisionTenantOrganization(
       job.data.organizationId,
       async () => testProvider,
+      () => "https://callbacks.test.invalid/provider/encode",
     ),
   );
   const first = await boss.send(queueName, { organizationId: organization.id });

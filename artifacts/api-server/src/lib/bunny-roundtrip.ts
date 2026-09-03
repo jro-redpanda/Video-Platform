@@ -27,6 +27,7 @@ export function receiveBunnyRoundTripCallback(
   if (event.tenantSpaceId !== pending.libraryId || event.assetId !== pending.videoId) {
     return { accepted: false, terminal: false };
   }
+  pendingCallbacks.delete(token);
   pending.resolve(event);
   return { accepted: true, terminal: true };
 }
@@ -36,11 +37,26 @@ export async function runBunnyRoundTrip(jobId: string) {
   const devDomain = process.env.REPLIT_DEV_DOMAIN;
   if (!accountApiKey) throw new Error("BUNNY_API_KEY is required");
   if (!devDomain) throw new Error("REPLIT_DEV_DOMAIN is required for the Bunny webhook round trip");
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(jobId)) {
+    throw new Error("Bunny round-trip job ID is invalid");
+  }
+  const callbackOrigin = requirePublicHttpsOrigin(devDomain);
 
   const provider = new BunnyVideoProvider({ accountApiKey });
   const token = randomUUID();
   const filePath = `/tmp/bunny-roundtrip-${jobId}.mp4`;
   let space: { id: string } | undefined;
+  let result: {
+    libraryId: string;
+    videoId: string;
+    uploadProtocol: "tus";
+    webhookSignatureVersion: "v1";
+    webhookAlgorithm: "hmac-sha256";
+    terminalState: "ready";
+    durationSeconds: number;
+    disposableLibraryDeleted: true;
+  } | undefined;
+  let operationError: unknown;
 
   try {
     await execFileAsync("ffmpeg", [
@@ -54,7 +70,7 @@ export async function runBunnyRoundTrip(jobId: string) {
     space = await provider.createTenantSpace({ name: `vid-step6-${jobId.slice(0, 8)}` });
     await provider.setEncodeCompletionCallback(
       space,
-      `https://${devDomain}/api/provider-tests/bunny/${token}`,
+      `${callbackOrigin}/api/provider-tests/bunny/${token}`,
     );
     const asset = await provider.createAsset(space, { title: "Step 6 adapter verification" });
     const credentials = await provider.getUploadCredentials(space, asset, {
@@ -80,7 +96,7 @@ export async function runBunnyRoundTrip(jobId: string) {
     const status = await provider.getAssetStatus(space, asset);
     if (status.state !== "ready") throw new Error(`Bunny API did not report ready after webhook: ${status.state}`);
 
-    return {
+    result = {
       libraryId: space.id,
       videoId: asset.id,
       uploadProtocol: credentials.kind,
@@ -90,11 +106,28 @@ export async function runBunnyRoundTrip(jobId: string) {
       durationSeconds: status.durationSeconds,
       disposableLibraryDeleted: true,
     };
-  } finally {
+  } catch (error) {
+    operationError = error;
+  }
+
+  let cleanupError: unknown;
+  try {
     pendingCallbacks.delete(token);
     await rm(filePath, { force: true });
     if (space) await provider.deleteTenantSpace(space);
+  } catch (error) {
+    cleanupError = error;
   }
+  if (operationError && cleanupError) {
+    throw new AggregateError(
+      [operationError, cleanupError],
+      "Bunny round trip failed and disposable-library cleanup also failed",
+    );
+  }
+  if (operationError) throw operationError;
+  if (cleanupError) throw cleanupError;
+  if (!result) throw new Error("Bunny round trip ended without a result");
+  return result;
 }
 
 async function uploadTus(endpoint: string, authorization: Readonly<Record<string, string>>, body: Buffer) {
@@ -111,11 +144,21 @@ async function uploadTus(endpoint: string, authorization: Readonly<Record<string
       "Upload-Length": String(body.length),
       "Upload-Metadata": metadata,
     },
+    signal: AbortSignal.timeout(30_000),
   });
-  if (!create.ok) throw new Error(`Bunny tus create failed (${create.status}): ${(await create.text()).slice(0, 500)}`);
+  if (!create.ok) throw new Error(`Bunny tus create failed (${create.status})`);
   const location = create.headers.get("location");
   if (!location) throw new Error("Bunny tus create omitted the Location header");
-  const uploadUrl = new URL(location, endpoint).toString();
+  const endpointUrl = new URL(endpoint);
+  const uploadUrl = new URL(location, endpointUrl);
+  if (endpointUrl.protocol !== "https:" || endpointUrl.username || endpointUrl.password
+    || endpointUrl.hash || endpointUrl.origin !== "https://video.bunnycdn.com") {
+    throw new Error("Bunny tus endpoint is untrusted");
+  }
+  if (uploadUrl.origin !== endpointUrl.origin || uploadUrl.username || uploadUrl.password
+    || uploadUrl.hash) {
+    throw new Error("Bunny tus create returned an untrusted upload location");
+  }
   const upload = await fetch(uploadUrl, {
     method: "PATCH",
     headers: {
@@ -125,8 +168,13 @@ async function uploadTus(endpoint: string, authorization: Readonly<Record<string
       "Content-Type": "application/offset+octet-stream",
     },
     body,
+    signal: AbortSignal.timeout(5 * 60_000),
   });
-  if (!upload.ok) throw new Error(`Bunny tus upload failed (${upload.status}): ${(await upload.text()).slice(0, 500)}`);
+  if (!upload.ok) throw new Error(`Bunny tus upload failed (${upload.status})`);
+  const finalOffset = Number(upload.headers.get("upload-offset"));
+  if (!Number.isSafeInteger(finalOffset) || finalOffset !== body.length) {
+    throw new Error("Bunny tus upload did not acknowledge the complete payload");
+  }
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -141,4 +189,20 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   } finally {
     if (timeout) clearTimeout(timeout);
   }
+}
+
+function requirePublicHttpsOrigin(domain: string): string {
+  let url: URL;
+  try {
+    url = new URL(`https://${domain}`);
+  } catch {
+    throw new Error("REPLIT_DEV_DOMAIN is not a valid hostname");
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.port || url.hash
+    || url.pathname !== "/" || url.search || !/^[a-z0-9.-]+$/i.test(url.hostname)
+    || url.hostname === "localhost" || url.hostname.endsWith(".localhost")
+    || url.hostname.endsWith(".local")) {
+    throw new Error("REPLIT_DEV_DOMAIN is not a safe public HTTPS hostname");
+  }
+  return url.origin;
 }

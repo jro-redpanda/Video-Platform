@@ -399,14 +399,19 @@ Implemented:
 - TUS and multipart credential types;
 - Bunny provisioning, upload, status, delete, playback, host trust, and webhook
   verification;
-- test-only fake adapter and conformance smoke.
+- test-only fake adapter and conformance smoke;
+- asset-bound playback-source trust and strict Bunny response/error validation;
+- durable encode-callback configuration before a provisioned workspace can
+  become active;
+- a provider-independent DASH/multipart fixture that exercises a deliberately
+  non-Bunny-shaped contract.
 
 Remaining:
 
 - add direct PUT credentials if it remains a portability requirement;
 - add caption operations;
-- implement or exercise a second non-Bunny adapter strongly enough to prove the
-  contract is not Bunny-shaped;
+- implement and exercise a second production-capable non-Bunny adapter strongly
+  enough to prove operational portability beyond the local contract fixture;
 - prove credential encryption, retrieval, rotation, and account capacity in the
   production environment;
 - perform the explicitly gated live Bunny round trip.

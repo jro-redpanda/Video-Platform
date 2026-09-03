@@ -18,8 +18,10 @@ import { and, eq, sql } from "drizzle-orm";
 import app from "./app";
 import { cleanupExpiredUploads } from "./lib/upload-expiry-cleanup";
 import { videoProviders } from "./lib/provider-registry";
+import { registerStep7SmokeProvider } from "./lib/test-only-provider-registry";
 
 assert.equal(process.env.NODE_ENV, "test", "upload smoke must run with NODE_ENV=test");
+registerStep7SmokeProvider();
 const suffix = randomUUID();
 const planId = randomUUID();
 const organizationId = randomUUID();

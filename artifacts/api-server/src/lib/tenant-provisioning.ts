@@ -3,16 +3,28 @@ import {
   onboardingProvisioningIntentsTable, organizationsTable,
   providerAccountsTable, providerTenantSpacesTable,
 } from "@workspace/db";
-import { TenantSpaceCreationRejectedError, type VideoProvider } from "@workspace/providers";
+import {
+  EncodeCompletionCallbackRejectedError,
+  TenantSpaceCreationRejectedError,
+  type VideoProvider,
+} from "@workspace/providers";
 import { and, eq, isNull, lt, sql } from "drizzle-orm";
-import type { ProvisioningProviderResolver } from "./provider-registry";
+import {
+  resolveProviderEncodeCallbackUrl,
+  type ProviderEncodeCallbackUrlResolver,
+  type ProvisioningProviderResolver,
+} from "./provider-registry";
 import { auditJob, writeAuditEvent } from "./audit";
 import { seedWorkspaceDefaults } from "./workspace-onboarding";
 import { withWorkerDb } from "./worker-db";
 
 export class ProvisioningUnavailableError extends Error {}
 
-export async function provisionTenantOrganization(organizationId: string, resolveProvider: ProvisioningProviderResolver) {
+export async function provisionTenantOrganization(
+  organizationId: string,
+  resolveProvider: ProvisioningProviderResolver,
+  resolveCallbackUrl: ProviderEncodeCallbackUrlResolver = resolveProviderEncodeCallbackUrl,
+) {
   const [organization] = await withWorkerDb("onboarding", (tx) =>
     tx.select().from(organizationsTable).where(eq(organizationsTable.id, organizationId)).limit(1));
   if (!organization) throw new Error(`Organization ${organizationId} does not exist`);
@@ -83,8 +95,6 @@ export async function provisionTenantOrganization(organizationId: string, resolv
       await releaseUnclaimedReservation(space, "provider_resolver_failed");
       throw new ProvisioningUnavailableError("provider_resolution_unavailable", { cause: error });
     }
-    // Bunny persists its ID and credentials through its awaited internal
-    // onLibraryCreated callback. Other providers can safely persist the ID here.
     let tenantSpace;
     try {
       tenantSpace = await provider.createTenantSpace({ name: organization.name });
@@ -96,9 +106,10 @@ export async function provisionTenantOrganization(organizationId: string, resolv
       await markReconciliationRequired(organizationId, space.id, "provider_call_outcome_ambiguous");
       throw error;
     }
+
     space = await withWorkerDb("onboarding", async (tx) => {
       const [persisted] = await tx.update(providerTenantSpacesTable)
-        .set({ providerSpaceId: tenantSpace.id, externalCallClaim: null, externalCallClaimedAt: null })
+        .set({ providerSpaceId: tenantSpace.id })
         .where(and(eq(providerTenantSpacesTable.id, space.id), eq(providerTenantSpacesTable.state, "creating"), eq(providerTenantSpacesTable.externalCallClaim, claim)))
         .returning();
       if (persisted) return persisted;
@@ -106,8 +117,73 @@ export async function provisionTenantOrganization(organizationId: string, resolv
         .where(eq(providerTenantSpacesTable.id, space.id)).limit(1);
       return current;
     });
+    if (space?.state !== "creating" || space.providerSpaceId !== tenantSpace.id
+      || space.externalCallClaim !== claim) {
+      await markReconciliationRequired(
+        organizationId,
+        space?.id ?? claimed.id,
+        "provider_space_identity_persistence_ambiguous",
+      );
+      throw new Error(`Provider tenant-space identity requires reconciliation for ${organizationId}`);
+    }
+
+    let callbackState: "configured" | "not_supported";
+    try {
+      const callbackUrl = resolveCallbackUrl(provider);
+      if (callbackUrl) {
+        await provider.setEncodeCompletionCallback(tenantSpace, callbackUrl);
+        callbackState = "configured";
+      } else {
+        callbackState = "not_supported";
+      }
+    } catch (error) {
+      await markReconciliationRequired(
+        organizationId,
+        space.id,
+        error instanceof EncodeCompletionCallbackRejectedError
+          ? "provider_callback_configuration_rejected"
+          : "provider_callback_configuration_ambiguous",
+      );
+      throw error;
+    }
+
+    const [releasedClaim] = await withWorkerDb("onboarding", (tx) =>
+      tx.update(providerTenantSpacesTable).set({
+        externalCallClaim: null,
+        externalCallClaimedAt: null,
+        metadata: {
+          ...space.metadata,
+          encodeCompletionCallbackState: callbackState,
+        },
+      }).where(and(
+        eq(providerTenantSpacesTable.id, space.id),
+        eq(providerTenantSpacesTable.state, "creating"),
+        eq(providerTenantSpacesTable.providerSpaceId, tenantSpace.id),
+        eq(providerTenantSpacesTable.externalCallClaim, claim),
+      )).returning());
+    if (!releasedClaim) {
+      await markReconciliationRequired(
+        organizationId,
+        space.id,
+        "provider_callback_claim_release_ambiguous",
+      );
+      throw new Error(`Provider callback configuration requires reconciliation for ${organizationId}`);
+    }
+    space = releasedClaim;
   }
   if (space?.state === "creating" && space.providerSpaceId) {
+    const callbackState = space.metadata.encodeCompletionCallbackState;
+    if (space.externalCallClaim || space.reconciliationRequired
+      || (callbackState !== "configured" && callbackState !== "not_supported")) {
+      if (!space.reconciliationRequired) {
+        await markReconciliationRequired(
+          organizationId,
+          space.id,
+          "provider_callback_configuration_unknown",
+        );
+      }
+      throw new Error(`Provider tenant-space creation requires reconciliation for ${organizationId}`);
+    }
     space = await finalizeProviderTenantSpaceProvisioning(organizationId, space.id) ?? space;
   }
   if (!space || space.state !== "created" || !space.providerSpaceId) throw new Error("Provider tenant space was not created");

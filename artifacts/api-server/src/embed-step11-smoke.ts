@@ -29,6 +29,8 @@ const { generateVideoEmbed, serializeEmbed } = await import("./lib/video-embeds"
 const { reconcileEmbedGenerationOutbox } = await import("./lib/jobs");
 const { videoProviders } = await import("./lib/provider-registry");
 const { Step7SmokeVideoProvider } = await import("@workspace/providers/test-only");
+const { registerStep7SmokeProvider } = await import("./lib/test-only-provider-registry");
+registerStep7SmokeProvider();
 
 const marker = randomUUID();
 const planId = randomUUID();

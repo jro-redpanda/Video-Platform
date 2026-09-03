@@ -1,15 +1,11 @@
 import { providerAccountsTable, providerTenantSpacesTable } from "@workspace/db";
 import { BunnyVideoProvider, type BunnyLibraryCredentials, UnconfiguredVideoProvider, VideoProviderRegistry, type VideoProvider } from "@workspace/providers";
-import { Step7SmokeVideoProvider } from "@workspace/providers/test-only";
 import { and, eq } from "drizzle-orm";
 import { decryptProviderCredentials, encryptProviderCredentials } from "./credential-encryption";
+import { runtimeConfig } from "./config";
 import { withWorkerDb } from "./worker-db";
 
 export const videoProviders = new VideoProviderRegistry();
-if (process.env.NODE_ENV === "test") {
-  // This deterministic adapter is deliberately gated to the test runtime.
-  videoProviders.register(new Step7SmokeVideoProvider());
-}
 const bunnyAccountApiKey = process.env.BUNNY_API_KEY;
 if (bunnyAccountApiKey) {
   videoProviders.register(new BunnyVideoProvider({
@@ -28,6 +24,20 @@ export type ProvisioningProviderResolver = (
   account: typeof providerAccountsTable.$inferSelect,
   space: typeof providerTenantSpacesTable.$inferSelect,
 ) => Promise<VideoProvider>;
+
+export type ProviderEncodeCallbackUrlResolver = (provider: VideoProvider) => string | undefined;
+
+/** Returns the owned callback URL for adapters that advertise callback support. */
+export const resolveProviderEncodeCallbackUrl: ProviderEncodeCallbackUrlResolver = (provider) => {
+  if (!provider.capabilities.encodeCompletionCallback) return undefined;
+  if (provider.key === "bunny") {
+    return `https://${runtimeConfig.appDomain}/api/webhooks/bunny/encode`;
+  }
+  if (process.env.NODE_ENV === "test" && provider.key === "step7-smoke") {
+    return "https://callbacks.test.invalid/provider/encode";
+  }
+  throw new Error(`No encode callback endpoint is configured for provider "${provider.key}"`);
+};
 
 /** Builds a provider from the selected global account; never uses a singleton account credential. */
 export const resolveProvisioningProvider: ProvisioningProviderResolver = async (account, space) => {

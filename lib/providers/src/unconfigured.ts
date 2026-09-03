@@ -38,6 +38,10 @@ export class UnconfiguredVideoProvider implements VideoProvider {
     return this.unavailable();
   }
 
+  async setEncodeCompletionCallback(_space: TenantSpace, _webhookUrl: string): Promise<void> {
+    return this.unavailable();
+  }
+
   async deleteTenantSpace(_space: TenantSpace): Promise<void> {
     return this.unavailable();
   }
@@ -66,7 +70,7 @@ export class UnconfiguredVideoProvider implements VideoProvider {
     return this.unavailable();
   }
 
-  async isPlaybackSourceTrusted(_space: TenantSpace, _url: string): Promise<boolean> {
+  async isPlaybackSourceTrusted(_space: TenantSpace, _asset: Asset, _url: string): Promise<boolean> {
     return false;
   }
 

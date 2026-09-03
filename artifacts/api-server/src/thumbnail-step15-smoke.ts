@@ -17,6 +17,8 @@ const { cleanupThumbnailObjects, MAX_THUMBNAIL_CLEANUP_ATTEMPTS } =
   await import("./lib/thumbnail-cleanup");
 const { default: app } = await import("./app");
 const { videoProviders } = await import("./lib/provider-registry");
+const { registerStep7SmokeProvider } = await import("./lib/test-only-provider-registry");
+registerStep7SmokeProvider();
 
 class FakeStorage implements ThumbnailStorage {
   objects = new Map<string, { bytes: Buffer; contentType: string; generation?: string }>();
