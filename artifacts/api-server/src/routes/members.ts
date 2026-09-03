@@ -1,4 +1,3 @@
-import { createHash, randomBytes } from "node:crypto";
 import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
@@ -18,6 +17,8 @@ import {
   ListMembersResponse,
   ListPermissionsResponse,
   ListPermissionGroupsResponse,
+  ReissueInvitationParams,
+  RevokeInvitationParams,
   UpdateMemberBody,
   UpdateMemberParams,
   UpdateMemberResponse,
@@ -29,6 +30,7 @@ import { requirePermission } from "../lib/permissions";
 import { withTenantDb } from "../lib/tenant-db";
 import { requireCreateAccess, requireEntitlement, resolveEntitlements } from "../lib/entitlements";
 import { auditDiff, auditUser, writeAuditEvent } from "../lib/audit";
+import { issueInvitation, InvitationConflictError, InvitationUnavailableError, reissueInvitation, revokeInvitation } from "../lib/invitations";
 
 const router: IRouter = Router();
 
@@ -41,6 +43,7 @@ async function readGroup(
     id: permissionGroupsTable.id,
     name: permissionGroupsTable.name,
     description: permissionGroupsTable.description,
+    systemKey: permissionGroupsTable.systemKey,
     permissions: sql<string[]>`coalesce(array_agg(${groupPermissionsTable.permissionKey}) filter (where ${groupPermissionsTable.permissionKey} is not null), '{}')`,
   }).from(permissionGroupsTable)
     .leftJoin(groupPermissionsTable, eq(groupPermissionsTable.groupId, permissionGroupsTable.id))
@@ -78,6 +81,7 @@ router.get("/permission-groups", requirePermission("members.manage"), async (req
     id: permissionGroupsTable.id,
     name: permissionGroupsTable.name,
     description: permissionGroupsTable.description,
+    systemKey: permissionGroupsTable.systemKey,
     permissions: sql<string[]>`coalesce(array_agg(${groupPermissionsTable.permissionKey}) filter (where ${groupPermissionsTable.permissionKey} is not null), '{}')`,
   }).from(permissionGroupsTable)
     .leftJoin(groupPermissionsTable, eq(groupPermissionsTable.groupId, permissionGroupsTable.id))
@@ -130,6 +134,7 @@ router.patch("/permission-groups/:groupId", requirePermission("members.manage"),
   const { groupId } = UpdatePermissionGroupParams.parse(req.params);
   const input = UpdatePermissionGroupBody.parse(req.body);
   const result = await withTenantDb(req.tenant, async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${req.tenant.organizationId}))`);
     const current = await readGroup(tx, req.tenant.organizationId, groupId);
     if (!current) return { status: "missing" as const };
     const valid = input.permissions.length
@@ -179,6 +184,7 @@ router.patch("/permission-groups/:groupId", requirePermission("members.manage"),
 router.delete("/permission-groups/:groupId", requirePermission("members.manage"), async (req, res) => {
   const { groupId } = DeletePermissionGroupParams.parse(req.params);
   const result = await withTenantDb(req.tenant, async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${req.tenant.organizationId}))`);
     const [usage] = await tx.select({ count: sql<number>`count(*)::int` }).from(membershipsTable)
       .where(and(
         eq(membershipsTable.organizationId, req.tenant.organizationId),
@@ -186,6 +192,7 @@ router.delete("/permission-groups/:groupId", requirePermission("members.manage")
       ));
     if (usage.count > 0) return "in-use" as const;
     const current = await readGroup(tx, req.tenant.organizationId, groupId);
+    if (current?.systemKey) return "system" as const;
     const [deleted] = await tx.delete(permissionGroupsTable).where(and(
       eq(permissionGroupsTable.organizationId, req.tenant.organizationId),
       eq(permissionGroupsTable.id, groupId),
@@ -200,6 +207,7 @@ router.delete("/permission-groups/:groupId", requirePermission("members.manage")
   });
   if (result === "in-use") return void res.status(409).json({ error: "Reassign members before deleting this group" });
   if (result === "missing") return void res.status(404).json({ error: "Permission group not found" });
+  if (result === "system") return void res.status(409).json({ error: "System permission groups cannot be deleted" });
   res.status(204).send();
 });
 
@@ -228,6 +236,9 @@ router.get("/members", requirePermission("members.manage"), async (req, res) => 
       .where(and(
         eq(invitationsTable.organizationId, req.tenant.organizationId),
         isNull(invitationsTable.acceptedAt),
+        isNull(invitationsTable.revokedAt),
+        sql`${invitationsTable.deliveredAt} is not null`,
+        sql`${invitationsTable.expiresAt} > now()`,
       ))
       .orderBy(desc(invitationsTable.createdAt));
 
@@ -247,6 +258,7 @@ router.patch("/members/:membershipId", requirePermission("members.manage"), asyn
   const { membershipId } = UpdateMemberParams.parse(req.params);
   const update = UpdateMemberBody.parse(req.body);
   const result = await withTenantDb(req.tenant, async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${req.tenant.organizationId}))`);
     const [current] = await tx.select({
       id: membershipsTable.id,
       groupId: membershipsTable.groupId,
@@ -298,10 +310,10 @@ router.patch("/members/:membershipId", requirePermission("members.manage"), asyn
         groupId: permissionGroupsTable.id, role: permissionGroupsTable.name, status: membershipsTable.status,
       }).from(membershipsTable).innerJoin(usersTable, eq(usersTable.id, membershipsTable.userId))
         .innerJoin(permissionGroupsTable, eq(permissionGroupsTable.id, membershipsTable.groupId))
-        .where(eq(membershipsTable.id, membershipId));
+        .where(and(eq(membershipsTable.id, membershipId), eq(membershipsTable.organizationId, req.tenant.organizationId)));
       return { status: "ok" as const, member };
     }
-    await tx.update(membershipsTable).set(update).where(eq(membershipsTable.id, membershipId));
+    await tx.update(membershipsTable).set(update).where(and(eq(membershipsTable.id, membershipId), eq(membershipsTable.organizationId, req.tenant.organizationId)));
     await writeAuditEvent(tx, {
       organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
       action: update.groupId !== undefined ? "member.group_changed" : "member.status_changed",
@@ -320,7 +332,7 @@ router.patch("/members/:membershipId", requirePermission("members.manage"), asyn
     }).from(membershipsTable)
       .innerJoin(usersTable, eq(usersTable.id, membershipsTable.userId))
       .innerJoin(permissionGroupsTable, eq(permissionGroupsTable.id, membershipsTable.groupId))
-      .where(eq(membershipsTable.id, membershipId));
+        .where(and(eq(membershipsTable.id, membershipId), eq(membershipsTable.organizationId, req.tenant.organizationId)));
     return { status: "ok" as const, member };
   });
   if (result.status === "missing") return void res.status(404).json({ error: "Member not found" });
@@ -331,55 +343,31 @@ router.patch("/members/:membershipId", requirePermission("members.manage"), asyn
 
 router.post("/invitations", requirePermission("members.manage"), requireCreateAccess, async (req, res) => {
   const input = CreateInvitationBody.parse(req.body);
-  const invitation = await withTenantDb(req.tenant, async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${req.tenant.organizationId}))`);
-    const entitlements = await resolveEntitlements(tx, req.tenant.organizationId);
-    const [{ count }] = await tx.select({ count: sql<number>`count(*)::int` }).from(membershipsTable)
-      .where(and(eq(membershipsTable.organizationId, req.tenant.organizationId), eq(membershipsTable.status, "active")));
-    const [{ invites }] = await tx.select({ invites: sql<number>`count(*)::int` }).from(invitationsTable)
-      .where(and(eq(invitationsTable.organizationId, req.tenant.organizationId), isNull(invitationsTable.acceptedAt)));
-    const limit = Number(entitlements["limits.max_users"]);
-    if (!Number.isFinite(limit) || count + invites >= limit) return { limitReached: true as const, limit, current: count + invites };
-    const [group] = await tx.select({ id: permissionGroupsTable.id, name: permissionGroupsTable.name })
-      .from(permissionGroupsTable)
-      .where(and(
-        eq(permissionGroupsTable.id, input.groupId),
-        eq(permissionGroupsTable.organizationId, req.tenant.organizationId),
-      ))
-      .limit(1);
-    if (!group) return undefined;
+  if (!req.app.locals.invitationDelivery) { res.status(503).json({ error: "Invitation delivery is unavailable" }); return; }
+  try {
+    const invitation = await issueInvitation(req.tenant, input, req.app.locals.invitationDelivery, String(req.id));
+    res.status(201).json(CreateInvitationResponse.parse(invitation));
+  } catch (error) {
+    if (error instanceof InvitationUnavailableError) { res.status(503).json({ error: "Invitation delivery is unavailable" }); return; }
+    if (error instanceof InvitationConflictError) { res.status(409).json({ error: "Invitation is unavailable" }); return; }
+    throw error;
+  }
+});
 
-    const tokenHash = createHash("sha256").update(randomBytes(32)).digest("hex");
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-    const [created] = await tx.insert(invitationsTable).values({
-      organizationId: req.tenant.organizationId,
-      email: input.email.toLowerCase(),
-      groupId: group.id,
-      tokenHash,
-      invitedByUserId: req.tenant.userId,
-      expiresAt,
-    }).returning({ id: invitationsTable.id, email: invitationsTable.email });
-    await writeAuditEvent(tx, {
-      organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
-      action: "invitation.created", category: "members",
-      subject: { type: "invitation", id: created.id, label: "invited" },
-      afterState: { status: "invited", groupId: group.id }, requestId: String(req.id),
-    });
-
-    return {
-      ...created,
-      groupId: group.id,
-      role: group.name,
-      status: "invited" as const,
-      expiresAt,
-    };
-  });
-
-  if (invitation && "limitReached" in invitation) return void res.status(409).json({
-    error: "Member limit reached", code: "member_limit_reached", limit: invitation.limit, current: invitation.current,
-  });
-  if (!invitation) return void res.status(400).json({ error: "Invalid permission group" });
-  res.status(201).json(CreateInvitationResponse.parse(invitation));
+router.delete("/invitations/:invitationId", requirePermission("members.manage"), async (req, res): Promise<void> => {
+  const { invitationId } = RevokeInvitationParams.parse(req.params);
+  try { await revokeInvitation(req.tenant, invitationId, String(req.id)); res.status(204).send(); }
+  catch (error) { if (error instanceof InvitationConflictError) { res.status(404).json({ error: "Invitation not found" }); return; } throw error; }
+});
+router.post("/invitations/:invitationId/reissue", requirePermission("members.manage"), requireCreateAccess, async (req, res): Promise<void> => {
+  const { invitationId } = ReissueInvitationParams.parse(req.params);
+  if (!req.app.locals.invitationDelivery) { res.status(503).json({ error: "Invitation delivery is unavailable" }); return; }
+  try { res.status(201).json(CreateInvitationResponse.parse(await reissueInvitation(req.tenant, invitationId, req.app.locals.invitationDelivery, String(req.id)))); }
+  catch (error) {
+    if (error instanceof InvitationUnavailableError) { res.status(503).json({ error: "Invitation delivery is unavailable" }); return; }
+    if (error instanceof InvitationConflictError) { res.status(409).json({ error: "Invitation is unavailable" }); return; }
+    throw error;
+  }
 });
 
 export default router;

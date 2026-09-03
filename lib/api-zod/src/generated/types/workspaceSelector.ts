@@ -6,11 +6,9 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface PermissionGroup {
+export interface WorkspaceSelector {
   id: string;
   name: string;
-  description: string;
-  /** @nullable */
-  systemKey: string | null;
-  permissions: string[];
+  slug: string;
+  current: boolean;
 }

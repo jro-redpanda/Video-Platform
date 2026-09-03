@@ -35,6 +35,7 @@ async function buildAll() {
       path.resolve(artifactDir, "src/custom-domain-smoke.ts"),
       path.resolve(artifactDir, "src/cold-master-storage-smoke.ts"),
       path.resolve(artifactDir, "src/master-storage-lifecycle-smoke.ts"),
+      path.resolve(artifactDir, "src/g1-smoke.ts"),
     ],
     platform: "node",
     bundle: true,

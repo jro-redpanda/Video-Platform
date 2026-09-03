@@ -8,12 +8,12 @@ import {
   Users,
   Palette,
   Settings,
-  MonitorPlay,
   ClipboardList
 } from "lucide-react"
 
 import { useGetWorkspace } from "@workspace/api-client-react"
 import { Skeleton } from "../ui/skeleton"
+import { WorkspaceSwitcher } from "../workspace-switcher"
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -31,26 +31,12 @@ export function Sidebar() {
 
   return (
     <aside className="w-64 border-r bg-sidebar flex-shrink-0 flex flex-col h-[100dvh] sticky top-0">
-      <div className="h-16 flex items-center px-6 border-b">
-        <div className="flex items-center gap-3 font-semibold text-sidebar-foreground">
-          {isLoading ? (
-            <Skeleton className="h-8 w-8 rounded bg-sidebar-accent" />
-          ) : (
-            <div
-              className="h-8 w-8 rounded flex items-center justify-center text-white text-xs font-bold"
-              style={{ backgroundColor: workspace?.playerAccent || 'var(--primary)' }}
-            >
-              {workspace?.logoInitials || 'VP'}
-            </div>
-          )}
-          <span className="truncate">
-            {isLoading ? <Skeleton className="h-4 w-24 bg-sidebar-accent" /> : workspace?.name}
-          </span>
-        </div>
+      <div className="h-[72px] flex items-center px-4 border-b">
+        <WorkspaceSwitcher />
       </div>
 
       <nav className="flex-1 overflow-y-auto p-4 space-y-1">
-        <div className="text-xs font-semibold text-sidebar-foreground/50 uppercase tracking-wider mb-2 mt-4 px-2">
+        <div className="text-xs font-semibold text-sidebar-foreground/50 uppercase tracking-wider mb-2 mt-2 px-2">
           Operations
         </div>
         {navItems.map((item) => {

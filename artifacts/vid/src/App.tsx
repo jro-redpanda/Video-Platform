@@ -23,6 +23,7 @@ import Settings from "@/pages/settings";
 import EmbedPlayer from "@/pages/embed-player";
 import Login from "@/pages/login";
 import OnboardingFlow from "@/pages/onboarding";
+import AcceptInvitation from "@/pages/invitations/accept";
 import { authClient } from "@/lib/auth-client";
 import { useGetOnboarding, getGetOnboardingQueryKey } from "@workspace/api-client-react";
 
@@ -46,11 +47,20 @@ function Router() {
 
 function AuthenticatedRouter() {
   const session = authClient.useSession();
+  const [location] = useLocation();
+
   if (session.isPending) {
     return <div className="min-h-screen grid place-items-center text-muted-foreground">Loading workspace…</div>;
   }
+
+  const isInvitationRoute = location === '/invitations/accept';
+
   if (!session.data) {
-    return <Login />;
+    return <Login isInvitation={isInvitationRoute} />;
+  }
+
+  if (isInvitationRoute) {
+    return <AcceptInvitation />;
   }
 
   return <OnboardingGate />;

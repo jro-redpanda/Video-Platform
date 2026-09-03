@@ -336,6 +336,23 @@ export interface Workspace {
   customDomainVerified: boolean;
 }
 
+export interface WorkspaceSelector {
+  id: string;
+  name: string;
+  slug: string;
+  current: boolean;
+}
+
+export type WorkspaceSelectionInput = (unknown & {
+  id?: string;
+  /**
+     * @minLength 2
+     * @maxLength 63
+     * @pattern ^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$
+     */
+  slug?: string;
+});
+
 export type WorkspaceUpdatePosterTreatment = typeof WorkspaceUpdatePosterTreatment[keyof typeof WorkspaceUpdatePosterTreatment];
 
 
@@ -861,6 +878,8 @@ export interface PermissionGroup {
   id: string;
   name: string;
   description: string;
+  /** @nullable */
+  systemKey: string | null;
   permissions: string[];
 }
 
@@ -916,6 +935,19 @@ export interface InvitationInput {
   /** @pattern ^[^@\s]+@[^@\s]+\.[^@\s]+$ */
   email: string;
   groupId: string;
+}
+
+export interface InvitationAcceptanceInput {
+  /**
+     * @minLength 43
+     * @maxLength 43
+     * @pattern ^[A-Za-z0-9_-]+$
+     */
+  token: string;
+}
+
+export interface InvitationAcceptance {
+  accepted: boolean;
 }
 
 export type InvitationStatus = typeof InvitationStatus[keyof typeof InvitationStatus];

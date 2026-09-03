@@ -43,6 +43,22 @@ const defaults: ResolvedEntitlements = {
   "feature.analytics_export": false,
 };
 
+const numericEntitlementKeys = new Set<EntitlementKey>([
+  "limits.max_users", "limits.max_storage_gb", "limits.max_videos", "limits.monthly_bandwidth_gb",
+]);
+
+export function validatedEntitlementValue(
+  key: EntitlementKey,
+  value: unknown,
+): boolean | number | undefined {
+  if (numericEntitlementKeys.has(key)) {
+    return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0
+      ? value
+      : undefined;
+  }
+  return typeof value === "boolean" ? value : undefined;
+}
+
 export async function resolveEntitlements(tx: TenantTransaction, organizationId: string): Promise<ResolvedEntitlements> {
   const [organization] = await tx.select({ entitlements: plansTable.entitlements })
     .from(organizationsTable)
@@ -57,12 +73,18 @@ export async function resolveEntitlements(tx: TenantTransaction, organizationId:
 
   const resolved = { ...defaults };
   for (const key of entitlementKeys) {
-    const value = organization?.entitlements[key];
-    if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") resolved[key] = value;
+    const value = validatedEntitlementValue(key, organization?.entitlements[key]);
+    if (value !== undefined) {
+      resolved[key] = value;
+    }
   }
   for (const override of overrides) {
     if (entitlementKeys.includes(override.key as EntitlementKey)) {
-      resolved[override.key as EntitlementKey] = override.value;
+      const key = override.key as EntitlementKey;
+      const value = validatedEntitlementValue(key, override.value);
+      if (value !== undefined) {
+        resolved[key] = value;
+      }
     }
   }
   return resolved;

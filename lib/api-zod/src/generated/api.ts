@@ -655,7 +655,7 @@ export const InitializeVideoUploadResponse = zod.object({
 
 
 export const GetVideoParams = zod.object({
-  "videoId": zod.string().uuid()
+  "videoId": zod.coerce.string().uuid()
 })
 
 export const GetVideoResponse = zod.object({
@@ -692,7 +692,7 @@ export const GetVideoResponse = zod.object({
 
 
 export const UpdateVideoParams = zod.object({
-  "videoId": zod.string().uuid()
+  "videoId": zod.coerce.string().uuid()
 })
 
 
@@ -739,14 +739,14 @@ export const UpdateVideoResponse = zod.object({
 
 
 export const DeleteVideoParams = zod.object({
-  "videoId": zod.string().uuid()
+  "videoId": zod.coerce.string().uuid()
 })
 
 export const DeleteVideoResponse = zod.void()
 
 
 export const GetAuthenticatedVideoPlaybackParams = zod.object({
-  "videoId": zod.string().uuid()
+  "videoId": zod.coerce.string().uuid()
 })
 
 export const GetAuthenticatedVideoPlaybackResponse = zod.object({
@@ -772,7 +772,7 @@ export const GetAuthenticatedVideoPlaybackResponse = zod.object({
 
 
 export const GetMasterStorageStatusParams = zod.object({
-  "videoId": zod.string().uuid()
+  "videoId": zod.coerce.string().uuid()
 })
 
 export const GetMasterStorageStatusResponse = zod.object({
@@ -802,7 +802,7 @@ export const GetMasterStorageStatusResponse = zod.object({
 
 
 export const ArchiveVideoMasterParams = zod.object({
-  "videoId": zod.string().uuid()
+  "videoId": zod.coerce.string().uuid()
 })
 
 export const ArchiveVideoMasterResponse = zod.object({
@@ -817,7 +817,7 @@ export const ArchiveVideoMasterResponse = zod.object({
 
 
 export const RestoreVideoMasterParams = zod.object({
-  "videoId": zod.string().uuid()
+  "videoId": zod.coerce.string().uuid()
 })
 
 export const RestoreVideoMasterResponse = zod.object({
@@ -832,7 +832,7 @@ export const RestoreVideoMasterResponse = zod.object({
 
 
 export const CreateThumbnailUploadIntentParams = zod.object({
-  "videoId": zod.string().uuid()
+  "videoId": zod.coerce.string().uuid()
 })
 
 export const createThumbnailUploadIntentBodySizeBytesMax = 10485760;
@@ -853,7 +853,7 @@ export const CreateThumbnailUploadIntentResponse = zod.object({
 
 
 export const FinalizeThumbnailParams = zod.object({
-  "videoId": zod.string().uuid()
+  "videoId": zod.coerce.string().uuid()
 })
 
 export const FinalizeThumbnailBody = zod.object({
@@ -875,28 +875,28 @@ export const FinalizeThumbnailResponse = zod.object({
  * Requires the opaque current `v` query value returned in thumbnailUrl.
  */
 export const GetVideoThumbnailParams = zod.object({
-  "videoId": zod.string().uuid()
+  "videoId": zod.coerce.string().uuid()
 })
 
 export const GetVideoThumbnailResponse = zod.unknown()
 
 
 export const DeleteVideoThumbnailParams = zod.object({
-  "videoId": zod.string().uuid()
+  "videoId": zod.coerce.string().uuid()
 })
 
 export const DeleteVideoThumbnailResponse = zod.void()
 
 
 export const GetAuthenticatedVideoPlaybackSourceParams = zod.object({
-  "videoId": zod.string().uuid()
+  "videoId": zod.coerce.string().uuid()
 })
 
 export const GetAuthenticatedVideoPlaybackSourceResponse = zod.void()
 
 
 export const CompleteVideoUploadParams = zod.object({
-  "videoId": zod.string().uuid()
+  "videoId": zod.coerce.string().uuid()
 })
 
 export const CompleteVideoUploadResponse = zod.object({
@@ -933,7 +933,7 @@ export const CompleteVideoUploadResponse = zod.object({
 
 
 export const CancelVideoUploadParams = zod.object({
-  "videoId": zod.string().uuid()
+  "videoId": zod.coerce.string().uuid()
 })
 
 export const CancelVideoUploadResponse = zod.object({
@@ -1049,6 +1049,7 @@ export const ListPermissionGroupsResponseItem = zod.object({
   "id": zod.string(),
   "name": zod.string(),
   "description": zod.string(),
+  "systemKey": zod.string().nullable(),
   "permissions": zod.array(zod.string())
 })
 export const ListPermissionGroupsResponse = zod.array(ListPermissionGroupsResponseItem)
@@ -1070,7 +1071,37 @@ export const CreatePermissionGroupResponse = zod.object({
   "id": zod.string(),
   "name": zod.string(),
   "description": zod.string(),
+  "systemKey": zod.string().nullable(),
   "permissions": zod.array(zod.string())
+})
+
+
+export const ListWorkspacesResponseItem = zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string(),
+  "slug": zod.string(),
+  "current": zod.boolean()
+})
+export const ListWorkspacesResponse = zod.array(ListWorkspacesResponseItem)
+
+
+export const selectWorkspaceBodyThreeSlugMin = 2;
+export const selectWorkspaceBodyThreeSlugMax = 63;
+
+
+export const selectWorkspaceBodyThreeSlugRegExp = new RegExp('^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$');
+
+
+export const SelectWorkspaceBody = zod.union([zod.unknown(),zod.unknown()]).and(zod.object({
+  "id": zod.string().uuid().optional(),
+  "slug": zod.string().min(selectWorkspaceBodyThreeSlugMin).max(selectWorkspaceBodyThreeSlugMax).regex(selectWorkspaceBodyThreeSlugRegExp).optional()
+}))
+
+export const SelectWorkspaceResponse = zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string(),
+  "slug": zod.string(),
+  "current": zod.boolean()
 })
 
 
@@ -1094,6 +1125,7 @@ export const UpdatePermissionGroupResponse = zod.object({
   "id": zod.string(),
   "name": zod.string(),
   "description": zod.string(),
+  "systemKey": zod.string().nullable(),
   "permissions": zod.array(zod.string())
 })
 
@@ -1169,8 +1201,48 @@ export const CreateInvitationResponse = zod.object({
 })
 
 
+export const acceptInvitationBodyTokenMin = 43;
+export const acceptInvitationBodyTokenMax = 43;
+
+
+export const acceptInvitationBodyTokenRegExp = new RegExp('^[A-Za-z0-9_-]+$');
+
+
+export const AcceptInvitationBody = zod.object({
+  "token": zod.string().min(acceptInvitationBodyTokenMin).max(acceptInvitationBodyTokenMax).regex(acceptInvitationBodyTokenRegExp)
+})
+
+export const AcceptInvitationResponse = zod.object({
+  "accepted": zod.boolean()
+})
+
+
+export const RevokeInvitationParams = zod.object({
+  "invitationId": zod.coerce.string()
+})
+
+export const RevokeInvitationResponse = zod.void()
+
+
+export const ReissueInvitationParams = zod.object({
+  "invitationId": zod.coerce.string()
+})
+
+export const reissueInvitationResponseEmailRegExp = new RegExp('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$');
+
+
+export const ReissueInvitationResponse = zod.object({
+  "id": zod.string(),
+  "email": zod.string().regex(reissueInvitationResponseEmailRegExp),
+  "groupId": zod.string(),
+  "role": zod.string(),
+  "status": zod.enum(['invited']),
+  "expiresAt": zod.coerce.date()
+})
+
+
 export const GetPublicVideoParams = zod.object({
-  "videoId": zod.string().uuid()
+  "videoId": zod.coerce.string().uuid()
 })
 
 export const GetPublicVideoResponse = zod.object({
@@ -1198,7 +1270,7 @@ export const GetPublicVideoResponse = zod.object({
 
 
 export const GetPublicVideoSourceParams = zod.object({
-  "videoId": zod.string().uuid()
+  "videoId": zod.coerce.string().uuid()
 })
 
 export const GetPublicVideoSourceResponse = zod.void()
@@ -1208,7 +1280,7 @@ export const GetPublicVideoSourceResponse = zod.void()
  * Requires the opaque current `v` query value returned in thumbnailUrl.
  */
 export const GetPublicVideoThumbnailParams = zod.object({
-  "videoId": zod.string().uuid()
+  "videoId": zod.coerce.string().uuid()
 })
 
 export const GetPublicVideoThumbnailResponse = zod.unknown()

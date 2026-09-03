@@ -134,7 +134,8 @@ async function main() {
              : file.name === "0029_workspace_onboarding.sql" ? "onboarding"
               : file.name === "0030_custom_domains.sql" ? "customDomain"
                : file.name === "0031_master_storage_operations.sql" ? "masterStorage"
-                : file.name === "0032_master_archive_integrity.sql" ? "masterArchiveIntegrity" : "thumbnailIntegrity");
+                 : file.name === "0032_master_archive_integrity.sql" ? "masterArchiveIntegrity"
+                  : file.name === "0033_g1_identity_integrity.sql" ? "g1Identity" : "thumbnailIntegrity");
         await client.query("insert into public.schema_migrations(name, checksum) values($1,$2)", [file.name, file.checksum]);
         await client.query("commit");
       } catch (error) {

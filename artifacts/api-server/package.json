@@ -26,6 +26,7 @@
     "custom-domain:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/custom-domain-smoke.mjs",
     "cold-master:smoke": "pnpm run build && node ./dist/cold-master-storage-smoke.mjs",
     "master-storage:lifecycle-smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/master-storage-lifecycle-smoke.mjs",
+    "g1:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/g1-smoke.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

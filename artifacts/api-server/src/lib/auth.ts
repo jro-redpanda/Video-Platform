@@ -1,4 +1,5 @@
 import { betterAuth } from "better-auth";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import {
   accountsTable,
@@ -8,6 +9,7 @@ import {
   verificationsTable,
 } from "@workspace/db";
 import { runtimeConfig } from "./config";
+import { lookupAcceptableInvitation } from "./invitation-lookup";
 
 if (!process.env.SESSION_SECRET) {
   throw new Error("SESSION_SECRET is required");
@@ -28,7 +30,23 @@ export const auth = betterAuth({
   }),
   emailAndPassword: {
     enabled: true,
+    disableSignUp: false,
     minPasswordLength: 10,
+  },
+  hooks: {
+    before: createAuthMiddleware(async (context) => {
+      if (context.path !== "/sign-up/email") return;
+      const body = context.body as Record<string, unknown> | undefined;
+      const invitation = await lookupAcceptableInvitation(
+        body?.invitationToken,
+        body?.email,
+      );
+      if (!invitation) {
+        throw new APIError("FORBIDDEN", {
+          message: "A valid invitation is required to create an account",
+        });
+      }
+    }),
   },
   advanced: {
     database: {

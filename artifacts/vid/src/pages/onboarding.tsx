@@ -36,9 +36,14 @@ export default function OnboardingFlow({ onboarding }: { onboarding: WorkspaceOn
   });
 
   const handleSignOut = async () => {
-    await authClient.signOut();
-    queryClient.clear();
-    setLocation("/", { replace: true });
+    try {
+      await authClient.signOut();
+    } finally {
+      await queryClient.cancelQueries();
+      queryClient.clear();
+      setLocation("/", { replace: true });
+      window.location.reload();
+    }
   };
 
   const onSubmit = (values: z.infer<typeof formSchema>) => {

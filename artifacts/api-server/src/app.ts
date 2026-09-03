@@ -13,11 +13,16 @@ import providerWebhooksRouter from "./routes/provider-webhooks";
 import { processStripeWebhook } from "./lib/stripe-webhook";
 import onboardingRouter from "./routes/onboarding";
 import healthRouter from "./routes/health";
+import workspacesRouter from "./routes/workspaces";
+import cookieParser from "cookie-parser";
+import type { InvitationDelivery } from "./lib/invitation-delivery";
+import invitationAcceptanceRouter from "./routes/invitation-acceptance";
 
 type AppOptions = {
   initialReady?: boolean;
   stripeWebhookHandler?: typeof processStripeWebhook;
   bunnyRoundTripHandler?: typeof receiveBunnyRoundTripCallback;
+  invitationDelivery?: InvitationDelivery;
 };
 
 export function createApp(options: AppOptions = {}): Express {
@@ -25,6 +30,7 @@ export function createApp(options: AppOptions = {}): Express {
   app.set("trust proxy", 1);
   app.locals.videoProviders = videoProviders;
   app.locals.ready = options.initialReady ?? true;
+  app.locals.invitationDelivery = options.invitationDelivery;
 
   app.use(
     pinoHttp({
@@ -91,9 +97,12 @@ export function createApp(options: AppOptions = {}): Express {
   app.use("/api", providerWebhooksRouter);
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
+  app.use(cookieParser());
 
   app.use("/api/public", publicRouter);
   app.use("/api", onboardingRouter);
+  app.use("/api", workspacesRouter);
+  app.use("/api", invitationAcceptanceRouter);
   app.use("/api", resolveTenant);
   app.use("/api", router);
 

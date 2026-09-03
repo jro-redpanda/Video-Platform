@@ -140,9 +140,9 @@ router.patch("/workspace", requirePermission("workspace.manage"), async (req, re
   }
   const update = UpdateWorkspaceBody.parse(req.body);
   const changesCustomization = Boolean(
-    update.playerAccent || update.playerControlForeground || update.playerControlBackground ||
-    update.logoInitials || update.logoObjectKey !== undefined || update.watermarkObjectKey !== undefined ||
-    update.posterTreatment
+    update.playerAccent !== undefined || update.playerControlForeground !== undefined || update.playerControlBackground !== undefined ||
+    update.logoInitials !== undefined || update.logoObjectKey !== undefined || update.watermarkObjectKey !== undefined ||
+    update.posterTreatment !== undefined
   );
   if (changesCustomization) {
     const access = await withTenantDb(req.tenant, (tx) => resolveBillingAccess(tx, req.tenant.organizationId));
@@ -151,8 +151,8 @@ router.patch("/workspace", requirePermission("workspace.manage"), async (req, re
     });
   }
   const entitlementForField: Array<[EntitlementKey, boolean]> = [
-    ["branding.player_colors", Boolean(update.playerAccent || update.playerControlForeground || update.playerControlBackground || update.posterTreatment)],
-    ["branding.logo", Boolean(update.logoInitials || update.logoObjectKey !== undefined)],
+    ["branding.player_colors", update.playerAccent !== undefined || update.playerControlForeground !== undefined || update.playerControlBackground !== undefined || update.posterTreatment !== undefined],
+    ["branding.logo", update.logoInitials !== undefined || update.logoObjectKey !== undefined],
     ["branding.watermark", update.watermarkObjectKey !== undefined],
   ];
   for (const [key, requested] of entitlementForField) {
@@ -160,7 +160,7 @@ router.patch("/workspace", requirePermission("workspace.manage"), async (req, re
       return void res.status(403).json({ error: `This workspace plan does not include ${key}` });
     }
   }
-  if (update.playerControlForeground || update.playerControlBackground) {
+  if (update.playerControlForeground !== undefined || update.playerControlBackground !== undefined) {
     const [current] = await withTenantDb(req.tenant, (tx) => tx.select({
       foreground: organizationCustomizationTable.playerControlForeground,
       background: organizationCustomizationTable.playerControlBackground,
@@ -172,19 +172,19 @@ router.patch("/workspace", requirePermission("workspace.manage"), async (req, re
     }
   }
   const response = await withTenantDb(req.tenant, async (tx) => {
-    if (update.name) {
+    if (update.name !== undefined) {
       await tx.update(organizationsTable).set({ name: update.name }).where(eq(organizationsTable.id, req.tenant.organizationId));
     }
     if (
-      update.playerAccent || update.playerControlForeground || update.playerControlBackground ||
-      update.logoInitials || update.logoObjectKey !== undefined || update.watermarkObjectKey !== undefined ||
-      update.posterTreatment
+      update.playerAccent !== undefined || update.playerControlForeground !== undefined || update.playerControlBackground !== undefined ||
+      update.logoInitials !== undefined || update.logoObjectKey !== undefined || update.watermarkObjectKey !== undefined ||
+      update.posterTreatment !== undefined
     ) {
       await tx.update(organizationCustomizationTable).set({
-        ...(update.playerAccent ? { playerAccent: update.playerAccent } : {}),
-        ...(update.playerControlForeground ? { playerControlForeground: update.playerControlForeground } : {}),
-        ...(update.playerControlBackground ? { playerControlBackground: update.playerControlBackground } : {}),
-        ...(update.logoInitials ? { logoInitials: update.logoInitials } : {}),
+        ...(update.playerAccent !== undefined ? { playerAccent: update.playerAccent } : {}),
+        ...(update.playerControlForeground !== undefined ? { playerControlForeground: update.playerControlForeground } : {}),
+        ...(update.playerControlBackground !== undefined ? { playerControlBackground: update.playerControlBackground } : {}),
+        ...(update.logoInitials !== undefined ? { logoInitials: update.logoInitials } : {}),
         ...(update.logoObjectKey !== undefined ? { logoObjectKey: update.logoObjectKey } : {}),
         ...(update.watermarkObjectKey !== undefined ? { watermarkObjectKey: update.watermarkObjectKey } : {}),
         ...(update.posterTreatment ? { posterTreatment: update.posterTreatment } : {}),

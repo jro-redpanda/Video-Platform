@@ -13,24 +13,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { auditUser, writeAuditEvent } from "./audit";
 import type { TenantTransaction } from "./tenant-db";
 import { runtimeConfig } from "./config";
-
-const permissionCatalog = [
-  ["workspace.manage", "Manage workspace settings and branding"],
-  ["videos.read", "View the video library"],
-  ["videos.create", "Create videos and upload media"],
-  ["videos.update", "Edit video metadata and visibility"],
-  ["videos.delete", "Delete videos and provider media"],
-  ["members.manage", "Invite, suspend, and assign members"],
-  ["analytics.read", "View workspace analytics"],
-  ["audit.read", "View the immutable audit trail"],
-  ["audit.export", "Export the immutable audit trail"],
-] as const;
-
-const defaultGroups = [
-  { name: "Owners", description: "Full workspace access", permissions: permissionCatalog.map(([key]) => key) },
-  { name: "Editors", description: "Create and manage videos", permissions: ["videos.read", "videos.create", "videos.update", "videos.delete", "analytics.read"] },
-  { name: "Viewers", description: "View videos and analytics", permissions: ["videos.read", "analytics.read"] },
-] as const;
+import { permissionCatalog, systemGroups as defaultGroups } from "./permission-catalog";
 
 const reservedSlugs = new Set([
   "admin", "api", "app", "auth", "billing", "help", "onboarding", "public",
@@ -74,7 +57,7 @@ export async function seedWorkspaceDefaults(tx: TenantTransaction, organizationI
   const groupIds = new Map<string, string>();
   for (const group of defaultGroups) {
     const [inserted] = await tx.insert(permissionGroupsTable).values({
-      organizationId, name: group.name, description: group.description,
+      organizationId, name: group.name, description: group.description, systemKey: group.systemKey,
     }).onConflictDoNothing().returning({ id: permissionGroupsTable.id });
     const [existing] = inserted ? [inserted] : await tx.select({ id: permissionGroupsTable.id })
       .from(permissionGroupsTable).where(and(

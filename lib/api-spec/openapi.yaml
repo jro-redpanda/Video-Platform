@@ -705,6 +705,33 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PermissionGroup"
+  /workspaces:
+    get:
+      operationId: listWorkspaces
+      tags: [workspace]
+      responses:
+        "200":
+          description: Active workspaces available to the signed-in user
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/WorkspaceSelector" }
+  /workspaces/select:
+    post:
+      operationId: selectWorkspace
+      tags: [workspace]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkspaceSelectionInput" }
+      responses:
+        "200":
+          description: Workspace selected for subsequent tenant-scoped requests
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceSelector" }
   /permission-groups/{groupId}:
     patch:
       operationId: updatePermissionGroup
@@ -794,6 +821,39 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Invitation"
+  /invitations/accept:
+    post:
+      operationId: acceptInvitation
+      tags: [members]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InvitationAcceptanceInput" }
+      responses:
+        "200":
+          description: Invitation accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvitationAcceptance" }
+  /invitations/{invitationId}:
+    delete:
+      operationId: revokeInvitation
+      tags: [members]
+      parameters: [{ $ref: "#/components/parameters/InvitationId" }]
+      responses:
+        "204": { description: Invitation revoked }
+  /invitations/{invitationId}/reissue:
+    post:
+      operationId: reissueInvitation
+      tags: [members]
+      parameters: [{ $ref: "#/components/parameters/InvitationId" }]
+      responses:
+        "201":
+          description: Invitation reissued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invitation" }
   /public/videos/{videoId}:
     get:
       operationId: getPublicVideo
@@ -888,6 +948,12 @@ components:
     MembershipId:
       in: path
       name: membershipId
+      required: true
+      schema:
+        type: string
+    InvitationId:
+      in: path
+      name: invitationId
       required: true
       schema:
         type: string
@@ -1104,6 +1170,28 @@ components:
           enum: [default, darken, gradient]
         customDomain: { type: ["string", "null"] }
         customDomainVerified: { type: boolean }
+    WorkspaceSelector:
+      type: object
+      additionalProperties: false
+      required: [id, name, slug, current]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        current: { type: boolean }
+    WorkspaceSelectionInput:
+      type: object
+      additionalProperties: false
+      oneOf:
+        - required: [id]
+        - required: [slug]
+      properties:
+        id: { type: string, format: uuid }
+        slug:
+          type: string
+          minLength: 2
+          maxLength: 63
+          pattern: "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"
     WorkspaceUpdate:
       type: object
       properties:
@@ -1467,11 +1555,12 @@ components:
         createdAt: { type: string, format: date-time }
     PermissionGroup:
       type: object
-      required: [id, name, description, permissions]
+      required: [id, name, description, systemKey, permissions]
       properties:
         id: { type: string }
         name: { type: string }
         description: { type: string }
+        systemKey: { type: ["string", "null"] }
         permissions:
           type: array
           items: { type: string }
@@ -1516,6 +1605,17 @@ components:
       properties:
         email: { type: string, pattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$" }
         groupId: { type: string }
+    InvitationAcceptanceInput:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token: { type: string, minLength: 43, maxLength: 43, pattern: "^[A-Za-z0-9_-]+$" }
+    InvitationAcceptance:
+      type: object
+      required: [accepted]
+      properties:
+        accepted: { type: boolean }
     Invitation:
       type: object
       required: [id, email, groupId, role, status, expiresAt]

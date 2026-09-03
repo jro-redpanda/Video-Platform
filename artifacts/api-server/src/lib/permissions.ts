@@ -2,17 +2,8 @@ import { and, eq } from "drizzle-orm";
 import type { NextFunction, Request, Response } from "express";
 import { groupPermissionsTable, membershipsTable } from "@workspace/db";
 import { withTenantDb } from "./tenant-db";
-
-export type Permission =
-  | "workspace.manage"
-  | "videos.read"
-  | "videos.create"
-  | "videos.update"
-  | "videos.delete"
-  | "members.manage"
-  | "analytics.read"
-  | "audit.read"
-  | "audit.export";
+import type { Permission } from "./permission-catalog";
+export type { Permission } from "./permission-catalog";
 
 export function requirePermission(permission: Permission) {
   return async (req: Request, res: Response, next: NextFunction) => {

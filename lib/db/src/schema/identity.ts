@@ -1,4 +1,5 @@
-import { boolean, index, pgEnum, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, check, foreignKey, index, pgEnum, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { organizationsTable } from "./organizations";
 
 export const membershipStatusEnum = pgEnum("membership_status", ["invited", "active", "suspended"]);
@@ -59,11 +60,19 @@ export const permissionGroupsTable = pgTable("permission_groups", {
   organizationId: uuid("organization_id").notNull().references(() => organizationsTable.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
+  /** Stable key for product-seeded groups; null for customer-managed groups. */
+  systemKey: text("system_key"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 }, (table) => [
   uniqueIndex("permission_groups_org_name_idx").on(table.organizationId, table.name),
+  uniqueIndex("permission_groups_org_id_idx").on(table.organizationId, table.id),
+  uniqueIndex("permission_groups_org_system_key_idx").on(table.organizationId, table.systemKey),
   index("permission_groups_org_idx").on(table.organizationId),
+  check(
+    "permission_groups_system_key_check",
+    sql`${table.systemKey} is null or ${table.systemKey} in ('owners', 'editors', 'viewers')`,
+  ),
 ]);
 
 export const permissionsTable = pgTable("permissions", {
@@ -82,23 +91,33 @@ export const membershipsTable = pgTable("memberships", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: uuid("organization_id").notNull().references(() => organizationsTable.id, { onDelete: "cascade" }),
   userId: uuid("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
-  groupId: uuid("group_id").notNull().references(() => permissionGroupsTable.id),
+  groupId: uuid("group_id").notNull(),
   status: membershipStatusEnum("status").notNull().default("active"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 }, (table) => [
   uniqueIndex("memberships_org_user_idx").on(table.organizationId, table.userId),
   index("memberships_user_idx").on(table.userId),
+  foreignKey({ columns: [table.organizationId, table.groupId], foreignColumns: [permissionGroupsTable.organizationId, permissionGroupsTable.id], name: "memberships_org_group_fk" }),
 ]);
 
 export const invitationsTable = pgTable("invitations", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: uuid("organization_id").notNull().references(() => organizationsTable.id, { onDelete: "cascade" }),
   email: text("email").notNull(),
-  groupId: uuid("group_id").notNull().references(() => permissionGroupsTable.id),
+  groupId: uuid("group_id").notNull(),
   tokenHash: text("token_hash").notNull().unique(),
   invitedByUserId: uuid("invited_by_user_id").notNull().references(() => usersTable.id),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+  acceptedByUserId: uuid("accepted_by_user_id").references(() => usersTable.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [index("invitations_org_idx").on(table.organizationId)]);
+}, (table) => [
+  index("invitations_org_idx").on(table.organizationId),
+  uniqueIndex("invitations_pending_org_email_idx")
+    .on(table.organizationId, sql`lower(${table.email})`)
+    .where(sql`${table.acceptedAt} is null and ${table.revokedAt} is null`),
+  foreignKey({ columns: [table.organizationId, table.groupId], foreignColumns: [permissionGroupsTable.organizationId, permissionGroupsTable.id], name: "invitations_org_group_fk" }),
+]);

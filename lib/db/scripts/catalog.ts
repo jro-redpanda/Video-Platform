@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type pg from "pg";
 
-export type CatalogStage = "pre15" | "step15" | "thumbnailIntegrity" | "final" | "billingBase" | "billingCheckoutBase" | "billingProviderBase" | "billing" | "analyticsBase" | "analytics" | "audit" | "auditExport" | "onboarding" | "customDomain" | "masterStorage" | "masterArchiveIntegrity";
+export type CatalogStage = "pre15" | "step15" | "thumbnailIntegrity" | "final" | "billingBase" | "billingCheckoutBase" | "billingProviderBase" | "billing" | "analyticsBase" | "analytics" | "audit" | "auditExport" | "onboarding" | "customDomain" | "masterStorage" | "masterArchiveIntegrity" | "g1Identity";
 const pre = ["accounts","audit_logs","embed_generation_outbox","folders","group_permissions","invitations","memberships","organization_customization","organization_entitlement_overrides","organizations","permission_groups","permissions","plans","playback_events","provider_accounts","provider_tenant_spaces","sessions","users","verifications","video_analytics_rollups","video_embeds","videos","webhook_events"];
 const step15 = [...pre, "thumbnail_upload_intents", "object_cleanup_outbox"];
 const billing = [...step15, "organization_billing", "billing_operations", "billing_event_receipts"];
@@ -18,10 +18,10 @@ const masterStorageEnums = [...customDomainEnums, "master_storage_operation_kind
 const compact = (value: string | null) => value?.replace(/\s+/g, " ").trim() ?? null;
 
 export async function catalogFingerprint(client: pg.Client, stage: CatalogStage) {
-  const analyticsStage = stage === "analytics" || stage === "audit" || stage === "auditExport" || stage === "onboarding" || stage === "customDomain" || stage === "masterStorage" || stage === "masterArchiveIntegrity";
+  const analyticsStage = stage === "analytics" || stage === "audit" || stage === "auditExport" || stage === "onboarding" || stage === "customDomain" || stage === "masterStorage" || stage === "masterArchiveIntegrity" || stage === "g1Identity";
   const billingStage = stage === "billing" || stage === "billingBase" || stage === "billingCheckoutBase" || stage === "billingProviderBase" || analyticsStage;
-  const tables = stage === "pre15" ? pre : (stage === "masterStorage" || stage === "masterArchiveIntegrity") ? masterStorage : stage === "customDomain" ? customDomain : stage === "onboarding" ? onboarding : analyticsStage ? analytics : stage === "analyticsBase" ? analyticsBase : billingStage ? billing : step15;
-  const enumRows = await client.query(`select t.typname as name,e.enumsortorder::int as position,e.enumlabel as label from pg_type t join pg_enum e on e.enumtypid=t.oid join pg_namespace n on n.oid=t.typnamespace where n.nspname='public' and t.typname=any($1) order by 1,2`, [(stage === "masterStorage" || stage === "masterArchiveIntegrity") ? masterStorageEnums : stage === "customDomain" ? customDomainEnums : stage === "onboarding" ? onboardingEnums : billingStage ? billingEnums : enums]);
+  const tables = stage === "pre15" ? pre : (stage === "masterStorage" || stage === "masterArchiveIntegrity" || stage === "g1Identity") ? masterStorage : stage === "customDomain" ? customDomain : stage === "onboarding" ? onboarding : analyticsStage ? analytics : stage === "analyticsBase" ? analyticsBase : billingStage ? billing : step15;
+  const enumRows = await client.query(`select t.typname as name,e.enumsortorder::int as position,e.enumlabel as label from pg_type t join pg_enum e on e.enumtypid=t.oid join pg_namespace n on n.oid=t.typnamespace where n.nspname='public' and t.typname=any($1) order by 1,2`, [(stage === "masterStorage" || stage === "masterArchiveIntegrity" || stage === "g1Identity") ? masterStorageEnums : stage === "customDomain" ? customDomainEnums : stage === "onboarding" ? onboardingEnums : billingStage ? billingEnums : enums]);
   const relations = await client.query(`select c.relname as name,c.relkind as kind,c.relrowsecurity as rls,c.relforcerowsecurity as forced from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname=any($1) order by 1`, [tables]);
   const columns = await client.query(`select c.relname as relation,a.attname as name,format_type(a.atttypid,a.atttypmod) as type,a.attnotnull as not_null,pg_get_expr(d.adbin,d.adrelid) as default,a.attidentity as identity,a.attgenerated as generated,coll.collname as collation from pg_class c join pg_namespace n on n.oid=c.relnamespace join pg_attribute a on a.attrelid=c.oid and a.attnum>0 and not a.attisdropped left join pg_attrdef d on d.adrelid=c.oid and d.adnum=a.attnum left join pg_collation coll on coll.oid=a.attcollation where n.nspname='public' and c.relname=any($1) order by 1,2`, [tables]);
   const constraints = await client.query(`select c.relname as relation,x.contype as type,pg_get_constraintdef(x.oid,true) as definition,x.confupdtype as update_action,x.confdeltype as delete_action from pg_constraint x join pg_class c on c.oid=x.conrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname=any($1) order by 1,3`, [tables]);
@@ -31,6 +31,11 @@ export async function catalogFingerprint(client: pg.Client, stage: CatalogStage)
   const projectedColumns = stage === "pre15" ? columns.rows.filter((row) => row.relation !== "videos" || !["thumbnail_object_key","thumbnail_content_type","thumbnail_size_bytes","thumbnail_version"].includes(row.name)) : columns.rows;
   const projectedConstraints = stage === "pre15" ? constraints.rows.filter((row) => row.relation !== "videos" || !String(row.definition).includes("thumbnail_")) : constraints.rows;
   const out: Record<string, unknown> = { enums: enumRows.rows, relations: relations.rows, columns: projectedColumns, constraints: projectedConstraints, indexes: indexes.rows, policies: policies.rows, grants: grants.rows };
+  if (stage === "g1Identity") {
+    const functions = await client.query(`select p.proname as name,pg_get_function_identity_arguments(p.oid) as arguments,pg_get_function_result(p.oid) as result,pg_get_functiondef(p.oid) as definition from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='lookup_acceptable_invitation' order by 1,2`);
+    const functionGrants = await client.query(`select routine_name,grantee,privilege_type from information_schema.role_routine_grants where routine_schema='public' and routine_name='lookup_acceptable_invitation' and grantee='vid_app' order by 1,2,3`);
+    out.g1Functions = { functions: functions.rows, grants: functionGrants.rows };
+  }
   if (stage === "final") {
     const boss = await client.query(`select n.nspname as schema,c.relname as name,c.relkind as kind from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='vid_jobs' and not c.relispartition order by 2,3`);
     const functions = await client.query(`select p.proname as name,pg_get_function_identity_arguments(p.oid) as arguments,pg_get_function_result(p.oid) as result,pg_get_functiondef(p.oid) as definition from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='vid_jobs' order by 1,2`);
@@ -64,4 +69,5 @@ export const EXPECTED_CATALOG_HASHES: Record<CatalogStage, string> = {
   masterStorage: "03fd1d283665b6f486a8edc69c441771ae61077839757c1b79290cb37c3414d0",
   // Derive only through accept-migrations on an isolated clean database.
   masterArchiveIntegrity: "0bf60707a959e43ed58da9ccc3d3d939121b5f5c2f6b8508d36151069f94eb98",
+  g1Identity: "a0223c189f937c60e7a55da6a2552962d94ef82f3575081274cb01f5d39bdd3b",
 };
