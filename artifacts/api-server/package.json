@@ -7,6 +7,7 @@
     "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
+    "g0:smoke": "pnpm run build && node --enable-source-maps ./dist/g0-runtime-smoke.mjs",
     "queue:smoke": "test -n \"$SESSION_SECRET\" || { echo \"SESSION_SECRET is required\" >&2; exit 1; }; pnpm run build && node ./dist/queue-smoke.mjs",
     "provider:smoke": "node ./scripts/provider-smoke.mjs",
     "upload:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/upload-step9-smoke.mjs",

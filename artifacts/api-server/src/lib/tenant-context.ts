@@ -34,7 +34,7 @@ export async function resolveTenant(req: Request, res: Response, next: NextFunct
     eq(membershipsTable.status, "active"),
   )).limit(1);
 
-  if (!membership && process.env.NODE_ENV !== "production") {
+  if (!membership && process.env.NODE_ENV === "development") {
     await db.insert(membershipsTable).values({
       organizationId: developmentTenant.organizationId,
       userId: session.user.id,

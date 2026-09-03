@@ -37,12 +37,11 @@ const permissionCatalog = [
   ["audit.export", "Export the immutable audit trail"],
 ] as const;
 
-// MOCK: replaced at step 18
 export async function bootstrapDevelopmentTenant() {
   // DDL, grants, and RLS are owned by immutable migrations, never by a replica.
   await assertMigratedSchema();
   await reconcileSystemVideoDeletePermission();
-  if (process.env.NODE_ENV === "production") return;
+  if (process.env.NODE_ENV !== "development") return;
 
   await db.transaction(async (tx) => {
     await tx.insert(plansTable).values({
@@ -160,7 +159,7 @@ export async function bootstrapDevelopmentTenant() {
       status: "active",
     }).onConflictDoNothing();
 
-    // MOCK: replaced at step 9
+    // Stable development fixtures exercise library states without provider calls.
     const demoVideos = [
       ["e164a502-a6ed-41a4-98d4-f0e6bd77d392", "Launch film — Cut 04", "Final launch edit for the fall product campaign.", "ready", "public", 143, "#7457D9"],
       ["a88ff359-a76b-4e55-8e34-d2f50ab81952", "Customer story: Field Notes", "A customer profile captured in Portland.", "ready", "unlisted", 317, "#D06B45"],
@@ -193,7 +192,7 @@ export async function bootstrapDevelopmentTenant() {
         generatedAt: new Date(),
       }))).onConflictDoNothing();
 
-    // MOCK: replaced at step 17
+    // Stable development fixtures exercise audit rendering and pagination.
     await tx.insert(auditLogsTable).values([
       { id: "7241e25f-70e3-4786-afda-340f62895e85", organizationId: developmentTenant.organizationId, actorUserId: developmentTenant.userId, action: "published", subjectType: "video", subjectId: demoVideos[0][0], subjectLabel: demoVideos[0][1] },
       { id: "045a79f0-e374-4349-8e27-a3627ca18752", organizationId: developmentTenant.organizationId, actorUserId: developmentTenant.userId, action: "updated player styling for", subjectType: "organization", subjectId: developmentTenant.organizationId, subjectLabel: runtimeConfig.productName },

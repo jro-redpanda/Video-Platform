@@ -17,6 +17,7 @@ async function buildAll() {
   await esbuild({
     entryPoints: [
       path.resolve(artifactDir, "src/index.ts"),
+      path.resolve(artifactDir, "src/g0-runtime-smoke.ts"),
       path.resolve(artifactDir, "src/queue-smoke.ts"),
       path.resolve(artifactDir, "src/upload-step9-smoke.ts"),
       path.resolve(artifactDir, "src/webhook-step10-smoke.ts"),

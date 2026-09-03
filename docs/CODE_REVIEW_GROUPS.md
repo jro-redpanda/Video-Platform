@@ -42,6 +42,7 @@ routes correctly, and shuts down cleanly.
 ```bash
 pnpm --filter @workspace/api-server run typecheck
 pnpm --filter @workspace/api-server run build
+pnpm --filter @workspace/api-server run g0:smoke
 ```
 
 ### G1 — Authentication, tenant isolation, RBAC, and entitlements

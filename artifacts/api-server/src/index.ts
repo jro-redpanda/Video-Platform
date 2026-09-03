@@ -1,40 +1,85 @@
-import { logger } from "./lib/logger";
-import { startJobs, stopJobs } from "./lib/jobs";
-import { initializeStripeSync } from "./lib/stripe-startup";
+import type { Server } from "node:http";
+import { loadStartupConfig } from "./lib/config";
+import { startRuntime, type ShutdownController } from "./lib/runtime-lifecycle";
 
-const rawPort = process.env["PORT"];
+function listenForConnections(startServer: () => Server): Promise<Server> {
+  return new Promise((resolve, reject) => {
+    let server: Server;
+    try {
+      server = startServer();
+    } catch (error) {
+      reject(error);
+      return;
+    }
 
-if (!rawPort) {
-  throw new Error(
-    "PORT environment variable is required but was not provided.",
-  );
+    const onError = (error: Error) => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve(server);
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+  });
 }
 
-const port = Number(rawPort);
+async function main() {
+  // This import is intentionally the first runtime action: it validates every
+  // prerequisite before modules that initialize database/provider clients load.
+  const startupConfig = loadStartupConfig(process.env);
+  const [
+    { default: app, setApplicationReady },
+    { bootstrapDevelopmentTenant },
+    { initializeStripeSync },
+    { startJobs, stopJobs },
+    { logger, summarizeError },
+  ] = await Promise.all([
+    import("./app"),
+    import("./lib/bootstrap"),
+    import("./lib/stripe-startup"),
+    import("./lib/jobs"),
+    import("./lib/logger"),
+  ]);
 
-if (Number.isNaN(port) || port <= 0) {
-  throw new Error(`Invalid PORT value: "${rawPort}"`);
-}
+  let receivedSignal = false;
+  const registerSignals = (controller: ShutdownController) => {
+    const handleSignal = (signal: "SIGTERM" | "SIGINT") => {
+      receivedSignal = true;
+      void controller.shutdown(signal).then(
+        () => {
+          process.exitCode = 0;
+        },
+        () => {
+          process.exitCode = 1;
+        },
+      );
+    };
+    process.once("SIGTERM", () => handleSignal("SIGTERM"));
+    process.once("SIGINT", () => handleSignal("SIGINT"));
+  };
 
-await initializeStripeSync();
-const { default: app } = await import("./app");
-await startJobs();
-
-const server = app.listen(port, (err) => {
-  if (err) {
-    logger.error({ err }, "Error listening on port");
-    process.exit(1);
+  try {
+    const { controller } = await startRuntime({
+      listen: () => listenForConnections(() => app.listen(startupConfig.port)),
+      bootstrap: bootstrapDevelopmentTenant,
+      initializeExternal: initializeStripeSync,
+      startWorkers: startJobs,
+      stopWorkers: stopJobs,
+      setReady: (ready) => setApplicationReady(app, ready),
+      logger,
+      onShutdownController: registerSignals,
+    });
+    if (!controller.isShuttingDown()) {
+      logger.info({ port: startupConfig.port }, "API server ready");
+    }
+  } catch (error) {
+    logger.error({ error: summarizeError(error) }, "API startup failed");
+    process.exitCode = 1;
   }
 
-  logger.info({ port }, "Server listening");
-});
-
-async function shutdown(signal: string) {
-  logger.info({ signal }, "Shutting down");
-  server.close();
-  await stopJobs();
-  process.exit(0);
+  if (receivedSignal) process.exitCode ??= 0;
 }
 
-process.once("SIGTERM", () => void shutdown("SIGTERM"));
-process.once("SIGINT", () => void shutdown("SIGINT"));
+await main();

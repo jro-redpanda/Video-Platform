@@ -46,6 +46,7 @@ type BunnyRoundTripJob = {
 type TenantProvisionJob = { organizationId: string };
 
 let boss: PgBoss | undefined;
+let bossStart: Promise<PgBoss> | undefined;
 let customDomainVerificationEnqueuer: ((domainId: string) => Promise<string | undefined>) | undefined;
 
 /** Test seam for route lifecycle smokes; production always uses the durable queue. */
@@ -60,21 +61,28 @@ export async function startJobs(options: {
   resolveProvisioningProvider?: ProvisioningProviderResolver;
   thumbnailStorage?: ThumbnailStorage;
   domainDnsResolver?: DomainDnsResolver;
+  bossFactory?: (connectionString: string) => PgBoss;
 } = {}) {
   if (boss) return boss;
+  if (bossStart) return bossStart;
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error("DATABASE_URL is required for the job queue");
+  if (options.bossFactory && process.env.NODE_ENV !== "test") {
+    throw new Error("Job queue factory override is test-only");
+  }
 
-  const instance = new PgBoss({
-    connectionString,
-    schema: "vid_jobs",
-    migrate: false,
-    application_name: "vid-api-worker",
-  });
-  instance.on(events.error, (error) => logger.error({ error }, "Job queue error"));
+  bossStart = (async () => {
+    const instance = options.bossFactory?.(connectionString) ?? new PgBoss({
+      connectionString,
+      schema: "vid_jobs",
+      migrate: false,
+      application_name: "vid-api-worker",
+    });
+    instance.on(events.error, () => logger.error({}, "Job queue error"));
 
-  await instance.start();
-  await instance.createQueue(DEAD_LETTER_QUEUE);
+    try {
+      await instance.start();
+      await instance.createQueue(DEAD_LETTER_QUEUE);
   await instance.createQueue(QUEUE_NAME, {
     retryLimit: 3,
     retryDelay: 2,
@@ -213,10 +221,28 @@ export async function startJobs(options: {
   await instance.work(MASTER_STORAGE_DISPATCH_QUEUE, { batchSize: 1 }, async () => dispatchMasterStorageOperations((job) => sendMasterStorageJob(instance, job.operationId, job.generation)));
   await instance.work<{ operationId: string; generation: number }>(MASTER_STORAGE_OPERATION_QUEUE, { batchSize: 1 }, async ([job]) => processMasterStorageOperation(job.data.operationId, undefined, undefined, job.data.generation));
 
-  await dispatchPendingOnboardingIntents(instance);
-  boss = instance;
-  logger.info({ queue: QUEUE_NAME }, "Job queue and worker started");
-  return instance;
+      await dispatchPendingOnboardingIntents(instance);
+      boss = instance;
+      logger.info({ queue: QUEUE_NAME }, "Job queue and worker started");
+      return instance;
+    } catch (startupError) {
+      try {
+        await instance.stop({ graceful: true, timeout: 10_000 });
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [startupError, cleanupError],
+          "Job queue startup failed and cleanup was incomplete",
+        );
+      }
+      throw startupError;
+    }
+  })();
+
+  try {
+    return await bossStart;
+  } finally {
+    bossStart = undefined;
+  }
 }
 
 /** Deterministic persisted-job repair; no in-memory retry path exists. */
@@ -258,6 +284,14 @@ export async function repairCustomDomainVerifications(instance?: PgBoss) {
 }
 
 export async function stopJobs() {
+  const pendingStart = bossStart;
+  if (pendingStart) {
+    try {
+      await pendingStart;
+    } catch {
+      // startJobs owns cleanup for partially initialized instances.
+    }
+  }
   const instance = boss;
   boss = undefined;
   if (instance) await instance.stop({ graceful: true, timeout: 10_000 });

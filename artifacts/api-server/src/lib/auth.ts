@@ -7,6 +7,7 @@ import {
   usersTable,
   verificationsTable,
 } from "@workspace/db";
+import { runtimeConfig } from "./config";
 
 if (!process.env.SESSION_SECRET) {
   throw new Error("SESSION_SECRET is required");
@@ -14,6 +15,7 @@ if (!process.env.SESSION_SECRET) {
 
 export const auth = betterAuth({
   secret: process.env.SESSION_SECRET,
+  baseURL: `https://${runtimeConfig.appDomain}`,
   basePath: "/api/auth",
   database: drizzleAdapter(db, {
     provider: "pg",
