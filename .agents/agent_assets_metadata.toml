@@ -14,3 +14,17 @@ mtime_ms = 1788432178287
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:57582ca1-6956-4176-93b0-b8494b3676be/961c795e-2d6d-4199-9a4e-5e43baa6711c/68f41f68-d4bb-4016-85b7-de37d14ef34c"
 storage_version_token = "1788432188258853"
 content_type = "text/markdown"
+
+[[outputs]]
+id = "QCeqAAI-r6qGMRz3b_VXA"
+uri = "file://docs/CURRENT_STATE_PRODUCT_REQUIREMENTS.md"
+type = "text"
+title = "Current-State Product Requirements"
+description = "A codebase-grounded PRD for the video platform, with Built, Partial, Missing, Externally gated, and Unverified classifications plus prioritized next requirements."
+logical_id = "870c6207-d58f-4204-b3ff-69dc3d3399cb"
+content_hash = "sha256:4c43cc51a34728d17f368099f5bf77a727316379d69637905db5b7ea20662c78"
+size = 40995
+mtime_ms = 1788433122758
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:57582ca1-6956-4176-93b0-b8494b3676be/870c6207-d58f-4204-b3ff-69dc3d3399cb/40a82125-ab69-4294-ad8c-a843627e7ab2"
+storage_version_token = "1788433224074285"
+content_type = "text/markdown"
