@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "UWCVv0FlBorBvaQK1ipJc"
+uri = "file://docs/CODE_REVIEW_GROUPS.md"
+type = "text"
+title = "Code Review Groups"
+description = "Complete G0–G17 review catalog, validation scripts, dependency order, and larger review bundles."
+logical_id = "961c795e-2d6d-4199-9a4e-5e43baa6711c"
+content_hash = "sha256:1cc56998a0b0096e195d7f1867667822fcff5197ddd70e0f6678186193fa9d15"
+size = 23822
+mtime_ms = 1788432178287
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:57582ca1-6956-4176-93b0-b8494b3676be/961c795e-2d6d-4199-9a4e-5e43baa6711c/68f41f68-d4bb-4016-85b7-de37d14ef34c"
+storage_version_token = "1788432188258853"
+content_type = "text/markdown"
