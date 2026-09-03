@@ -68,8 +68,12 @@ router.get("/videos/:videoId/source", async (req, res): Promise<void> => {
     if (!sources.hlsUrl || new Date(sources.expiresAt).getTime() <= Date.now()) {
       throw new Error("Provider returned no current maintained playback source");
     }
+    const sourceUrl = new URL(sources.hlsUrl).toString();
+    if (!await provider.isPlaybackSourceTrusted({ id: linkage.providerTenantSpaceId }, sourceUrl)) {
+      throw new Error("Provider returned an untrusted playback source");
+    }
     res.setHeader("Cache-Control", "private, no-store");
-    res.redirect(307, sources.hlsUrl);
+    res.status(307).setHeader("Location", sourceUrl).end();
   } catch (error) {
     req.log.error({ err: error, videoId }, "Playback source redirect resolution failed");
     res.status(503).json({ error: "Playback source is unavailable" });
@@ -217,6 +221,10 @@ router.get("/videos/:videoId", async (req, res): Promise<void> => {
     const expiry = new Date(sources.expiresAt);
     if (!Number.isFinite(expiry.getTime()) || expiry.getTime() <= Date.now()) {
       throw new Error("Provider returned an expired playback source");
+    }
+    const normalizedSourceUrl = new URL(sourceUrl).toString();
+    if (!await provider.isPlaybackSourceTrusted({ id: providerTenantSpaceId }, normalizedSourceUrl)) {
+      throw new Error("Provider returned an untrusted playback source");
     }
     res.setHeader("Cache-Control", "private, no-store");
     res.json(GetPublicVideoResponse.parse({

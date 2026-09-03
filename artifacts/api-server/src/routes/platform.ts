@@ -138,17 +138,11 @@ router.patch("/workspace", requirePermission("workspace.manage"), async (req, re
       return void res.status(400).json({ error: `${key} must be a safe six-digit hex color.` });
     }
   }
-  if (raw.customDomain !== undefined && raw.customDomain !== null && (
-    typeof raw.customDomain !== "string" ||
-    !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(raw.customDomain)
-  )) {
-    return void res.status(400).json({ error: "customDomain must be a valid hostname without a protocol or path." });
-  }
   const update = UpdateWorkspaceBody.parse(req.body);
   const changesCustomization = Boolean(
     update.playerAccent || update.playerControlForeground || update.playerControlBackground ||
     update.logoInitials || update.logoObjectKey !== undefined || update.watermarkObjectKey !== undefined ||
-    update.posterTreatment || update.customDomain !== undefined
+    update.posterTreatment
   );
   if (changesCustomization) {
     const access = await withTenantDb(req.tenant, (tx) => resolveBillingAccess(tx, req.tenant.organizationId));
@@ -160,7 +154,6 @@ router.patch("/workspace", requirePermission("workspace.manage"), async (req, re
     ["branding.player_colors", Boolean(update.playerAccent || update.playerControlForeground || update.playerControlBackground || update.posterTreatment)],
     ["branding.logo", Boolean(update.logoInitials || update.logoObjectKey !== undefined)],
     ["branding.watermark", update.watermarkObjectKey !== undefined],
-    ["branding.custom_domain", update.customDomain !== undefined],
   ];
   for (const [key, requested] of entitlementForField) {
     if (requested && !await hasEntitlement(req, key)) {
@@ -185,7 +178,7 @@ router.patch("/workspace", requirePermission("workspace.manage"), async (req, re
     if (
       update.playerAccent || update.playerControlForeground || update.playerControlBackground ||
       update.logoInitials || update.logoObjectKey !== undefined || update.watermarkObjectKey !== undefined ||
-      update.posterTreatment || update.customDomain !== undefined
+      update.posterTreatment
     ) {
       await tx.update(organizationCustomizationTable).set({
         ...(update.playerAccent ? { playerAccent: update.playerAccent } : {}),
@@ -195,7 +188,6 @@ router.patch("/workspace", requirePermission("workspace.manage"), async (req, re
         ...(update.logoObjectKey !== undefined ? { logoObjectKey: update.logoObjectKey } : {}),
         ...(update.watermarkObjectKey !== undefined ? { watermarkObjectKey: update.watermarkObjectKey } : {}),
         ...(update.posterTreatment ? { posterTreatment: update.posterTreatment } : {}),
-        ...(update.customDomain !== undefined ? { customDomain: update.customDomain, customDomainVerified: false } : {}),
       }).where(eq(organizationCustomizationTable.organizationId, req.tenant.organizationId));
     }
     // This endpoint only accepts normalized Zod input. Keep the audit payload
@@ -213,12 +205,6 @@ router.patch("/workspace", requirePermission("workspace.manage"), async (req, re
         ...(update.posterTreatment !== undefined ? { posterTreatment: update.posterTreatment } : {}),
       },
       requestId: String(req.id),
-    });
-    if (update.customDomain !== undefined) await writeAuditEvent(tx, {
-      organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
-      action: "workspace.custom_domain_changed", category: "workspace",
-      subject: { type: "organization", id: req.tenant.organizationId, label: update.name ?? runtimeConfig.productName },
-      afterState: { customDomain: update.customDomain, verified: false }, requestId: String(req.id),
     });
     return fetchWorkspace(tx, req.tenant.organizationId, req.tenant.userId);
   });
@@ -928,6 +914,10 @@ router.get("/videos/:videoId/playback", requirePermission("videos.read"), async 
       : await resolveProvisioningProvider(account, space);
     const sources = await provider.getPlaybackSources({ id: providerTenantSpaceId }, { id: providerAssetId });
     if (!sources.hlsUrl || new Date(sources.expiresAt).getTime() <= Date.now()) throw new Error("No current playback source");
+    const sourceUrl = new URL(sources.hlsUrl).toString();
+    if (!await provider.isPlaybackSourceTrusted({ id: providerTenantSpaceId }, sourceUrl)) {
+      throw new Error("Provider returned an untrusted playback source");
+    }
     res.setHeader("Cache-Control", "private, no-store");
     res.json(GetAuthenticatedVideoPlaybackResponse.parse({
       ...metadata, sourceUrl: `/api/videos/${videoId}/playback/source`, sourceType: "hls",
@@ -966,8 +956,12 @@ router.get("/videos/:videoId/playback/source", requirePermission("videos.read"),
       : await resolveProvisioningProvider(linkage.account, linkage.space);
     const sources = await provider.getPlaybackSources({ id: linkage.providerTenantSpaceId }, { id: linkage.providerAssetId });
     if (!sources.hlsUrl || new Date(sources.expiresAt).getTime() <= Date.now()) throw new Error("No current playback source");
+    const sourceUrl = new URL(sources.hlsUrl).toString();
+    if (!await provider.isPlaybackSourceTrusted({ id: linkage.providerTenantSpaceId }, sourceUrl)) {
+      throw new Error("Provider returned an untrusted playback source");
+    }
     res.setHeader("Cache-Control", "private, no-store");
-    res.redirect(307, sources.hlsUrl);
+    res.status(307).setHeader("Location", sourceUrl).end();
   } catch (error) {
     req.log.error({ err: error, videoId }, "Authenticated playback redirect resolution failed");
     res.status(503).json({ error: "Playback source is unavailable" });

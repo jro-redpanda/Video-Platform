@@ -1,5 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { AssetCreationRejectedError, TenantSpaceCreationRejectedError } from "../contracts";
+import { AssetCreationRejectedError, TenantSpaceCreationRejectedError } from "../contracts.js";
 import type {
   Asset,
   AssetStatus,
@@ -9,7 +9,7 @@ import type {
   TenantSpace,
   UploadCredentials,
   VideoProvider,
-} from "../contracts";
+} from "../contracts.js";
 
 const CORE_API = "https://api.bunny.net";
 const STREAM_API = "https://video.bunnycdn.com";
@@ -42,6 +42,7 @@ type BunnyWebhookBody = {
 
 export class BunnyVideoProvider implements VideoProvider {
   readonly key = "bunny";
+  readonly availability = { state: "configured" } as const;
   readonly capabilities: ProviderCapabilities = {
     durableStorage: true,
     multiRenditionTranscoding: true,
@@ -194,6 +195,26 @@ export class BunnyVideoProvider implements VideoProvider {
       posterUrl: `${root}${directory}thumbnail.jpg`,
       expiresAt: new Date(expires * 1000).toISOString(),
     };
+  }
+
+  async isPlaybackSourceTrusted(space: TenantSpace, value: string): Promise<boolean> {
+    let credentials: BunnyLibraryCredentials;
+    try {
+      credentials = await this.credentials(space.id);
+    } catch {
+      return false;
+    }
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:"
+        && !url.username
+        && !url.password
+        && !url.port
+        && !url.hash
+        && url.hostname.toLowerCase() === credentials.pullZoneHostname.toLowerCase();
+    } catch {
+      return false;
+    }
   }
 
   verifyEncodeCompletionCallback(

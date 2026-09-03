@@ -1,27 +1,32 @@
 import { useEffect, useState } from "react"
-import { useGetWorkspace, useUpdateWorkspace, getGetWorkspaceQueryKey } from "@workspace/api-client-react"
+import {
+  useGetWorkspace,
+  useUpdateWorkspace,
+  getGetWorkspaceQueryKey,
+} from "@workspace/api-client-react"
+import type { WorkspaceUpdatePosterTreatment } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Player } from "@/components/player"
+import { ShieldCheck } from "lucide-react"
+import { CustomDomainManager } from "@/components/custom-domain-manager"
 
 const SWATCHES = ["#4f46e5", "#0ea5e9", "#10b981", "#f97316", "#ef4444", "#a855f7"]
-
-// Simple SVG gradient placeholder for preview poster
 const cssPoster = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"><defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="%231a1a2e" /><stop offset="100%" stop-color="%2316213e" /></linearGradient></defs><rect width="100%" height="100%" fill="url(%23g)"/></svg>`;
 
 export default function Customization() {
   const { data: workspace, isLoading } = useGetWorkspace()
   const updateWorkspace = useUpdateWorkspace()
   const queryClient = useQueryClient()
+
   const [accent, setAccent] = useState("#4f46e5")
   const [foreground, setForeground] = useState("#FFFFFF")
   const [background, setBackground] = useState("#111827")
   const [initials, setInitials] = useState("VP")
-  const [posterTreatment, setPosterTreatment] = useState<"default" | "darken" | "gradient">("default")
-  const [customDomain, setCustomDomain] = useState("")
+  const [posterTreatment, setPosterTreatment] = useState<WorkspaceUpdatePosterTreatment>("default")
 
   useEffect(() => {
     if (!workspace) return
@@ -29,8 +34,7 @@ export default function Customization() {
     setForeground(workspace.playerControlForeground)
     setBackground(workspace.playerControlBackground)
     setInitials(workspace.logoInitials)
-    setPosterTreatment(workspace.posterTreatment as any)
-    setCustomDomain(workspace.customDomain ?? "")
+    setPosterTreatment(workspace.posterTreatment as WorkspaceUpdatePosterTreatment)
   }, [workspace])
 
   if (isLoading) return <div className="p-8"><Skeleton className="h-[400px] w-full" /></div>
@@ -41,13 +45,12 @@ export default function Customization() {
   const logo = entitled("branding.logo")
   const watermark = entitled("branding.watermark")
   const domain = entitled("branding.custom_domain")
-  const restriction = (enabled: boolean) => !enabled && <p className="text-xs text-muted-foreground">Available on a plan that includes this branding feature.</p>
-  const handleSave = () => {
+
+  const handleSaveVisuals = () => {
     updateWorkspace.mutate({
       data: {
         ...(playerColors ? { playerAccent: accent, playerControlForeground: foreground, playerControlBackground: background, posterTreatment } : {}),
         ...(logo ? { logoInitials: initials } : {}),
-        ...(domain ? { customDomain: customDomain || null } : {}),
       },
     }, {
       onSuccess: (data) => queryClient.setQueryData(getGetWorkspaceQueryKey(), data),
@@ -56,58 +59,139 @@ export default function Customization() {
 
   return (
     <div className="flex-1 p-8 overflow-y-auto">
-      <div className="max-w-6xl mx-auto space-y-8">
-        <div><h1 className="text-3xl font-bold tracking-tight">Customization</h1><p className="text-muted-foreground mt-1">Add workspace identity and limited player styling. Product layout, navigation, and brand remain unchanged.</p></div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-          <div className="space-y-6">
-            <section className="space-y-4 border rounded-lg p-6 bg-card">
-              <h2 className="text-lg font-semibold">Player colors</h2>
-              <p className="text-sm text-muted-foreground">Accent and player controls only. Control colors must meet WCAG AA contrast.</p>
-              {restriction(playerColors)}
-              <div className="grid gap-3 sm:grid-cols-3">
-                <ColorField label="Accent" value={accent} onChange={setAccent} disabled={!playerColors} />
-                <ColorField label="Control foreground" value={foreground} onChange={setForeground} disabled={!playerColors} />
-                <ColorField label="Control background" value={background} onChange={setBackground} disabled={!playerColors} />
+      <div className="max-w-6xl mx-auto space-y-10">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">Customization</h1>
+          <p className="text-muted-foreground mt-2 max-w-2xl text-lg">
+            Player styling changes apply immediately. Custom domain changes require verification and external setup.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-10">
+          <div className="xl:col-span-7 space-y-10">
+            {/* Visual Customization */}
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-medium">Visual Identity</h2>
               </div>
-              <div className="flex flex-wrap gap-2">{SWATCHES.map((color) => <button type="button" key={color} disabled={!playerColors} onClick={() => setAccent(color)} className="w-7 h-7 rounded-full border disabled:opacity-40 cursor-pointer" style={{ backgroundColor: color }} aria-label={`Select ${color}`} />)}</div>
-              <div className="space-y-2"><Label>Poster treatment</Label><select value={posterTreatment} disabled={!playerColors} onChange={(event) => setPosterTreatment(event.target.value as any)} className="h-9 w-full rounded-md border bg-background px-3 text-sm disabled:opacity-50"><option value="default">Default</option><option value="darken">Darken</option><option value="gradient">Gradient</option></select></div>
-            </section>
-            <section className="space-y-3 border rounded-lg p-6 bg-card">
-              <h2 className="text-lg font-semibold">Workspace logo</h2>{restriction(logo)}
-              <p className="text-sm text-muted-foreground">Logo assets are connected through the media asset flow; uploads are not available here.</p>
-              <p className="text-xs text-muted-foreground">Current reference: {workspace.logoObjectKey ?? "No logo asset connected"}</p>
-              <Label htmlFor="initials">Fallback initials</Label><Input id="initials" disabled={!logo} value={initials} onChange={(event) => setInitials(event.target.value.substring(0, 3).toUpperCase())} maxLength={3} className="w-24 uppercase font-bold" />
-            </section>
-            <section className="space-y-3 border rounded-lg p-6 bg-card">
-              <h2 className="text-lg font-semibold">Player watermark</h2>{restriction(watermark)}
-              <p className="text-sm text-muted-foreground">Watermark assets are connected through the media asset flow; uploads are not available here.</p>
-              <p className="text-xs text-muted-foreground">Current reference: {workspace.watermarkObjectKey ?? "No watermark asset connected"}</p>
-            </section>
-            <section className="space-y-3 border rounded-lg p-6 bg-card">
-              <h2 className="text-lg font-semibold">Custom domain</h2>{restriction(domain)}
-              <Label htmlFor="domain">Domain</Label><Input id="domain" disabled={!domain} placeholder="video.example.com" value={customDomain} onChange={(event) => setCustomDomain(event.target.value)} />
-              {workspace.customDomain && <p className="text-xs text-muted-foreground">{workspace.customDomainVerified ? "Verified" : "Awaiting verification"}</p>}
-            </section>
-            <Button size="lg" onClick={handleSave} disabled={updateWorkspace.isPending}>{updateWorkspace.isPending ? "Saving..." : "Save Customization"}</Button>
-          </div>
-          <div className="space-y-4">
-            <h2 className="text-lg font-semibold text-muted-foreground">Live Player Preview</h2>
-            <div className="rounded-xl shadow-2xl ring-1 ring-border bg-black overflow-hidden relative">
-              <Player
-                title="Preview Visuals"
-                src={null}
-                poster={cssPoster}
-                accentColor={accent}
-                controlForegroundColor={foreground}
-                controlBackgroundColor={background}
-                posterTreatment={posterTreatment}
-                logoInitials={initials}
-                className="rounded-xl"
-              />
+
+              <div className="bg-card rounded-xl shadow-sm border overflow-hidden divide-y divide-border">
+                <section className="p-6 space-y-6">
+                  <div className="flex justify-between items-start gap-4">
+                    <div>
+                      <h3 className="font-medium">Player colors</h3>
+                      <p className="text-sm text-muted-foreground mt-1">Accent and control UI colors. Must meet WCAG AA contrast.</p>
+                    </div>
+                    {!playerColors && <PlanBadge />}
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <ColorField label="Accent" value={accent} onChange={setAccent} disabled={!playerColors} />
+                    <ColorField label="Foreground" value={foreground} onChange={setForeground} disabled={!playerColors} />
+                    <ColorField label="Background" value={background} onChange={setBackground} disabled={!playerColors} />
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    {SWATCHES.map((c) => (
+                      <button
+                        type="button"
+                        key={c}
+                        disabled={!playerColors}
+                        onClick={() => setAccent(c)}
+                        className="w-8 h-8 rounded-full shadow-sm ring-1 ring-inset ring-black/10 dark:ring-white/10 disabled:opacity-40 cursor-pointer transition-transform hover:scale-110 active:scale-95"
+                        style={{ backgroundColor: c }}
+                        aria-label={`Select ${c}`}
+                      />
+                    ))}
+                  </div>
+                  <div className="space-y-2 pt-2">
+                    <Label>Poster treatment</Label>
+                    <select
+                      value={posterTreatment}
+                      disabled={!playerColors}
+                      onChange={(e) => setPosterTreatment(e.target.value as WorkspaceUpdatePosterTreatment)}
+                      className="h-10 w-full rounded-lg border bg-input/20 px-3 text-sm disabled:opacity-50"
+                    >
+                      <option value="default">Default</option>
+                      <option value="darken">Darken</option>
+                      <option value="gradient">Gradient</option>
+                    </select>
+                  </div>
+                </section>
+
+                <section className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-start">
+                      <h3 className="font-medium">Workspace logo</h3>
+                      {!logo && <PlanBadge />}
+                    </div>
+                    <p className="text-sm text-muted-foreground">Connected through media asset flow.</p>
+                    <p className="text-xs font-mono text-muted-foreground bg-muted/50 p-2 rounded border break-all">
+                      {workspace.logoObjectKey ?? "No logo connected"}
+                    </p>
+                    <div className="space-y-2 pt-2">
+                      <Label>Fallback initials</Label>
+                      <Input
+                        disabled={!logo}
+                        value={initials}
+                        onChange={(e) => setInitials(e.target.value.substring(0, 3).toUpperCase())}
+                        maxLength={3}
+                        className="w-24 uppercase font-bold text-center tracking-widest"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-start">
+                      <h3 className="font-medium">Player watermark</h3>
+                      {!watermark && <PlanBadge />}
+                    </div>
+                    <p className="text-sm text-muted-foreground">Connected through media asset flow.</p>
+                    <p className="text-xs font-mono text-muted-foreground bg-muted/50 p-2 rounded border break-all">
+                      {workspace.watermarkObjectKey ?? "No watermark connected"}
+                    </p>
+                  </div>
+                </section>
+
+                <div className="p-4 bg-muted/20 flex justify-end">
+                  <Button onClick={handleSaveVisuals} disabled={updateWorkspace.isPending} className="min-w-32">
+                    {updateWorkspace.isPending ? "Saving..." : "Save Visuals"}
+                  </Button>
+                </div>
+              </div>
             </div>
-            <p className="text-sm text-muted-foreground text-center mt-2">
-              Preview represents visual styling only; interactivity requires an active video source.
-            </p>
+
+            {/* Custom Domain Management */}
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-medium">Network & Delivery</h2>
+              </div>
+              <CustomDomainManager entitled={domain} />
+            </div>
+          </div>
+
+          <div className="xl:col-span-5 relative">
+            <div className="sticky top-8 space-y-4">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <ShieldCheck className="w-5 h-5 text-emerald-500" />
+                <h2 className="font-medium text-foreground">Live Preview</h2>
+              </div>
+              <div className="rounded-xl shadow-2xl ring-1 ring-border bg-black overflow-hidden relative">
+                <Player
+                  title="Preview Visuals"
+                  src={null}
+                  poster={cssPoster}
+                  accentColor={accent}
+                  controlForegroundColor={foreground}
+                  controlBackgroundColor={background}
+                  posterTreatment={posterTreatment}
+                  logoInitials={initials}
+                  className="rounded-xl"
+                />
+              </div>
+              <p className="text-sm text-muted-foreground text-center px-4">
+                This preview represents visual styling only. Interactivity and domain changes apply when content is embedded.
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -115,6 +199,28 @@ export default function Customization() {
   )
 }
 
+function PlanBadge() {
+  return (
+    <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border whitespace-nowrap">
+      Upgrade required
+    </span>
+  )
+}
+
 function ColorField({ label, value, onChange, disabled }: { label: string; value: string; onChange: (value: string) => void; disabled: boolean }) {
-  return <div className="space-y-2"><Label>{label}</Label><Input value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} maxLength={7} className="font-mono uppercase" /></div>
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      <div className="flex gap-2">
+        <div className="w-10 h-10 rounded border shrink-0" style={{ backgroundColor: value }} />
+        <Input
+          value={value}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+          maxLength={7}
+          className="font-mono uppercase"
+        />
+      </div>
+    </div>
+  )
 }

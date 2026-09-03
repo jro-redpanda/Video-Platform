@@ -8,7 +8,8 @@
     "./test-only": "./src/test-only-fake.ts"
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "conformance:smoke": "tsc -p tsconfig.json && node dist/provider-conformance-smoke.js"
   },
   "devDependencies": {
     "@types/node": "catalog:"

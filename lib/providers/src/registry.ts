@@ -1,5 +1,5 @@
-import type { VideoProvider } from "./contracts";
-import { UnconfiguredVideoProvider } from "./unconfigured";
+import type { VideoProvider } from "./contracts.js";
+import { UnconfiguredVideoProvider } from "./unconfigured.js";
 
 export class VideoProviderRegistry {
   private readonly providers = new Map<string, VideoProvider>();

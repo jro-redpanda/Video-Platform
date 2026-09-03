@@ -242,9 +242,9 @@ export async function reconcileSystemVideoDeletePermission() {
 async function assertMigratedSchema() {
   const result = await db.execute(sql`
     select count(*)::int as count from public.schema_migrations
-    where name in ('0000_baseline.sql', '0015_thumbnails.sql', '0016_thumbnail_integrity.sql')
+    where name in ('0000_baseline.sql', '0015_thumbnails.sql', '0016_thumbnail_integrity.sql', '0029_workspace_onboarding.sql', '0030_custom_domains.sql', '0031_master_storage_operations.sql', '0032_master_archive_integrity.sql')
   `);
-  if (result.rows[0]?.count !== 3) {
+  if (result.rows[0]?.count !== 7) {
     throw new Error("database schema is not migrated; run @workspace/db migrate (or adopt-baseline --confirm for a reviewed existing database) before starting the API");
   }
 }

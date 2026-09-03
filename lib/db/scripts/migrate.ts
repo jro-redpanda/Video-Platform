@@ -130,7 +130,11 @@ async function main() {
             : file.name === "0025_production_analytics.sql" ? "analyticsBase"
             : file.name === "0026_analytics_session_attestations.sql" ? "analytics"
             : file.name === "0027_audit_log_foundation.sql" ? "audit"
-            : file.name === "0028_audit_export_rate_window.sql" ? "auditExport" : "thumbnailIntegrity");
+            : file.name === "0028_audit_export_rate_window.sql" ? "auditExport"
+             : file.name === "0029_workspace_onboarding.sql" ? "onboarding"
+              : file.name === "0030_custom_domains.sql" ? "customDomain"
+               : file.name === "0031_master_storage_operations.sql" ? "masterStorage"
+                : file.name === "0032_master_archive_integrity.sql" ? "masterArchiveIntegrity" : "thumbnailIntegrity");
         await client.query("insert into public.schema_migrations(name, checksum) values($1,$2)", [file.name, file.checksum]);
         await client.query("commit");
       } catch (error) {

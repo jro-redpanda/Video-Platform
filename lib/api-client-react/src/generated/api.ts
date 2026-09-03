@@ -36,6 +36,8 @@ import type {
   BulkVideoDeleteInput,
   BulkVideoUpdate,
   CreatePlaybackEvents202,
+  CustomDomainInput,
+  CustomDomainStatus,
   Dashboard,
   ExportAuditEventsParams,
   Folder,
@@ -49,6 +51,8 @@ import type {
   ListBillingInvoicesParams,
   ListFoldersParams,
   ListVideosParams,
+  MasterStorageOperation,
+  MasterStorageStatus,
   Member,
   MemberUpdate,
   Permission,
@@ -67,6 +71,9 @@ import type {
   VideoUploadInitialization,
   VideoUploadInput,
   Workspace,
+  WorkspaceOnboarding,
+  WorkspaceOnboardingInput,
+  WorkspaceOnboardingRef,
   WorkspaceUpdate
 } from './api.schemas';
 
@@ -96,6 +103,207 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getGetOnboardingUrl = () => {
+
+
+
+
+  return `/api/onboarding`
+}
+
+export const getOnboarding = async ( options?: Parameters<typeof customFetch>[1]): Promise<WorkspaceOnboarding> => {
+
+  return customFetch<WorkspaceOnboarding>(getGetOnboardingUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetOnboardingQueryKey = () => {
+    return [
+    `/api/onboarding`
+    ] as const;
+    }
+
+
+export const getGetOnboardingQueryOptions = <TData = Awaited<ReturnType<typeof getOnboarding>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getOnboarding>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetOnboardingQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getOnboarding>>> = ({ signal }) => getOnboarding({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getOnboarding>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetOnboardingQueryResult = NonNullable<Awaited<ReturnType<typeof getOnboarding>>>
+export type GetOnboardingQueryError = ErrorType<void>
+
+
+
+export function useGetOnboarding<TData = Awaited<ReturnType<typeof getOnboarding>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getOnboarding>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetOnboardingQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateOnboardingWorkspaceUrl = () => {
+
+
+
+
+  return `/api/onboarding/workspaces`
+}
+
+export const createOnboardingWorkspace = async (workspaceOnboardingInput: WorkspaceOnboardingInput, options?: Parameters<typeof customFetch>[1]): Promise<WorkspaceOnboarding> => {
+
+  return customFetch<WorkspaceOnboarding>(getCreateOnboardingWorkspaceUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(workspaceOnboardingInput)
+  }
+);}
+
+
+
+
+
+export const getCreateOnboardingWorkspaceMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createOnboardingWorkspace>>, TError,{data: BodyType<WorkspaceOnboardingInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createOnboardingWorkspace>>, TError,{data: BodyType<WorkspaceOnboardingInput>}, TContext> => {
+
+const mutationKey = ['createOnboardingWorkspace'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createOnboardingWorkspace>>, {data: BodyType<WorkspaceOnboardingInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createOnboardingWorkspace(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateOnboardingWorkspaceMutationResult = NonNullable<Awaited<ReturnType<typeof createOnboardingWorkspace>>>
+    export type CreateOnboardingWorkspaceMutationBody = BodyType<WorkspaceOnboardingInput>
+    export type CreateOnboardingWorkspaceMutationError = ErrorType<void>
+
+    export const useCreateOnboardingWorkspace = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createOnboardingWorkspace>>, TError,{data: BodyType<WorkspaceOnboardingInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createOnboardingWorkspace>>,
+        TError,
+        {data: BodyType<WorkspaceOnboardingInput>},
+        TContext
+      > => {
+      return useMutation(getCreateOnboardingWorkspaceMutationOptions(options));
+    }
+
+export const getRetryOnboardingUrl = () => {
+
+
+
+
+  return `/api/onboarding/retry`
+}
+
+export const retryOnboarding = async (workspaceOnboardingRef?: WorkspaceOnboardingRef, options?: Parameters<typeof customFetch>[1]): Promise<WorkspaceOnboarding> => {
+
+  return customFetch<WorkspaceOnboarding>(getRetryOnboardingUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(workspaceOnboardingRef)
+  }
+);}
+
+
+
+
+
+export const getRetryOnboardingMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryOnboarding>>, TError,{data?: BodyType<WorkspaceOnboardingRef>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof retryOnboarding>>, TError,{data?: BodyType<WorkspaceOnboardingRef>}, TContext> => {
+
+const mutationKey = ['retryOnboarding'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof retryOnboarding>>, {data?: BodyType<WorkspaceOnboardingRef>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  retryOnboarding(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RetryOnboardingMutationResult = NonNullable<Awaited<ReturnType<typeof retryOnboarding>>>
+    export type RetryOnboardingMutationBody = BodyType<WorkspaceOnboardingRef> | undefined
+    export type RetryOnboardingMutationError = ErrorType<void>
+
+    export const useRetryOnboarding = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryOnboarding>>, TError,{data?: BodyType<WorkspaceOnboardingRef>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof retryOnboarding>>,
+        TError,
+        {data?: BodyType<WorkspaceOnboardingRef>},
+        TContext
+      > => {
+      return useMutation(getRetryOnboardingMutationOptions(options));
+    }
 
 export const getGetBillingCatalogUrl = () => {
 
@@ -983,6 +1191,272 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
         TContext
       > => {
       return useMutation(getUpdateWorkspaceMutationOptions(options));
+    }
+
+export const getGetCustomDomainUrl = () => {
+
+
+
+
+  return `/api/custom-domain`
+}
+
+export const getCustomDomain = async ( options?: Parameters<typeof customFetch>[1]): Promise<CustomDomainStatus> => {
+
+  return customFetch<CustomDomainStatus>(getGetCustomDomainUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetCustomDomainQueryKey = () => {
+    return [
+    `/api/custom-domain`
+    ] as const;
+    }
+
+
+export const getGetCustomDomainQueryOptions = <TData = Awaited<ReturnType<typeof getCustomDomain>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCustomDomain>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetCustomDomainQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCustomDomain>>> = ({ signal }) => getCustomDomain({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCustomDomain>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetCustomDomainQueryResult = NonNullable<Awaited<ReturnType<typeof getCustomDomain>>>
+export type GetCustomDomainQueryError = ErrorType<unknown>
+
+
+
+export function useGetCustomDomain<TData = Awaited<ReturnType<typeof getCustomDomain>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCustomDomain>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetCustomDomainQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateCustomDomainUrl = () => {
+
+
+
+
+  return `/api/custom-domain`
+}
+
+export const createCustomDomain = async (customDomainInput: CustomDomainInput, options?: Parameters<typeof customFetch>[1]): Promise<CustomDomainStatus> => {
+
+  return customFetch<CustomDomainStatus>(getCreateCustomDomainUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(customDomainInput)
+  }
+);}
+
+
+
+
+
+export const getCreateCustomDomainMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createCustomDomain>>, TError,{data: BodyType<CustomDomainInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createCustomDomain>>, TError,{data: BodyType<CustomDomainInput>}, TContext> => {
+
+const mutationKey = ['createCustomDomain'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createCustomDomain>>, {data: BodyType<CustomDomainInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createCustomDomain(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateCustomDomainMutationResult = NonNullable<Awaited<ReturnType<typeof createCustomDomain>>>
+    export type CreateCustomDomainMutationBody = BodyType<CustomDomainInput>
+    export type CreateCustomDomainMutationError = ErrorType<void>
+
+    export const useCreateCustomDomain = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createCustomDomain>>, TError,{data: BodyType<CustomDomainInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createCustomDomain>>,
+        TError,
+        {data: BodyType<CustomDomainInput>},
+        TContext
+      > => {
+      return useMutation(getCreateCustomDomainMutationOptions(options));
+    }
+
+export const getDeleteCustomDomainUrl = () => {
+
+
+
+
+  return `/api/custom-domain`
+}
+
+export const deleteCustomDomain = async ( options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeleteCustomDomainUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteCustomDomainMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteCustomDomain>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteCustomDomain>>, TError,void, TContext> => {
+
+const mutationKey = ['deleteCustomDomain'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteCustomDomain>>, void> = () => {
+
+
+          return  deleteCustomDomain(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteCustomDomainMutationResult = NonNullable<Awaited<ReturnType<typeof deleteCustomDomain>>>
+
+    export type DeleteCustomDomainMutationError = ErrorType<void>
+
+    export const useDeleteCustomDomain = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteCustomDomain>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteCustomDomain>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getDeleteCustomDomainMutationOptions(options));
+    }
+
+export const getVerifyCustomDomainUrl = () => {
+
+
+
+
+  return `/api/custom-domain/verify`
+}
+
+export const verifyCustomDomain = async ( options?: Parameters<typeof customFetch>[1]): Promise<CustomDomainStatus> => {
+
+  return customFetch<CustomDomainStatus>(getVerifyCustomDomainUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getVerifyCustomDomainMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyCustomDomain>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof verifyCustomDomain>>, TError,void, TContext> => {
+
+const mutationKey = ['verifyCustomDomain'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof verifyCustomDomain>>, void> = () => {
+
+
+          return  verifyCustomDomain(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type VerifyCustomDomainMutationResult = NonNullable<Awaited<ReturnType<typeof verifyCustomDomain>>>
+
+    export type VerifyCustomDomainMutationError = ErrorType<void>
+
+    export const useVerifyCustomDomain = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyCustomDomain>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof verifyCustomDomain>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getVerifyCustomDomainMutationOptions(options));
     }
 
 export const getGetDashboardUrl = () => {
@@ -1946,6 +2420,207 @@ export function useGetAuthenticatedVideoPlayback<TData = Awaited<ReturnType<type
 
 
 
+
+export const getGetMasterStorageStatusUrl = (videoId: string,) => {
+
+
+
+
+  return `/api/videos/${videoId}/master-status`
+}
+
+export const getMasterStorageStatus = async (videoId: string, options?: Parameters<typeof customFetch>[1]): Promise<MasterStorageStatus> => {
+
+  return customFetch<MasterStorageStatus>(getGetMasterStorageStatusUrl(videoId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMasterStorageStatusQueryKey = (videoId: string,) => {
+    return [
+    `/api/videos/${videoId}/master-status`
+    ] as const;
+    }
+
+
+export const getGetMasterStorageStatusQueryOptions = <TData = Awaited<ReturnType<typeof getMasterStorageStatus>>, TError = ErrorType<void>>(videoId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMasterStorageStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMasterStorageStatusQueryKey(videoId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMasterStorageStatus>>> = ({ signal }) => getMasterStorageStatus(videoId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: videoId !== null && videoId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMasterStorageStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMasterStorageStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getMasterStorageStatus>>>
+export type GetMasterStorageStatusQueryError = ErrorType<void>
+
+
+
+export function useGetMasterStorageStatus<TData = Awaited<ReturnType<typeof getMasterStorageStatus>>, TError = ErrorType<void>>(
+ videoId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMasterStorageStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMasterStorageStatusQueryOptions(videoId,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getArchiveVideoMasterUrl = (videoId: string,) => {
+
+
+
+
+  return `/api/videos/${videoId}/master-archive`
+}
+
+export const archiveVideoMaster = async (videoId: string, options?: Parameters<typeof customFetch>[1]): Promise<MasterStorageOperation> => {
+
+  return customFetch<MasterStorageOperation>(getArchiveVideoMasterUrl(videoId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getArchiveVideoMasterMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof archiveVideoMaster>>, TError,{videoId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof archiveVideoMaster>>, TError,{videoId: string}, TContext> => {
+
+const mutationKey = ['archiveVideoMaster'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof archiveVideoMaster>>, {videoId: string}> = (props) => {
+          const {videoId} = props ?? {};
+
+          return  archiveVideoMaster(videoId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ArchiveVideoMasterMutationResult = NonNullable<Awaited<ReturnType<typeof archiveVideoMaster>>>
+
+    export type ArchiveVideoMasterMutationError = ErrorType<void>
+
+    export const useArchiveVideoMaster = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof archiveVideoMaster>>, TError,{videoId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof archiveVideoMaster>>,
+        TError,
+        {videoId: string},
+        TContext
+      > => {
+      return useMutation(getArchiveVideoMasterMutationOptions(options));
+    }
+
+export const getRestoreVideoMasterUrl = (videoId: string,) => {
+
+
+
+
+  return `/api/videos/${videoId}/master-restore`
+}
+
+export const restoreVideoMaster = async (videoId: string, options?: Parameters<typeof customFetch>[1]): Promise<MasterStorageOperation> => {
+
+  return customFetch<MasterStorageOperation>(getRestoreVideoMasterUrl(videoId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRestoreVideoMasterMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restoreVideoMaster>>, TError,{videoId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof restoreVideoMaster>>, TError,{videoId: string}, TContext> => {
+
+const mutationKey = ['restoreVideoMaster'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof restoreVideoMaster>>, {videoId: string}> = (props) => {
+          const {videoId} = props ?? {};
+
+          return  restoreVideoMaster(videoId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RestoreVideoMasterMutationResult = NonNullable<Awaited<ReturnType<typeof restoreVideoMaster>>>
+
+    export type RestoreVideoMasterMutationError = ErrorType<void>
+
+    export const useRestoreVideoMaster = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restoreVideoMaster>>, TError,{videoId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof restoreVideoMaster>>,
+        TError,
+        {videoId: string},
+        TContext
+      > => {
+      return useMutation(getRestoreVideoMasterMutationOptions(options));
+    }
 
 export const getCreateThumbnailUploadIntentUrl = (videoId: string,) => {
 

@@ -7,7 +7,7 @@ import type {
   TenantSpace,
   UploadCredentials,
   VideoProvider,
-} from "./contracts";
+} from "./contracts.js";
 
 export class ProviderNotConfiguredError extends Error {
   constructor(providerKey: string) {
@@ -16,16 +16,16 @@ export class ProviderNotConfiguredError extends Error {
   }
 }
 
-// MOCK: replaced at step 18
 export class UnconfiguredVideoProvider implements VideoProvider {
+  readonly availability = { state: "unavailable", reason: "not_configured" } as const;
   readonly capabilities: ProviderCapabilities = {
-    durableStorage: true,
-    multiRenditionTranscoding: true,
-    manifestFormats: ["hls", "dash"],
-    cdnDelivery: true,
-    uploadMethods: ["tus", "multipart"],
-    signedPlaybackUrls: true,
-    encodeCompletionCallback: true,
+    durableStorage: false,
+    multiRenditionTranscoding: false,
+    manifestFormats: [],
+    cdnDelivery: false,
+    uploadMethods: [],
+    signedPlaybackUrls: false,
+    encodeCompletionCallback: false,
   };
 
   constructor(readonly key: string) {}
@@ -64,6 +64,10 @@ export class UnconfiguredVideoProvider implements VideoProvider {
 
   async getPlaybackSources(_space: TenantSpace, _asset: Asset): Promise<PlaybackSources> {
     return this.unavailable();
+  }
+
+  async isPlaybackSourceTrusted(_space: TenantSpace, _url: string): Promise<boolean> {
+    return false;
   }
 
   verifyEncodeCompletionCallback(

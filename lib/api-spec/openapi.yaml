@@ -8,14 +8,53 @@ servers:
     description: Base API path
 tags:
   - name: health
+  - name: onboarding
   - name: dashboard
   - name: videos
   - name: folders
   - name: workspace
+  - name: custom-domain
   - name: members
   - name: billing
   - name: audit
 paths:
+  /onboarding:
+    get:
+      operationId: getOnboarding
+      tags: [onboarding]
+      responses:
+        "200":
+          description: Authenticated user's provider-neutral workspace onboarding state
+          content: { application/json: { schema: { $ref: "#/components/schemas/WorkspaceOnboarding" } } }
+        "401": { description: Authentication required }
+  /onboarding/workspaces:
+    post:
+      operationId: createOnboardingWorkspace
+      tags: [onboarding]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/WorkspaceOnboardingInput" } } }
+      responses:
+        "202":
+          description: Workspace creation and background provisioning accepted
+          content: { application/json: { schema: { $ref: "#/components/schemas/WorkspaceOnboarding" } } }
+        "400": { description: Invalid workspace name or slug }
+        "401": { description: Authentication required }
+        "409": { description: User already belongs to a workspace or slug is unavailable }
+  /onboarding/retry:
+    post:
+      operationId: retryOnboarding
+      tags: [onboarding]
+      requestBody:
+        required: false
+        content: { application/json: { schema: { $ref: "#/components/schemas/WorkspaceOnboardingRef" } } }
+      responses:
+        "202":
+          description: Safe provisioning retry accepted
+          content: { application/json: { schema: { $ref: "#/components/schemas/WorkspaceOnboarding" } } }
+        "401": { description: Authentication required }
+        "403": { description: Only the workspace owner may retry }
+        "409": { description: Workspace state is not safely retryable }
   /billing/catalog:
     get:
       operationId: getBillingCatalog
@@ -158,6 +197,56 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Workspace"
+  /custom-domain:
+    get:
+      operationId: getCustomDomain
+      tags: [custom-domain]
+      responses:
+        "200":
+          description: Current workspace custom-domain ownership verification status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomDomainStatus" }
+    post:
+      operationId: createCustomDomain
+      tags: [custom-domain]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CustomDomainInput" }
+      responses:
+        "202":
+          description: Domain ownership challenge created or replaced.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomDomainStatus" }
+        "400": { description: Invalid or unsafe hostname }
+        "403": { description: Workspace permission or entitlement required }
+        "409": { description: Hostname is claimed by another workspace }
+    delete:
+      operationId: deleteCustomDomain
+      tags: [custom-domain]
+      responses:
+        "204": { description: Local custom-domain ownership representation removed }
+        "403": { description: Workspace permission or entitlement required }
+  /custom-domain/verify:
+    post:
+      operationId: verifyCustomDomain
+      tags: [custom-domain]
+      responses:
+        "202":
+          description: Background DNS TXT ownership verification accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomDomainStatus" }
+        "403": { description: Workspace permission or entitlement required }
+        "409": { description: No retryable custom-domain verification is pending }
+        "429":
+          description: Verification request rate limited.
+          headers:
+            Retry-After:
+              schema: { type: integer, minimum: 1 }
   /dashboard:
     get:
       operationId: getDashboard
@@ -406,6 +495,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuthenticatedPlaybackVideo"
+  /videos/{videoId}/master-status:
+    get:
+      operationId: getMasterStorageStatus
+      tags: [videos]
+      parameters: [ { $ref: "#/components/parameters/VideoId" } ]
+      responses:
+        "200":
+          description: Tenant-scoped master archive status without provider or storage identity.
+          content: { application/json: { schema: { $ref: "#/components/schemas/MasterStorageStatus" } } }
+        "404": { description: Video not found }
+  /videos/{videoId}/master-archive:
+    post:
+      operationId: archiveVideoMaster
+      tags: [videos]
+      parameters: [ { $ref: "#/components/parameters/VideoId" } ]
+      responses:
+        "202":
+          description: Durable archive operation accepted.
+          content: { application/json: { schema: { $ref: "#/components/schemas/MasterStorageOperation" } } }
+        "409": { description: Video is not eligible for archive }
+        "503": { description: Master archive adapters are not configured }
+  /videos/{videoId}/master-restore:
+    post:
+      operationId: restoreVideoMaster
+      tags: [videos]
+      parameters: [ { $ref: "#/components/parameters/VideoId" } ]
+      responses:
+        "202":
+          description: Durable restore operation accepted.
+          content: { application/json: { schema: { $ref: "#/components/schemas/MasterStorageOperation" } } }
+        "409": { description: Video has no archived master or is busy }
+        "503": { description: Master archive adapters are not configured }
   /videos/{videoId}/thumbnail-upload-intent:
     post:
       operationId: createThumbnailUploadIntent
@@ -751,6 +872,7 @@ components:
       required: true
       schema:
         type: string
+        format: uuid
     FolderId:
       in: path
       name: folderId
@@ -770,6 +892,70 @@ components:
       schema:
         type: string
   schemas:
+    MasterStorageOperation:
+      type: object
+      additionalProperties: false
+      required: [operation, state, diagnosticCode, retryable, createdAt, updatedAt, completedAt]
+      properties:
+        operation: { type: string, enum: [archive, restore] }
+        state: { type: string, enum: [pending, dispatching, queued, processing, completed, failed, reconciliation_required, cancelled] }
+        diagnosticCode: { type: string, nullable: true }
+        retryable: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time, nullable: true }
+    MasterStorageStatus:
+      type: object
+      additionalProperties: false
+      required: [storageConfigured, sourceTransferConfigured, hasArchivedMaster, archivedAt, latestArchiveOperation, latestRestoreOperation]
+      properties:
+        storageConfigured: { type: boolean }
+        sourceTransferConfigured: { type: boolean }
+        hasArchivedMaster: { type: boolean }
+        archivedAt: { type: string, format: date-time, nullable: true }
+        latestArchiveOperation: { allOf: [ { $ref: "#/components/schemas/MasterStorageOperation" } ], nullable: true }
+        latestRestoreOperation: { allOf: [ { $ref: "#/components/schemas/MasterStorageOperation" } ], nullable: true }
+    WorkspaceOnboardingInput:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 2, maxLength: 100 }
+        slug:
+          type: string
+          minLength: 2
+          maxLength: 63
+          description: Human-entered slug normalized by the server to lower kebab case.
+    WorkspaceOnboardingRef:
+      type: object
+      additionalProperties: false
+      properties:
+        workspaceId: { type: string }
+    WorkspaceOnboardingWorkspace:
+      type: object
+      additionalProperties: false
+      required: [id, name, slug, status]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        slug: { type: string }
+        status: { type: string, enum: [provisioning, active, failed, suspended] }
+    WorkspaceProvisioningSummary:
+      type: object
+      additionalProperties: false
+      required: [state, retryable, message]
+      properties:
+        state: { type: string, enum: [pending, creating, ready, reconciliation_required, unavailable, failed] }
+        retryable: { type: boolean }
+        message: { type: string }
+    WorkspaceOnboarding:
+      type: object
+      additionalProperties: false
+      required: [state, provisioning]
+      properties:
+        state: { type: string, enum: [needs_workspace, provisioning, active, failed, suspended] }
+        workspace: { $ref: "#/components/schemas/WorkspaceOnboardingWorkspace" }
+        provisioning: { $ref: "#/components/schemas/WorkspaceProvisioningSummary" }
     BillingPrice:
       type: object
       required: [interval, amount, currency]
@@ -931,7 +1117,30 @@ components:
         posterTreatment:
           type: string
           enum: [default, darken, gradient]
-        customDomain: { type: ["string", "null"], maxLength: 253 }
+    CustomDomainInput:
+      type: object
+      additionalProperties: false
+      required: [hostname]
+      properties:
+        hostname: { type: string, minLength: 1, maxLength: 253 }
+    CustomDomainStatus:
+      type: object
+      additionalProperties: false
+      required: [hostname, lifecycleState, txtRecordName, txtRecordValue, lastCheckedAt, verifiedAt, retryable, message, activationState]
+      properties:
+        hostname: { type: ["string", "null"] }
+        lifecycleState:
+          type: ["string", "null"]
+          enum: [pending_verification, verifying, verified, failed, suspended, removed, reconciliation_required, null]
+        txtRecordName: { type: ["string", "null"] }
+        txtRecordValue: { type: ["string", "null"] }
+        lastCheckedAt: { type: ["string", "null"], format: date-time }
+        verifiedAt: { type: ["string", "null"], format: date-time }
+        retryable: { type: boolean }
+        message: { type: string }
+        activationState:
+          type: string
+          enum: [not_ready, external_setup_required]
     Dashboard:
       type: object
       required: [totalVideos, totalPlays, watchTimeHours, completionRate, playsTrend, topVideos]

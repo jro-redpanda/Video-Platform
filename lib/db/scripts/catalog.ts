@@ -1,21 +1,27 @@
 import { createHash } from "node:crypto";
 import type pg from "pg";
 
-export type CatalogStage = "pre15" | "step15" | "thumbnailIntegrity" | "final" | "billingBase" | "billingCheckoutBase" | "billingProviderBase" | "billing" | "analyticsBase" | "analytics" | "audit" | "auditExport";
+export type CatalogStage = "pre15" | "step15" | "thumbnailIntegrity" | "final" | "billingBase" | "billingCheckoutBase" | "billingProviderBase" | "billing" | "analyticsBase" | "analytics" | "audit" | "auditExport" | "onboarding" | "customDomain" | "masterStorage" | "masterArchiveIntegrity";
 const pre = ["accounts","audit_logs","embed_generation_outbox","folders","group_permissions","invitations","memberships","organization_customization","organization_entitlement_overrides","organizations","permission_groups","permissions","plans","playback_events","provider_accounts","provider_tenant_spaces","sessions","users","verifications","video_analytics_rollups","video_embeds","videos","webhook_events"];
 const step15 = [...pre, "thumbnail_upload_intents", "object_cleanup_outbox"];
 const billing = [...step15, "organization_billing", "billing_operations", "billing_event_receipts"];
 const analyticsBase = [...billing, "analytics_dirty_days", "analytics_rate_windows"];
 const analytics = [...analyticsBase, "analytics_playback_sessions"];
+const onboarding = [...analytics, "onboarding_provisioning_intents"];
+const customDomain = [...onboarding, "custom_domains", "custom_domain_verification_windows"];
+const masterStorage = [...customDomain, "master_storage_operations"];
 const enums = ["membership_status","organization_status","provider_tenant_space_state","video_status","video_visibility"];
 const billingEnums = [...enums, "billing_status","billing_interval","billing_operation_state"];
+const onboardingEnums = [...billingEnums, "onboarding_intent_state"];
+const customDomainEnums = [...onboardingEnums, "custom_domain_lifecycle"];
+const masterStorageEnums = [...customDomainEnums, "master_storage_operation_kind", "master_storage_operation_state"];
 const compact = (value: string | null) => value?.replace(/\s+/g, " ").trim() ?? null;
 
 export async function catalogFingerprint(client: pg.Client, stage: CatalogStage) {
-  const analyticsStage = stage === "analytics" || stage === "audit" || stage === "auditExport";
+  const analyticsStage = stage === "analytics" || stage === "audit" || stage === "auditExport" || stage === "onboarding" || stage === "customDomain" || stage === "masterStorage" || stage === "masterArchiveIntegrity";
   const billingStage = stage === "billing" || stage === "billingBase" || stage === "billingCheckoutBase" || stage === "billingProviderBase" || analyticsStage;
-  const tables = stage === "pre15" ? pre : analyticsStage ? analytics : stage === "analyticsBase" ? analyticsBase : billingStage ? billing : step15;
-  const enumRows = await client.query(`select t.typname as name,e.enumsortorder::int as position,e.enumlabel as label from pg_type t join pg_enum e on e.enumtypid=t.oid join pg_namespace n on n.oid=t.typnamespace where n.nspname='public' and t.typname=any($1) order by 1,2`, [billingStage ? billingEnums : enums]);
+  const tables = stage === "pre15" ? pre : (stage === "masterStorage" || stage === "masterArchiveIntegrity") ? masterStorage : stage === "customDomain" ? customDomain : stage === "onboarding" ? onboarding : analyticsStage ? analytics : stage === "analyticsBase" ? analyticsBase : billingStage ? billing : step15;
+  const enumRows = await client.query(`select t.typname as name,e.enumsortorder::int as position,e.enumlabel as label from pg_type t join pg_enum e on e.enumtypid=t.oid join pg_namespace n on n.oid=t.typnamespace where n.nspname='public' and t.typname=any($1) order by 1,2`, [(stage === "masterStorage" || stage === "masterArchiveIntegrity") ? masterStorageEnums : stage === "customDomain" ? customDomainEnums : stage === "onboarding" ? onboardingEnums : billingStage ? billingEnums : enums]);
   const relations = await client.query(`select c.relname as name,c.relkind as kind,c.relrowsecurity as rls,c.relforcerowsecurity as forced from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname=any($1) order by 1`, [tables]);
   const columns = await client.query(`select c.relname as relation,a.attname as name,format_type(a.atttypid,a.atttypmod) as type,a.attnotnull as not_null,pg_get_expr(d.adbin,d.adrelid) as default,a.attidentity as identity,a.attgenerated as generated,coll.collname as collation from pg_class c join pg_namespace n on n.oid=c.relnamespace join pg_attribute a on a.attrelid=c.oid and a.attnum>0 and not a.attisdropped left join pg_attrdef d on d.adrelid=c.oid and d.adnum=a.attnum left join pg_collation coll on coll.oid=a.attcollation where n.nspname='public' and c.relname=any($1) order by 1,2`, [tables]);
   const constraints = await client.query(`select c.relname as relation,x.contype as type,pg_get_constraintdef(x.oid,true) as definition,x.confupdtype as update_action,x.confdeltype as delete_action from pg_constraint x join pg_class c on c.oid=x.conrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname=any($1) order by 1,3`, [tables]);
@@ -52,4 +58,10 @@ export const EXPECTED_CATALOG_HASHES: Record<CatalogStage, string> = {
   analyticsBase: "97eea02ba9e957bb52fa293007c22b7dec7f088c71295f386594b7a2d6214eec",
   audit: "9c81b785d8180cae9e867311df88726c7590f60eb31cf7e4a0456c47e0ea9076",
   auditExport: "d487c687729bc68b2ef81a4de096dcf570be8f488031c0229725486525562d20",
+  onboarding: "3d66798599bbe89c9ad4acc20af8c1db92f2f632ab2a845bd98854839df3529c",
+  customDomain: "0560854d1ab26f269086bfa65944a274f9cff17c2bc1dc4cadfdfd9c322089c9",
+  // Replace only through `pnpm --filter @workspace/db accept-migrations` on an isolated clean database.
+  masterStorage: "03fd1d283665b6f486a8edc69c441771ae61077839757c1b79290cb37c3414d0",
+  // Derive only through accept-migrations on an isolated clean database.
+  masterArchiveIntegrity: "0bf60707a959e43ed58da9ccc3d3d939121b5f5c2f6b8508d36151069f94eb98",
 };

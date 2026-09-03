@@ -9,3 +9,4 @@
 - [Billing lifecycle integrity](billing-lifecycle-integrity.md) — serialize Checkout and reconciliation per tenant; generation-scope Stripe customer creation so deleted IDs cannot replay.
 - [Analytics telemetry integrity](analytics-telemetry-integrity.md) — attest public playback server-side; bound metrics by receipt time, and persist queued events independently per video/event.
 - [Audit trail integrity](audit-trail-integrity.md) — keep tenant audit rows append-only, snapshot cursors scope-bound, and state transitions atomic with outcome events.
+- [Cold-master operation integrity](cold-master-operation-integrity.md) — generation-scope jobs, verify bytes/identity, and keep legacy unverified archives non-restorable.

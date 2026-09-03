@@ -12,6 +12,7 @@ import { videoProviders } from "./lib/provider-registry";
 import { receiveBunnyRoundTripCallback } from "./lib/bunny-roundtrip";
 import providerWebhooksRouter from "./routes/provider-webhooks";
 import { processStripeWebhook } from "./lib/stripe-webhook";
+import onboardingRouter from "./routes/onboarding";
 
 const app: Express = express();
 app.set("trust proxy", 1);
@@ -68,6 +69,7 @@ app.use(express.urlencoded({ extended: true }));
 
 await bootstrapDevelopmentTenant();
 app.use("/api/public", publicRouter);
+app.use("/api", onboardingRouter);
 app.use("/api", resolveTenant);
 app.use("/api", router);
 

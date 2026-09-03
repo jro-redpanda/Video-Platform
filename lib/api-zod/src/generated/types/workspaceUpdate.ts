@@ -32,9 +32,4 @@ export interface WorkspaceUpdate {
      */
   watermarkObjectKey?: string | null;
   posterTreatment?: WorkspaceUpdatePosterTreatment;
-  /**
-     * @maxLength 253
-     * @nullable
-     */
-  customDomain?: string | null;
 }

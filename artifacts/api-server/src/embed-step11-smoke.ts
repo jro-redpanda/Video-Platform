@@ -27,6 +27,8 @@ const { and, eq } = await import("drizzle-orm");
 const { default: app } = await import("./app");
 const { generateVideoEmbed, serializeEmbed } = await import("./lib/video-embeds");
 const { reconcileEmbedGenerationOutbox } = await import("./lib/jobs");
+const { videoProviders } = await import("./lib/provider-registry");
+const { Step7SmokeVideoProvider } = await import("@workspace/providers/test-only");
 
 const marker = randomUUID();
 const planId = randomUUID();
@@ -292,6 +294,25 @@ try {
   });
   assert.equal(privateSource.status, 307);
   assert.equal(privateSource.headers.get("cache-control"), "private, no-store");
+
+  // The test adapter normally produces the trusted hostname above. Its
+  // test-only override verifies both public and authenticated routes reject a
+  // syntactically valid, but provider-untrusted, redirect target.
+  const testProvider = videoProviders.resolve("step7-smoke");
+  assert.ok(testProvider instanceof Step7SmokeVideoProvider);
+  testProvider.playbackUrlOverride = "https://playback.test.invalid.attacker.invalid/master.m3u8";
+  try {
+    for (const request of [
+      fetch(`${root}/api/public/videos/${readyVideoId}`),
+      fetch(`${root}/api/public/videos/${readyVideoId}/source`, { redirect: "manual" }),
+      fetch(`${root}/api/videos/${privateVideoId}/playback`, { headers: { cookie } }),
+      fetch(`${root}/api/videos/${privateVideoId}/playback/source`, { headers: { cookie }, redirect: "manual" }),
+    ]) {
+      assert.equal((await request).status, 503);
+    }
+  } finally {
+    testProvider.playbackUrlOverride = undefined;
+  }
 
   const crossTenantPlayback = await fetch(`${root}/api/videos/${foreignVideoId}/playback`, { headers: { cookie } });
   assert.equal(crossTenantPlayback.status, 404);

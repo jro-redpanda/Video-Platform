@@ -8,6 +8,71 @@
 import * as zod from 'zod';
 
 
+export const GetOnboardingResponse = zod.object({
+  "state": zod.enum(['needs_workspace', 'provisioning', 'active', 'failed', 'suspended']),
+  "workspace": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "slug": zod.string(),
+  "status": zod.enum(['provisioning', 'active', 'failed', 'suspended'])
+}).optional(),
+  "provisioning": zod.object({
+  "state": zod.enum(['pending', 'creating', 'ready', 'reconciliation_required', 'unavailable', 'failed']),
+  "retryable": zod.boolean(),
+  "message": zod.string()
+})
+})
+
+
+export const createOnboardingWorkspaceBodyNameMin = 2;
+export const createOnboardingWorkspaceBodyNameMax = 100;
+
+export const createOnboardingWorkspaceBodySlugMin = 2;
+export const createOnboardingWorkspaceBodySlugMax = 63;
+
+
+
+export const CreateOnboardingWorkspaceBody = zod.object({
+  "name": zod.string().min(createOnboardingWorkspaceBodyNameMin).max(createOnboardingWorkspaceBodyNameMax),
+  "slug": zod.string().min(createOnboardingWorkspaceBodySlugMin).max(createOnboardingWorkspaceBodySlugMax).optional().describe('Human-entered slug normalized by the server to lower kebab case.')
+})
+
+export const CreateOnboardingWorkspaceResponse = zod.object({
+  "state": zod.enum(['needs_workspace', 'provisioning', 'active', 'failed', 'suspended']),
+  "workspace": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "slug": zod.string(),
+  "status": zod.enum(['provisioning', 'active', 'failed', 'suspended'])
+}).optional(),
+  "provisioning": zod.object({
+  "state": zod.enum(['pending', 'creating', 'ready', 'reconciliation_required', 'unavailable', 'failed']),
+  "retryable": zod.boolean(),
+  "message": zod.string()
+})
+})
+
+
+export const RetryOnboardingBody = zod.object({
+  "workspaceId": zod.string().optional()
+})
+
+export const RetryOnboardingResponse = zod.object({
+  "state": zod.enum(['needs_workspace', 'provisioning', 'active', 'failed', 'suspended']),
+  "workspace": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "slug": zod.string(),
+  "status": zod.enum(['provisioning', 'active', 'failed', 'suspended'])
+}).optional(),
+  "provisioning": zod.object({
+  "state": zod.enum(['pending', 'creating', 'ready', 'reconciliation_required', 'unavailable', 'failed']),
+  "retryable": zod.boolean(),
+  "message": zod.string()
+})
+})
+
+
 export const getBillingCatalogResponsePlansItemPricesMin = 2;
 export const getBillingCatalogResponsePlansItemPricesMax = 2;
 
@@ -197,8 +262,6 @@ export const updateWorkspaceBodyLogoObjectKeyMax = 1024;
 
 export const updateWorkspaceBodyWatermarkObjectKeyMax = 1024;
 
-export const updateWorkspaceBodyCustomDomainMax = 253;
-
 
 
 export const UpdateWorkspaceBody = zod.object({
@@ -209,8 +272,7 @@ export const UpdateWorkspaceBody = zod.object({
   "logoInitials": zod.string().min(1).max(updateWorkspaceBodyLogoInitialsMax).optional(),
   "logoObjectKey": zod.string().max(updateWorkspaceBodyLogoObjectKeyMax).nullish(),
   "watermarkObjectKey": zod.string().max(updateWorkspaceBodyWatermarkObjectKeyMax).nullish(),
-  "posterTreatment": zod.enum(['default', 'darken', 'gradient']).optional(),
-  "customDomain": zod.string().max(updateWorkspaceBodyCustomDomainMax).nullish()
+  "posterTreatment": zod.enum(['default', 'darken', 'gradient']).optional()
 })
 
 export const UpdateWorkspaceResponse = zod.object({
@@ -237,6 +299,56 @@ export const UpdateWorkspaceResponse = zod.object({
   "posterTreatment": zod.enum(['default', 'darken', 'gradient']),
   "customDomain": zod.string().nullable(),
   "customDomainVerified": zod.boolean()
+})
+
+
+export const GetCustomDomainResponse = zod.object({
+  "hostname": zod.string().nullable(),
+  "lifecycleState": zod.union([zod.literal('pending_verification'),zod.literal('verifying'),zod.literal('verified'),zod.literal('failed'),zod.literal('suspended'),zod.literal('removed'),zod.literal('reconciliation_required'),zod.literal(null)]).nullable(),
+  "txtRecordName": zod.string().nullable(),
+  "txtRecordValue": zod.string().nullable(),
+  "lastCheckedAt": zod.coerce.date().nullable(),
+  "verifiedAt": zod.coerce.date().nullable(),
+  "retryable": zod.boolean(),
+  "message": zod.string(),
+  "activationState": zod.enum(['not_ready', 'external_setup_required'])
+})
+
+
+export const createCustomDomainBodyHostnameMax = 253;
+
+
+
+export const CreateCustomDomainBody = zod.object({
+  "hostname": zod.string().min(1).max(createCustomDomainBodyHostnameMax)
+})
+
+export const CreateCustomDomainResponse = zod.object({
+  "hostname": zod.string().nullable(),
+  "lifecycleState": zod.union([zod.literal('pending_verification'),zod.literal('verifying'),zod.literal('verified'),zod.literal('failed'),zod.literal('suspended'),zod.literal('removed'),zod.literal('reconciliation_required'),zod.literal(null)]).nullable(),
+  "txtRecordName": zod.string().nullable(),
+  "txtRecordValue": zod.string().nullable(),
+  "lastCheckedAt": zod.coerce.date().nullable(),
+  "verifiedAt": zod.coerce.date().nullable(),
+  "retryable": zod.boolean(),
+  "message": zod.string(),
+  "activationState": zod.enum(['not_ready', 'external_setup_required'])
+})
+
+
+export const DeleteCustomDomainResponse = zod.void()
+
+
+export const VerifyCustomDomainResponse = zod.object({
+  "hostname": zod.string().nullable(),
+  "lifecycleState": zod.union([zod.literal('pending_verification'),zod.literal('verifying'),zod.literal('verified'),zod.literal('failed'),zod.literal('suspended'),zod.literal('removed'),zod.literal('reconciliation_required'),zod.literal(null)]).nullable(),
+  "txtRecordName": zod.string().nullable(),
+  "txtRecordValue": zod.string().nullable(),
+  "lastCheckedAt": zod.coerce.date().nullable(),
+  "verifiedAt": zod.coerce.date().nullable(),
+  "retryable": zod.boolean(),
+  "message": zod.string(),
+  "activationState": zod.enum(['not_ready', 'external_setup_required'])
 })
 
 
@@ -543,7 +655,7 @@ export const InitializeVideoUploadResponse = zod.object({
 
 
 export const GetVideoParams = zod.object({
-  "videoId": zod.coerce.string()
+  "videoId": zod.string().uuid()
 })
 
 export const GetVideoResponse = zod.object({
@@ -580,7 +692,7 @@ export const GetVideoResponse = zod.object({
 
 
 export const UpdateVideoParams = zod.object({
-  "videoId": zod.coerce.string()
+  "videoId": zod.string().uuid()
 })
 
 
@@ -627,14 +739,14 @@ export const UpdateVideoResponse = zod.object({
 
 
 export const DeleteVideoParams = zod.object({
-  "videoId": zod.coerce.string()
+  "videoId": zod.string().uuid()
 })
 
 export const DeleteVideoResponse = zod.void()
 
 
 export const GetAuthenticatedVideoPlaybackParams = zod.object({
-  "videoId": zod.coerce.string()
+  "videoId": zod.string().uuid()
 })
 
 export const GetAuthenticatedVideoPlaybackResponse = zod.object({
@@ -659,8 +771,68 @@ export const GetAuthenticatedVideoPlaybackResponse = zod.object({
 })
 
 
+export const GetMasterStorageStatusParams = zod.object({
+  "videoId": zod.string().uuid()
+})
+
+export const GetMasterStorageStatusResponse = zod.object({
+  "storageConfigured": zod.boolean(),
+  "sourceTransferConfigured": zod.boolean(),
+  "hasArchivedMaster": zod.boolean(),
+  "archivedAt": zod.coerce.date().nullable(),
+  "latestArchiveOperation": zod.object({
+  "operation": zod.enum(['archive', 'restore']),
+  "state": zod.enum(['pending', 'dispatching', 'queued', 'processing', 'completed', 'failed', 'reconciliation_required', 'cancelled']),
+  "diagnosticCode": zod.string().nullable(),
+  "retryable": zod.boolean(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "completedAt": zod.coerce.date().nullable()
+}).nullable(),
+  "latestRestoreOperation": zod.object({
+  "operation": zod.enum(['archive', 'restore']),
+  "state": zod.enum(['pending', 'dispatching', 'queued', 'processing', 'completed', 'failed', 'reconciliation_required', 'cancelled']),
+  "diagnosticCode": zod.string().nullable(),
+  "retryable": zod.boolean(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "completedAt": zod.coerce.date().nullable()
+}).nullable()
+})
+
+
+export const ArchiveVideoMasterParams = zod.object({
+  "videoId": zod.string().uuid()
+})
+
+export const ArchiveVideoMasterResponse = zod.object({
+  "operation": zod.enum(['archive', 'restore']),
+  "state": zod.enum(['pending', 'dispatching', 'queued', 'processing', 'completed', 'failed', 'reconciliation_required', 'cancelled']),
+  "diagnosticCode": zod.string().nullable(),
+  "retryable": zod.boolean(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "completedAt": zod.coerce.date().nullable()
+})
+
+
+export const RestoreVideoMasterParams = zod.object({
+  "videoId": zod.string().uuid()
+})
+
+export const RestoreVideoMasterResponse = zod.object({
+  "operation": zod.enum(['archive', 'restore']),
+  "state": zod.enum(['pending', 'dispatching', 'queued', 'processing', 'completed', 'failed', 'reconciliation_required', 'cancelled']),
+  "diagnosticCode": zod.string().nullable(),
+  "retryable": zod.boolean(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date(),
+  "completedAt": zod.coerce.date().nullable()
+})
+
+
 export const CreateThumbnailUploadIntentParams = zod.object({
-  "videoId": zod.coerce.string()
+  "videoId": zod.string().uuid()
 })
 
 export const createThumbnailUploadIntentBodySizeBytesMax = 10485760;
@@ -681,7 +853,7 @@ export const CreateThumbnailUploadIntentResponse = zod.object({
 
 
 export const FinalizeThumbnailParams = zod.object({
-  "videoId": zod.coerce.string()
+  "videoId": zod.string().uuid()
 })
 
 export const FinalizeThumbnailBody = zod.object({
@@ -703,28 +875,28 @@ export const FinalizeThumbnailResponse = zod.object({
  * Requires the opaque current `v` query value returned in thumbnailUrl.
  */
 export const GetVideoThumbnailParams = zod.object({
-  "videoId": zod.coerce.string()
+  "videoId": zod.string().uuid()
 })
 
 export const GetVideoThumbnailResponse = zod.unknown()
 
 
 export const DeleteVideoThumbnailParams = zod.object({
-  "videoId": zod.coerce.string()
+  "videoId": zod.string().uuid()
 })
 
 export const DeleteVideoThumbnailResponse = zod.void()
 
 
 export const GetAuthenticatedVideoPlaybackSourceParams = zod.object({
-  "videoId": zod.coerce.string()
+  "videoId": zod.string().uuid()
 })
 
 export const GetAuthenticatedVideoPlaybackSourceResponse = zod.void()
 
 
 export const CompleteVideoUploadParams = zod.object({
-  "videoId": zod.coerce.string()
+  "videoId": zod.string().uuid()
 })
 
 export const CompleteVideoUploadResponse = zod.object({
@@ -761,7 +933,7 @@ export const CompleteVideoUploadResponse = zod.object({
 
 
 export const CancelVideoUploadParams = zod.object({
-  "videoId": zod.coerce.string()
+  "videoId": zod.string().uuid()
 })
 
 export const CancelVideoUploadResponse = zod.object({
@@ -998,7 +1170,7 @@ export const CreateInvitationResponse = zod.object({
 
 
 export const GetPublicVideoParams = zod.object({
-  "videoId": zod.coerce.string()
+  "videoId": zod.string().uuid()
 })
 
 export const GetPublicVideoResponse = zod.object({
@@ -1026,7 +1198,7 @@ export const GetPublicVideoResponse = zod.object({
 
 
 export const GetPublicVideoSourceParams = zod.object({
-  "videoId": zod.coerce.string()
+  "videoId": zod.string().uuid()
 })
 
 export const GetPublicVideoSourceResponse = zod.void()
@@ -1036,7 +1208,7 @@ export const GetPublicVideoSourceResponse = zod.void()
  * Requires the opaque current `v` query value returned in thumbnailUrl.
  */
 export const GetPublicVideoThumbnailParams = zod.object({
-  "videoId": zod.coerce.string()
+  "videoId": zod.string().uuid()
 })
 
 export const GetPublicVideoThumbnailResponse = zod.unknown()

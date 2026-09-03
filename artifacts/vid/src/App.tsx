@@ -1,5 +1,5 @@
-import { type ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { type ReactNode, useEffect, useRef } from 'react';
+import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -22,7 +22,9 @@ import Audit from "@/pages/audit";
 import Settings from "@/pages/settings";
 import EmbedPlayer from "@/pages/embed-player";
 import Login from "@/pages/login";
+import OnboardingFlow from "@/pages/onboarding";
 import { authClient } from "@/lib/auth-client";
+import { useGetOnboarding, getGetOnboardingQueryKey } from "@workspace/api-client-react";
 
 const queryClient = new QueryClient();
 
@@ -51,6 +53,60 @@ function AuthenticatedRouter() {
     return <Login />;
   }
 
+  return <OnboardingGate />;
+}
+
+function OnboardingGate() {
+  const [location, setLocation] = useLocation();
+  const queryClient = useQueryClient();
+
+  const { data: onboarding, isLoading, isError } = useGetOnboarding({
+    query: {
+      queryKey: getGetOnboardingQueryKey(),
+      refetchInterval: (query) => {
+        return query.state.data?.state === 'provisioning' ? 2000 : false;
+      }
+    }
+  });
+
+  const prevState = useRef(onboarding?.state);
+
+  useEffect(() => {
+    if (prevState.current === 'provisioning' && onboarding?.state === 'active') {
+      queryClient.invalidateQueries();
+    }
+    prevState.current = onboarding?.state;
+  }, [onboarding?.state, queryClient]);
+
+  useEffect(() => {
+    if (isLoading || isError || !onboarding) return;
+
+    if (onboarding.state === 'active' && location === '/onboarding') {
+      setLocation('/', { replace: true });
+    } else if (onboarding.state !== 'active' && location !== '/onboarding') {
+      setLocation('/onboarding', { replace: true });
+    }
+  }, [onboarding?.state, location, isLoading, isError, setLocation]);
+
+  if (isLoading) {
+    return <div className="min-h-screen grid place-items-center text-muted-foreground">Loading workspace state…</div>;
+  }
+
+  if (isError) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center space-y-4">
+        <p className="text-destructive font-medium">Failed to load workspace state.</p>
+        <button onClick={() => window.location.reload()} className="text-sm underline hover:text-foreground text-muted-foreground transition-colors">Retry</button>
+      </div>
+    );
+  }
+
+  if (!onboarding) return null;
+
+  if (onboarding.state !== 'active') {
+    return <OnboardingFlow onboarding={onboarding} />;
+  }
+
   return (
     <Shell>
       <RoutedErrorBoundary>
@@ -63,6 +119,7 @@ function AuthenticatedRouter() {
           <Route path="/customization" component={Customization} />
           <Route path="/audit" component={Audit} />
           <Route path="/settings" component={Settings} />
+          <Route path="/onboarding" component={() => null} />
           <Route component={NotFound} />
         </Switch>
       </RoutedErrorBoundary>

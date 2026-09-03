@@ -1,9 +1,10 @@
-import type { Asset, AssetStatus, EncodeCompletionEvent, PlaybackSources, ProviderCapabilities, TenantSpace, UploadCredentials, VideoProvider } from "./contracts";
+import type { Asset, AssetStatus, EncodeCompletionEvent, PlaybackSources, ProviderCapabilities, TenantSpace, UploadCredentials, VideoProvider } from "./contracts.js";
 import { createHmac } from "node:crypto";
 
 /** TEST-ONLY: deterministic provider for automated tests. Never register in production. */
 export class Step7SmokeVideoProvider implements VideoProvider {
   readonly key = "step7-smoke";
+  readonly availability = { state: "configured" } as const;
   readonly capabilities: ProviderCapabilities = {
     durableStorage: true, multiRenditionTranscoding: true, manifestFormats: ["hls"],
     cdnDelivery: true, uploadMethods: ["tus"], signedPlaybackUrls: true, encodeCompletionCallback: true,
@@ -12,6 +13,8 @@ export class Step7SmokeVideoProvider implements VideoProvider {
   createAssetCalls = 0;
   deleteAssetCalls = 0;
   failNextDeleteAfterAcceptance = false;
+  /** Test hook for route-level playback-origin rejection coverage. */
+  playbackUrlOverride: string | undefined;
 
   async createTenantSpace(input: { name: string }): Promise<TenantSpace> {
     const idempotencyKey = input.name;
@@ -45,10 +48,23 @@ export class Step7SmokeVideoProvider implements VideoProvider {
   async getPlaybackSources(_space: TenantSpace, asset: Asset): Promise<PlaybackSources> {
     const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
     return {
-      hlsUrl: `https://playback.test.invalid/${stable(asset.id)}/master.m3u8?expires=${encodeURIComponent(expiresAt)}`,
+      hlsUrl: this.playbackUrlOverride ?? `https://playback.test.invalid/${stable(asset.id)}/master.m3u8?expires=${encodeURIComponent(expiresAt)}`,
       posterUrl: `https://playback.test.invalid/${stable(asset.id)}/poster.jpg?expires=${encodeURIComponent(expiresAt)}`,
       expiresAt,
     };
+  }
+  async isPlaybackSourceTrusted(_space: TenantSpace, value: string): Promise<boolean> {
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:"
+        && !url.username
+        && !url.password
+        && !url.port
+        && !url.hash
+        && url.hostname === "playback.test.invalid";
+    } catch {
+      return false;
+    }
   }
   verifyEncodeCompletionCallback(_rawBody: Buffer, _headers: Readonly<Record<string, string | string[] | undefined>>): EncodeCompletionEvent | null { return null; }
 }

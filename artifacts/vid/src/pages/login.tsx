@@ -44,7 +44,7 @@ export default function Login() {
         <form onSubmit={submit} className="w-full max-w-sm space-y-6">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">{mode === "signin" ? "Welcome back" : "Create your account"}</h1>
-            <p className="mt-2 text-muted-foreground">{mode === "signin" ? "Sign in to your workspace." : "Start with the development workspace."}</p>
+            <p className="mt-2 text-muted-foreground">{mode === "signin" ? "Sign in to your workspace." : "Sign up to create your workspace."}</p>
           </div>
           <div className="space-y-4">
             {mode === "signup" && (

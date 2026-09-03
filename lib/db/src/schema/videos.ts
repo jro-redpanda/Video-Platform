@@ -2,6 +2,7 @@ import { bigint, boolean, check, date, doublePrecision, foreignKey, index, integ
 import { sql } from "drizzle-orm";
 import { organizationsTable } from "./organizations";
 import { providerAccountsTable } from "./operations";
+import { usersTable } from "./identity";
 
 export const videoStatusEnum = pgEnum("video_status", ["created", "uploading", "processing", "ready", "error"]);
 export const videoVisibilityEnum = pgEnum("video_visibility", ["private", "unlisted", "public"]);
@@ -73,8 +74,12 @@ export const videosTable = pgTable("videos", {
   reconciliationRequired: text("reconciliation_required"),
   /** Set only for safe-to-repeat initialization failures; terminal flows clear it. */
   initializationRetryable: boolean("initialization_retryable").notNull().default(false),
+  /** Private immutable verified archive metadata. Legacy key/time-only rows are unverified. */
   masterStorageKey: text("master_storage_key"),
   masterArchivedAt: timestamp("master_archived_at", { withTimezone: true }),
+  masterSha256: text("master_sha256"),
+  masterSizeBytes: bigint("master_size_bytes", { mode: "number" }),
+  masterContentType: text("master_content_type"),
   tags: text("tags").array().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
@@ -93,6 +98,7 @@ export const videosTable = pgTable("videos", {
     table.providerTenantSpaceId,
     table.providerAssetId,
   ),
+  uniqueIndex("videos_id_organization_identity_idx").on(table.id, table.organizationId),
   check("videos_thumbnail_metadata_check", sql`(
     ${table.thumbnailObjectKey} is null and ${table.thumbnailContentType} is null and ${table.thumbnailSizeBytes} is null and ${table.thumbnailVersion} is null and ${table.thumbnailGeneration} is null and ${table.thumbnailMutableUntil} is null
   ) or (
@@ -100,6 +106,78 @@ export const videosTable = pgTable("videos", {
     and ${table.thumbnailContentType} in ('image/jpeg', 'image/png', 'image/webp')
     and ${table.thumbnailSizeBytes} between 1 and 10485760
     and ${table.thumbnailVersion} is not null
+  )`),
+  check("videos_master_archive_metadata_check", sql`(
+    ${table.masterStorageKey} is null and ${table.masterArchivedAt} is null and ${table.masterSha256} is null and ${table.masterSizeBytes} is null and ${table.masterContentType} is null
+  ) or (
+    ${table.masterStorageKey} is not null and ${table.masterArchivedAt} is not null and ${table.masterSha256} is null and ${table.masterSizeBytes} is null and ${table.masterContentType} is null
+  ) or (
+    ${table.masterStorageKey} is not null and ${table.masterArchivedAt} is not null
+    and ${table.masterSha256} ~ '^[a-f0-9]{64}$'
+    and ${table.masterSizeBytes} between 1 and 9223372036854775807
+    and ${table.masterContentType} = btrim(${table.masterContentType})
+    and char_length(${table.masterContentType}) between 1 and 255
+    and ${table.masterContentType} !~ '[[:cntrl:]]'
+  )`),
+]);
+
+/** Private durable ledger for master archive/restore work. Never project snapshots or storage keys. */
+export const masterStorageOperationStateEnum = pgEnum("master_storage_operation_state", [
+  "pending", "dispatching", "queued", "processing", "completed", "failed", "reconciliation_required", "cancelled",
+]);
+export const masterStorageOperationKindEnum = pgEnum("master_storage_operation_kind", ["archive", "restore"]);
+export const masterStorageOperationsTable = pgTable("master_storage_operations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull().references(() => organizationsTable.id, { onDelete: "cascade" }),
+  videoId: uuid("video_id").notNull().references(() => videosTable.id, { onDelete: "cascade" }),
+  requestedByUserId: uuid("requested_by_user_id").notNull().references(() => usersTable.id, { onDelete: "restrict" }),
+  operation: masterStorageOperationKindEnum("operation").notNull(),
+  state: masterStorageOperationStateEnum("state").notNull().default("pending"),
+  idempotencyKey: text("idempotency_key").notNull(),
+  providerAccountId: uuid("provider_account_id").notNull(),
+  providerTenantSpaceId: text("provider_tenant_space_id").notNull(),
+  providerAssetId: text("provider_asset_id").notNull(),
+  /** Private snapshot; populated for restore and never exposed in API/audit. */
+  restoreStorageKey: text("restore_storage_key"),
+  restoreSha256: text("restore_sha256"),
+  restoreSizeBytes: bigint("restore_size_bytes", { mode: "number" }),
+  restoreContentType: text("restore_content_type"),
+  dispatchGeneration: integer("dispatch_generation").notNull().default(0),
+  attempts: integer("attempts").notNull().default(0),
+  claimToken: uuid("claim_token"),
+  claimedAt: timestamp("claimed_at", { withTimezone: true }),
+  dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+  attemptedAt: timestamp("attempted_at", { withTimezone: true }),
+  retryAfterAt: timestamp("retry_after_at", { withTimezone: true }),
+  retryable: boolean("retryable").notNull().default(true),
+  diagnosticCode: text("diagnostic_code"),
+  resultMetadata: jsonb("result_metadata").$type<Record<string, unknown>>().notNull().default({}),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+}, (table) => [
+  uniqueIndex("master_storage_operations_idempotency_idx").on(table.idempotencyKey),
+  uniqueIndex("master_storage_operations_one_active_video_idx").on(table.videoId)
+    .where(sql`${table.state} in ('pending','dispatching','queued','processing')`),
+  index("master_storage_operations_dispatch_idx").on(table.state, table.retryAfterAt, table.createdAt),
+  index("master_storage_operations_org_video_idx").on(table.organizationId, table.videoId, table.createdAt),
+  foreignKey({
+    name: "master_storage_operations_video_organization_fk",
+    columns: [table.videoId, table.organizationId],
+    foreignColumns: [videosTable.id, videosTable.organizationId],
+  }).onDelete("cascade"),
+  check("master_storage_operations_attempts_check", sql`${table.attempts} between 0 and 8`),
+  check("master_storage_operations_restore_snapshot_check", sql`(
+    ${table.operation} = 'archive'
+    and ${table.restoreStorageKey} is null and ${table.restoreSha256} is null and ${table.restoreSizeBytes} is null and ${table.restoreContentType} is null
+  ) or (
+    ${table.operation} = 'restore'
+    and ${table.restoreStorageKey} is not null
+    and ${table.restoreSha256} ~ '^[a-f0-9]{64}$'
+    and ${table.restoreSizeBytes} between 1 and 9223372036854775807
+    and ${table.restoreContentType} = btrim(${table.restoreContentType})
+    and char_length(${table.restoreContentType}) between 1 and 255
+    and ${table.restoreContentType} !~ '[[:cntrl:]]'
   )`),
 ]);
 

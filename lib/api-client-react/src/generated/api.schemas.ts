@@ -5,6 +5,117 @@
  * Multi-tenant video platform API
  * OpenAPI spec version: 0.1.0
  */
+export type MasterStorageOperationOperation = typeof MasterStorageOperationOperation[keyof typeof MasterStorageOperationOperation];
+
+
+export const MasterStorageOperationOperation = {
+  archive: 'archive',
+  restore: 'restore',
+} as const;
+
+export type MasterStorageOperationState = typeof MasterStorageOperationState[keyof typeof MasterStorageOperationState];
+
+
+export const MasterStorageOperationState = {
+  pending: 'pending',
+  dispatching: 'dispatching',
+  queued: 'queued',
+  processing: 'processing',
+  completed: 'completed',
+  failed: 'failed',
+  reconciliation_required: 'reconciliation_required',
+  cancelled: 'cancelled',
+} as const;
+
+export interface MasterStorageOperation {
+  operation: MasterStorageOperationOperation;
+  state: MasterStorageOperationState;
+  diagnosticCode: string | null;
+  retryable: boolean;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+export interface MasterStorageStatus {
+  storageConfigured: boolean;
+  sourceTransferConfigured: boolean;
+  hasArchivedMaster: boolean;
+  archivedAt: string | null;
+  latestArchiveOperation: MasterStorageOperation | null;
+  latestRestoreOperation: MasterStorageOperation | null;
+}
+
+export interface WorkspaceOnboardingInput {
+  /**
+     * @minLength 2
+     * @maxLength 100
+     */
+  name: string;
+  /**
+     * Human-entered slug normalized by the server to lower kebab case.
+     * @minLength 2
+     * @maxLength 63
+     */
+  slug?: string;
+}
+
+export interface WorkspaceOnboardingRef {
+  workspaceId?: string;
+}
+
+export type WorkspaceOnboardingWorkspaceStatus = typeof WorkspaceOnboardingWorkspaceStatus[keyof typeof WorkspaceOnboardingWorkspaceStatus];
+
+
+export const WorkspaceOnboardingWorkspaceStatus = {
+  provisioning: 'provisioning',
+  active: 'active',
+  failed: 'failed',
+  suspended: 'suspended',
+} as const;
+
+export interface WorkspaceOnboardingWorkspace {
+  id: string;
+  name: string;
+  slug: string;
+  status: WorkspaceOnboardingWorkspaceStatus;
+}
+
+export type WorkspaceProvisioningSummaryState = typeof WorkspaceProvisioningSummaryState[keyof typeof WorkspaceProvisioningSummaryState];
+
+
+export const WorkspaceProvisioningSummaryState = {
+  pending: 'pending',
+  creating: 'creating',
+  ready: 'ready',
+  reconciliation_required: 'reconciliation_required',
+  unavailable: 'unavailable',
+  failed: 'failed',
+} as const;
+
+export interface WorkspaceProvisioningSummary {
+  state: WorkspaceProvisioningSummaryState;
+  retryable: boolean;
+  message: string;
+}
+
+export type WorkspaceOnboardingState = typeof WorkspaceOnboardingState[keyof typeof WorkspaceOnboardingState];
+
+
+export const WorkspaceOnboardingState = {
+  needs_workspace: 'needs_workspace',
+  provisioning: 'provisioning',
+  active: 'active',
+  failed: 'failed',
+  suspended: 'suspended',
+} as const;
+
+export interface WorkspaceOnboarding {
+  state: WorkspaceOnboardingState;
+  workspace?: WorkspaceOnboardingWorkspace;
+  provisioning: WorkspaceProvisioningSummary;
+}
+
 export type BillingPriceInterval = typeof BillingPriceInterval[keyof typeof BillingPriceInterval];
 
 
@@ -259,11 +370,56 @@ export interface WorkspaceUpdate {
      */
   watermarkObjectKey?: string | null;
   posterTreatment?: WorkspaceUpdatePosterTreatment;
+}
+
+export interface CustomDomainInput {
   /**
+     * @minLength 1
      * @maxLength 253
-     * @nullable
      */
-  customDomain?: string | null;
+  hostname: string;
+}
+
+/**
+ * @nullable
+ */
+export type CustomDomainStatusLifecycleState = typeof CustomDomainStatusLifecycleState[keyof typeof CustomDomainStatusLifecycleState] | null;
+
+
+export const CustomDomainStatusLifecycleState = {
+  pending_verification: 'pending_verification',
+  verifying: 'verifying',
+  verified: 'verified',
+  failed: 'failed',
+  suspended: 'suspended',
+  removed: 'removed',
+  reconciliation_required: 'reconciliation_required',
+} as const;
+
+export type CustomDomainStatusActivationState = typeof CustomDomainStatusActivationState[keyof typeof CustomDomainStatusActivationState];
+
+
+export const CustomDomainStatusActivationState = {
+  not_ready: 'not_ready',
+  external_setup_required: 'external_setup_required',
+} as const;
+
+export interface CustomDomainStatus {
+  /** @nullable */
+  hostname: string | null;
+  /** @nullable */
+  lifecycleState: CustomDomainStatusLifecycleState;
+  /** @nullable */
+  txtRecordName: string | null;
+  /** @nullable */
+  txtRecordValue: string | null;
+  /** @nullable */
+  lastCheckedAt: string | null;
+  /** @nullable */
+  verifiedAt: string | null;
+  retryable: boolean;
+  message: string;
+  activationState: CustomDomainStatusActivationState;
 }
 
 export interface TrendPoint {
