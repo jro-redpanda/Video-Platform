@@ -267,9 +267,22 @@ try {
       `vid.upload.expiry-cleanup.${suffix}`,
       `vid.video.embed-generation.${suffix}`,
       `vid.video.embed-dispatch.${suffix}`,
+      `vid.thumbnail.cleanup.${suffix}`,
+      `vid.billing.reconcile.${suffix}`,
+      `vid.analytics.rollup.${suffix}`,
+      `vid.analytics.retention.${suffix}`,
       `vid.system.dead-letter.${suffix}`,
     ];
-    await boss.unschedule(`vid.upload.expiry-cleanup.${suffix}`);
+    for (const scheduledQueue of [
+      `vid.upload.expiry-cleanup.${suffix}`,
+      `vid.video.embed-dispatch.${suffix}`,
+      `vid.thumbnail.cleanup.${suffix}`,
+      `vid.billing.reconcile.${suffix}`,
+      `vid.analytics.rollup.${suffix}`,
+      `vid.analytics.retention.${suffix}`,
+    ]) {
+      await boss.unschedule(scheduledQueue);
+    }
     for (const queue of queues) {
       await boss.offWork(queue);
       await boss.deleteQueuedJobs(queue);

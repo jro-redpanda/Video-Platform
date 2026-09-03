@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type PlaybackEventInputEventType = typeof PlaybackEventInputEventType[keyof typeof PlaybackEventInputEventType];
+export type PlaybackEventInputType = typeof PlaybackEventInputType[keyof typeof PlaybackEventInputType];
 
 
-export const PlaybackEventInputEventType = {
+export const PlaybackEventInputType = {
   load: 'load',
   play: 'play',
   progress: 'progress',

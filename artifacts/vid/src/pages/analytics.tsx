@@ -3,13 +3,23 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Skeleton } from "@/components/ui/skeleton"
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts'
 import { formatNumber } from "@/lib/utils"
-import { PlayCircle, Clock } from "lucide-react"
+import { PlayCircle, Clock, Video, TrendingUp } from "lucide-react"
 
 export default function Analytics() {
-  const { data: dashboard, isLoading } = useGetDashboard()
+  const { data: dashboard, isLoading, isError } = useGetDashboard()
 
   const formatShortDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  }
+
+  if (isError) {
+    return (
+      <div className="flex-1 p-8 overflow-y-auto flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-muted-foreground">Failed to load analytics dashboard.</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -19,6 +29,61 @@ export default function Analytics() {
           <h1 className="text-3xl font-bold tracking-tight">Analytics</h1>
           <p className="text-muted-foreground mt-1">Deep dive into your video performance.</p>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Videos</CardTitle>
+            <Video className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <Skeleton className="h-8 w-16" />
+            ) : (
+              <div className="text-2xl font-bold">{formatNumber(dashboard?.totalVideos || 0)}</div>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Total Plays</CardTitle>
+            <PlayCircle className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <Skeleton className="h-8 w-16" />
+            ) : (
+              <div className="text-2xl font-bold">{formatNumber(dashboard?.totalPlays || 0)}</div>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Watch Time</CardTitle>
+            <Clock className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <Skeleton className="h-8 w-16" />
+            ) : (
+              <div className="text-2xl font-bold">{formatNumber(dashboard?.watchTimeHours || 0)} <span className="text-sm font-normal text-muted-foreground">hrs</span></div>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Avg Completion</CardTitle>
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <Skeleton className="h-8 w-16" />
+            ) : (
+              <div className="text-2xl font-bold">{Math.round((dashboard?.completionRate ?? 0) * 100)}%</div>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
@@ -90,7 +155,11 @@ export default function Analytics() {
             ) : dashboard?.topVideos?.length ? (
               <div className="h-[300px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={dashboard.topVideos.slice(0, 5)} layout="vertical" margin={{ top: 0, right: 20, left: 0, bottom: 0 }}>
+                  <BarChart
+                    data={dashboard.topVideos.slice(0, 5).map(v => ({ ...v, completionRateDisplay: Math.round((v.completionRate ?? 0) * 100) }))}
+                    layout="vertical"
+                    margin={{ top: 0, right: 20, left: 0, bottom: 0 }}
+                  >
                     <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="hsl(var(--border))" />
                     <XAxis type="number" domain={[0, 100]} hide />
                     <YAxis dataKey="title" type="category" hide />
@@ -99,7 +168,7 @@ export default function Analytics() {
                       contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }}
                       formatter={(val: number) => [`${val}%`, 'Completion']}
                     />
-                    <Bar dataKey="completionRate" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]}>
+                    <Bar dataKey="completionRateDisplay" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]}>
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
@@ -136,7 +205,7 @@ export default function Analytics() {
                   <tr key={video.id} className="border-b last:border-0 hover:bg-muted/50 transition-colors">
                     <td className="p-4 font-medium">{video.title}</td>
                     <td className="p-4 text-right font-mono">{formatNumber(video.plays)}</td>
-                    <td className="p-4 text-right font-mono">{video.completionRate}%</td>
+                    <td className="p-4 text-right font-mono">{Math.round((video.completionRate ?? 0) * 100)}%</td>
                   </tr>
                 ))
               ) : (

@@ -9,6 +9,11 @@ import type { PlaybackEventInput } from './playbackEventInput';
 
 export interface PlaybackEventBatch {
   /**
+     * @minLength 20
+     * @maxLength 4096
+     */
+  grant: string;
+  /**
      * @minItems 1
      * @maxItems 50
      */

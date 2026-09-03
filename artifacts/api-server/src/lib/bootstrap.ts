@@ -9,7 +9,6 @@ import {
   permissionsTable,
   plansTable,
   usersTable,
-  videoAnalyticsRollupsTable,
   videoEmbedsTable,
   videosTable,
 } from "@workspace/db";
@@ -34,6 +33,8 @@ const permissionCatalog = [
   ["videos.delete", "Delete videos and provider media"],
   ["members.manage", "Invite, suspend, and assign members"],
   ["analytics.read", "View workspace analytics"],
+  ["audit.read", "View the immutable audit trail"],
+  ["audit.export", "Export the immutable audit trail"],
 ] as const;
 
 // MOCK: replaced at step 18
@@ -192,13 +193,6 @@ export async function bootstrapDevelopmentTenant() {
         generatedAt: new Date(),
       }))).onConflictDoNothing();
 
-    // MOCK: replaced at step 16
-    await tx.insert(videoAnalyticsRollupsTable).values([
-      { organizationId: developmentTenant.organizationId, videoId: demoVideos[0][0], day: "2026-09-01", plays: 18420, watchTimeSeconds: 1_540_000, completionRate: 72.8 },
-      { organizationId: developmentTenant.organizationId, videoId: demoVideos[1][0], day: "2026-09-01", plays: 9327, watchTimeSeconds: 1_210_000, completionRate: 81.2 },
-      { organizationId: developmentTenant.organizationId, videoId: demoVideos[3][0], day: "2026-09-01", plays: 6411, watchTimeSeconds: 1_885_360, completionRate: 64.3 },
-    ]).onConflictDoNothing();
-
     // MOCK: replaced at step 17
     await tx.insert(auditLogsTable).values([
       { id: "7241e25f-70e3-4786-afda-340f62895e85", organizationId: developmentTenant.organizationId, actorUserId: developmentTenant.userId, action: "published", subjectType: "video", subjectId: demoVideos[0][0], subjectLabel: demoVideos[0][1] },
@@ -214,9 +208,11 @@ export async function bootstrapDevelopmentTenant() {
  */
 export async function reconcileSystemVideoDeletePermission() {
   await db.transaction(async (tx) => {
-    await tx.insert(permissionsTable).values({
-      key: "videos.delete", description: "Delete videos and provider media",
-    }).onConflictDoNothing();
+    await tx.insert(permissionsTable).values([
+      { key: "videos.delete", description: "Delete videos and provider media" },
+      { key: "audit.read", description: "View the immutable audit trail" },
+      { key: "audit.export", description: "Export the immutable audit trail" },
+    ]).onConflictDoNothing();
     const groups = await tx.select({ id: permissionGroupsTable.id }).from(permissionGroupsTable).where(or(
       and(eq(permissionGroupsTable.name, "Owners"), eq(permissionGroupsTable.description, "Full workspace access")),
       and(eq(permissionGroupsTable.name, "Editors"), eq(permissionGroupsTable.description, "Create and manage videos")),
@@ -226,6 +222,20 @@ export async function reconcileSystemVideoDeletePermission() {
         groups.map(({ id }) => ({ groupId: id, permissionKey: "videos.delete" })),
       ).onConflictDoNothing();
     }
+    // Administrative authority is capability-based, not mutable display metadata:
+    // only groups already holding both workspace and membership administration
+    // receive access to the audit trail.
+    await tx.execute(sql`
+      insert into group_permissions(group_id, permission_key)
+      select admin.group_id, capability.permission_key
+      from (
+        select group_id from group_permissions
+        where permission_key in ('workspace.manage', 'members.manage')
+        group by group_id having count(distinct permission_key) = 2
+      ) admin
+      cross join (values ('audit.read'), ('audit.export')) capability(permission_key)
+      on conflict do nothing
+    `);
   });
 }
 

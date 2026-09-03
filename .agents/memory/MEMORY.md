@@ -7,3 +7,5 @@
 - [Strict union request validation](strict-union-request-validation.md) — keep raw-key boundary guards for mutually exclusive OpenAPI bodies generated through Orval/Zod.
 - [App Storage thumbnail promotion](app-storage-thumbnail-promotion.md) — copied objects may lose Content-Type; patch metadata conditionally and pin the final generation.
 - [Billing lifecycle integrity](billing-lifecycle-integrity.md) — serialize Checkout and reconciliation per tenant; generation-scope Stripe customer creation so deleted IDs cannot replay.
+- [Analytics telemetry integrity](analytics-telemetry-integrity.md) — attest public playback server-side; bound metrics by receipt time, and persist queued events independently per video/event.
+- [Audit trail integrity](audit-trail-integrity.md) — keep tenant audit rows append-only, snapshot cursors scope-bound, and state transitions atomic with outcome events.

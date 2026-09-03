@@ -9,8 +9,10 @@ import { cleanupThumbnailObjects } from "./thumbnail-cleanup";
 import { reconcileActiveBilling } from "./billing-reconciliation";
 import type { ThumbnailStorage } from "./thumbnail-storage";
 import { and, eq, gte, lt, or, sql } from "drizzle-orm";
-import { db, embedGenerationOutboxTable } from "@workspace/db";
+import { db, embedGenerationOutboxTable, videosTable } from "@workspace/db";
+import { auditJob, writeAuditEvent } from "./audit";
 import { randomUUID } from "node:crypto";
+import { processAnalyticsDirtyDays, purgeAnalyticsData } from "./analytics-rollup";
 
 const queueSuffix = process.env.JOB_QUEUE_NAMESPACE ? `.${process.env.JOB_QUEUE_NAMESPACE}` : "";
 const QUEUE_NAME = `vid.system.health${queueSuffix}`;
@@ -22,6 +24,8 @@ export const EMBED_GENERATION_QUEUE = `vid.video.embed-generation${queueSuffix}`
 export const EMBED_DISPATCH_QUEUE = `vid.video.embed-dispatch${queueSuffix}`;
 export const THUMBNAIL_CLEANUP_QUEUE = `vid.thumbnail.cleanup${queueSuffix}`;
 export const BILLING_RECONCILIATION_QUEUE = `vid.billing.reconcile${queueSuffix}`;
+export const ANALYTICS_ROLLUP_QUEUE = `vid.analytics.rollup${queueSuffix}`;
+export const ANALYTICS_RETENTION_QUEUE = `vid.analytics.retention${queueSuffix}`;
 
 type HealthJob = {
   requestedAt: string;
@@ -114,10 +118,20 @@ export async function startJobs(options: {
     expireInSeconds: 900,
     retentionSeconds: 86400,
   });
+  await instance.createQueue(ANALYTICS_ROLLUP_QUEUE, {
+    retryLimit: 5, retryDelay: 10, retryBackoff: true, deadLetter: DEAD_LETTER_QUEUE,
+    expireInSeconds: 900, retentionSeconds: 86400,
+  });
+  await instance.createQueue(ANALYTICS_RETENTION_QUEUE, {
+    retryLimit: 3, retryDelay: 60, retryBackoff: true, deadLetter: DEAD_LETTER_QUEUE,
+    expireInSeconds: 900, retentionSeconds: 86400,
+  });
   await instance.schedule(UPLOAD_EXPIRY_QUEUE, "*/15 * * * *", {}, { tz: "UTC" });
   await instance.schedule(EMBED_DISPATCH_QUEUE, "* * * * *", {}, { tz: "UTC" });
   await instance.schedule(THUMBNAIL_CLEANUP_QUEUE, "*/5 * * * *", {}, { tz: "UTC" });
   await instance.schedule(BILLING_RECONCILIATION_QUEUE, "*/5 * * * *", {}, { tz: "UTC" });
+  await instance.schedule(ANALYTICS_ROLLUP_QUEUE, "* * * * *", {}, { tz: "UTC" });
+  await instance.schedule(ANALYTICS_RETENTION_QUEUE, "17 3 * * *", {}, { tz: "UTC" });
   await instance.work<HealthJob>(QUEUE_NAME, async ([job]: Job<HealthJob>[]) => {
     logger.info({ jobId: job.id, requestedAt: job.data.requestedAt }, "Job worker processed health check");
     return { processedAt: new Date().toISOString() };
@@ -157,6 +171,8 @@ export async function startJobs(options: {
     cleanupThumbnailObjects(options.thumbnailStorage));
   await instance.work(BILLING_RECONCILIATION_QUEUE, { batchSize: 1 }, async () =>
     reconcileActiveBilling());
+  await instance.work(ANALYTICS_ROLLUP_QUEUE, { batchSize: 1 }, async () => processAnalyticsDirtyDays());
+  await instance.work(ANALYTICS_RETENTION_QUEUE, { batchSize: 1 }, async () => purgeAnalyticsData());
 
   boss = instance;
   logger.info({ queue: QUEUE_NAME }, "Job queue and worker started");
@@ -289,13 +305,27 @@ export async function reconcileEmbedGenerationOutbox(instance?: PgBoss) {
       continue;
     }
     if (!job && candidate.dispatchedAt && candidate.dispatchedAt < retentionHorizon) {
-      const changed = await db.update(embedGenerationOutboxTable).set({
-        state: "reconciliation_required",
-        diagnosticCode: "generation_job_missing_after_retention_horizon",
-      }).where(and(
-        eq(embedGenerationOutboxTable.id, candidate.id),
-        eq(embedGenerationOutboxTable.state, "dispatched"),
-      )).returning({ id: embedGenerationOutboxTable.id });
+      const changed = await db.transaction(async (tx) => {
+        const [row] = await tx.update(embedGenerationOutboxTable).set({
+          state: "reconciliation_required",
+          diagnosticCode: "generation_job_missing_after_retention_horizon",
+        }).where(and(
+          eq(embedGenerationOutboxTable.id, candidate.id),
+          eq(embedGenerationOutboxTable.state, "dispatched"),
+        )).returning({ id: embedGenerationOutboxTable.id });
+        if (!row) return [];
+        const [video] = await tx.select({
+          organizationId: videosTable.organizationId, title: videosTable.title,
+        }).from(videosTable).where(eq(videosTable.id, candidate.videoId)).limit(1);
+        if (video) await writeAuditEvent(tx, {
+          organizationId: video.organizationId, actor: auditJob(), action: "embed.generation_failed", category: "embed",
+          subject: { type: "video", id: candidate.videoId, label: video.title },
+          beforeState: { outboxState: "dispatched" },
+          afterState: { outboxState: "reconciliation_required", generationVersion: 1 },
+          metadata: { code: "generation_job_missing_after_retention_horizon" },
+        });
+        return [row];
+      });
       quarantined += changed.length;
     }
   }

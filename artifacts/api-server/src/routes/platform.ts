@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, lt, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, ilike, isNull, lt, lte, or, sql, type SQL } from "drizzle-orm";
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter, type Request } from "express";
 import { runtimeConfig } from "../lib/config";
@@ -49,6 +49,7 @@ import { hasEntitlement, requireCreateAccess, resolveBillingAccess, resolveEntit
 import { resolveProvisioningProvider, videoProviders } from "../lib/provider-registry";
 import { AssetCreationRejectedError } from "@workspace/providers";
 import { serializeEmbed, trustedRequestOrigin } from "../lib/video-embeds";
+import { AuditExportRateLimitError, auditDiff, auditUser, consumeAuditExportLimit, writeAuditEvent } from "../lib/audit";
 
 const router: IRouter = Router();
 const videoStatuses = ["created", "uploading", "processing", "ready", "error"] as const;
@@ -62,6 +63,8 @@ const cursorSigningKey = createHmac("sha256", sessionSecret)
   .digest();
 const cursorLifetimeMs = 15 * 60 * 1000;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const auditMachinePattern = /^[a-z][a-z0-9_.-]{0,99}$/;
+const auditActorKinds = new Set(["user", "system", "webhook", "job"]);
 
 const videoProjection = {
   id: videosTable.id,
@@ -195,13 +198,27 @@ router.patch("/workspace", requirePermission("workspace.manage"), async (req, re
         ...(update.customDomain !== undefined ? { customDomain: update.customDomain, customDomainVerified: false } : {}),
       }).where(eq(organizationCustomizationTable.organizationId, req.tenant.organizationId));
     }
-    await tx.insert(auditLogsTable).values({
-      organizationId: req.tenant.organizationId,
-      actorUserId: req.tenant.userId,
-      action: "updated workspace",
-      subjectType: "organization",
-      subjectId: req.tenant.organizationId,
-      subjectLabel: update.name ?? runtimeConfig.productName,
+    // This endpoint only accepts normalized Zod input. Keep the audit payload
+    // to operator-facing settings, never storage object keys.
+    await writeAuditEvent(tx, {
+      organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+      action: "workspace.settings_updated", category: "workspace",
+      subject: { type: "organization", id: req.tenant.organizationId, label: update.name ?? runtimeConfig.productName },
+      afterState: {
+        ...(update.name !== undefined ? { name: update.name } : {}),
+        ...(update.playerAccent !== undefined ? { playerAccent: update.playerAccent } : {}),
+        ...(update.playerControlForeground !== undefined ? { playerControlForeground: update.playerControlForeground } : {}),
+        ...(update.playerControlBackground !== undefined ? { playerControlBackground: update.playerControlBackground } : {}),
+        ...(update.logoInitials !== undefined ? { logoInitials: update.logoInitials } : {}),
+        ...(update.posterTreatment !== undefined ? { posterTreatment: update.posterTreatment } : {}),
+      },
+      requestId: String(req.id),
+    });
+    if (update.customDomain !== undefined) await writeAuditEvent(tx, {
+      organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+      action: "workspace.custom_domain_changed", category: "workspace",
+      subject: { type: "organization", id: req.tenant.organizationId, label: update.name ?? runtimeConfig.productName },
+      afterState: { customDomain: update.customDomain, verified: false }, requestId: String(req.id),
     });
     return fetchWorkspace(tx, req.tenant.organizationId, req.tenant.userId);
   });
@@ -262,34 +279,45 @@ function contrastRatio(foreground: string, background: string) {
 
 router.get("/dashboard", requirePermission("analytics.read"), async (req, res) => {
   const organizationId = req.tenant.organizationId;
-  const { totals, topVideos } = await withTenantDb(req.tenant, async (tx) => {
+  const { totals, topVideos, playsTrend } = await withTenantDb(req.tenant, async (tx) => {
+    const today = sql`(now() at time zone 'UTC')::date`;
+    const firstDay = sql`${today} - 29`;
     const [totals] = await tx.select({
     totalVideos: sql<number>`count(distinct ${videosTable.id})::int`,
-    totalPlays: sql<number>`coalesce(sum(${videoAnalyticsRollupsTable.plays}), 0)::int`,
-    watchTimeHours: sql<number>`coalesce(sum(${videoAnalyticsRollupsTable.watchTimeSeconds}), 0)::float / 3600`,
-    completionRate: sql<number>`coalesce(sum(${videoAnalyticsRollupsTable.completionRate} * ${videoAnalyticsRollupsTable.plays}) / nullif(sum(${videoAnalyticsRollupsTable.plays}), 0), 0)::float`,
+    totalPlays: sql<number>`coalesce(sum(${videoAnalyticsRollupsTable.plays}) filter(where ${videoAnalyticsRollupsTable.day} >= ${firstDay}), 0)::int`,
+    watchTimeHours: sql<number>`coalesce(sum(${videoAnalyticsRollupsTable.watchTimeSeconds}) filter(where ${videoAnalyticsRollupsTable.day} >= ${firstDay}), 0)::float / 3600`,
+    completionRate: sql<number>`coalesce(
+      sum(${videoAnalyticsRollupsTable.completions}) filter(where ${videoAnalyticsRollupsTable.day} >= ${firstDay})
+      / nullif(sum(${videoAnalyticsRollupsTable.plays}) filter(where ${videoAnalyticsRollupsTable.day} >= ${firstDay}), 0)::float, 0)`,
   }).from(videosTable)
-    .leftJoin(videoAnalyticsRollupsTable, eq(videoAnalyticsRollupsTable.videoId, videosTable.id))
+    .leftJoin(videoAnalyticsRollupsTable, and(
+      eq(videoAnalyticsRollupsTable.videoId, videosTable.id),
+      sql`${videoAnalyticsRollupsTable.day} >= ${firstDay}`,
+    ))
     .where(eq(videosTable.organizationId, organizationId));
 
     const topVideos = await tx.select(videoProjection).from(videosTable)
-    .leftJoin(videoAnalyticsRollupsTable, eq(videoAnalyticsRollupsTable.videoId, videosTable.id))
+    .leftJoin(videoAnalyticsRollupsTable, and(
+      eq(videoAnalyticsRollupsTable.videoId, videosTable.id),
+      sql`${videoAnalyticsRollupsTable.day} >= ${firstDay}`,
+    ))
     .where(eq(videosTable.organizationId, organizationId))
     .groupBy(videosTable.id)
     .orderBy(desc(sql`coalesce(sum(${videoAnalyticsRollupsTable.plays}), 0)`))
     .limit(3);
-    return { totals, topVideos };
+    const trendResult = await tx.execute<{ date: string; plays: number }>(sql`
+      select to_char(days.day, 'YYYY-MM-DD') date, coalesce(sum(rollup.plays),0)::int plays
+      from generate_series(${firstDay}, ${today}, interval '1 day') days(day)
+      left join ${videoAnalyticsRollupsTable} rollup on rollup.organization_id=${organizationId}
+        and rollup.day=days.day::date
+      group by days.day order by days.day
+    `);
+    return { totals, topVideos, playsTrend: trendResult.rows };
   });
 
   res.json(GetDashboardResponse.parse({
     ...totals,
-    // MOCK: replaced at step 16
-    playsTrend: [
-      { date: "Aug 26", plays: 3820 }, { date: "Aug 27", plays: 4260 },
-      { date: "Aug 28", plays: 3980 }, { date: "Aug 29", plays: 5410 },
-      { date: "Aug 30", plays: 4890 }, { date: "Aug 31", plays: 5720 },
-      { date: "Sep 1", plays: totals.totalPlays },
-    ],
+    playsTrend,
     topVideos,
   }));
 });
@@ -570,6 +598,12 @@ router.post("/videos/upload-init", requirePermission("videos.create"), requireCr
     await tx.update(organizationsTable).set({
       storageUsedBytes: sql`${organizationsTable.storageUsedBytes} + ${input.contentLength}`,
     }).where(eq(organizationsTable.id, req.tenant.organizationId));
+    await writeAuditEvent(tx, {
+      organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+      action: "upload.requested", category: "content",
+      subject: { type: "video", id: video.id, label: video.title },
+      afterState: { status: "created", folderId: requestedFolderId }, requestId: String(req.id),
+    });
     return { video, newlyReserved: true };
   }).catch((error: unknown) => {
     if (error instanceof UploadLimitError) return {
@@ -639,10 +673,18 @@ router.post("/videos/upload-init", requirePermission("videos.create"), requireCr
       { id: spaceData.space.providerSpaceId }, { id: providerAssetId },
       { fileName: input.fileName, contentType: input.contentType, contentLength: input.contentLength },
     );
-    await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
+    await withTenantDb(req.tenant, async (tx) => {
+      await tx.update(videosTable).set({
       status: "uploading", uploadFailureDetail: null, initializationRetryable: false,
     })
-      .where(scopedVideoWhere(req.tenant.organizationId, reservation.video.id)));
+      .where(scopedVideoWhere(req.tenant.organizationId, reservation.video.id));
+      await writeAuditEvent(tx, {
+        organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+        action: "upload.initialized", category: "content",
+        subject: { type: "video", id: reservation.video.id, label: reservation.video.title },
+        beforeState: { status: reservation.video.status }, afterState: { status: "uploading" }, requestId: String(req.id),
+      });
+    });
     // Do not expose the stored provider linkage; only transient upload headers
     // and the owned video UUID leave this endpoint.
     res.status(reservation.newlyReserved ? 201 : 200).json(InitializeVideoUploadResponse.parse({
@@ -658,24 +700,38 @@ router.post("/videos/upload-init", requirePermission("videos.create"), requireCr
       return;
     }
     if (!assetCreationAttempted || assetPersisted) {
-      await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
-        status: "error",
-        uploadFailureDetail: assetPersisted
-          ? "Upload credentials are temporarily unavailable; retry with the same idempotency key."
-          : "Provider setup is temporarily unavailable; retry with the same idempotency key.",
-        assetCreationClaim: null,
-        assetCreationClaimedAt: null,
-        initializationRetryable: true,
-      }).where(scopedVideoWhere(req.tenant.organizationId, reservation.video.id)));
+      await withTenantDb(req.tenant, async (tx) => {
+        const [changed] = await tx.update(videosTable).set({
+          status: "error",
+          uploadFailureDetail: assetPersisted
+            ? "Upload credentials are temporarily unavailable; retry with the same idempotency key."
+            : "Provider setup is temporarily unavailable; retry with the same idempotency key.",
+          assetCreationClaim: null, assetCreationClaimedAt: null, initializationRetryable: true,
+        }).where(and(scopedVideoWhere(req.tenant.organizationId, reservation.video.id), sql`${videosTable.status} <> 'error'`))
+          .returning({ id: videosTable.id });
+        if (changed) await writeAuditEvent(tx, {
+          organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId), action: "upload.failed", category: "content",
+          subject: { type: "video", id: reservation.video.id, label: reservation.video.title },
+          afterState: { status: "error" }, metadata: { code: "upload_initialization_failed" }, requestId: String(req.id),
+        });
+      });
       req.log.error({ err: error, videoId: reservation.video.id }, "Retryable upload initialization failure");
       res.status(503).json({ error: "Upload initialization is temporarily unavailable. Retry with the same idempotency key." });
       return;
     }
-    await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
-      status: "error", uploadFailureDetail: "Provider outcome is unknown and requires reconciliation.",
-      reconciliationRequired: "provider asset creation outcome unknown",
-      initializationRetryable: false,
-    }).where(scopedVideoWhere(req.tenant.organizationId, reservation.video.id)));
+    await withTenantDb(req.tenant, async (tx) => {
+      const [changed] = await tx.update(videosTable).set({
+        status: "error", uploadFailureDetail: "Provider outcome is unknown and requires reconciliation.",
+        reconciliationRequired: "provider asset creation outcome unknown", initializationRetryable: false,
+      }).where(and(scopedVideoWhere(req.tenant.organizationId, reservation.video.id), sql`${videosTable.reconciliationRequired} is null`))
+        .returning({ id: videosTable.id });
+      if (changed) await writeAuditEvent(tx, {
+        organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId), action: "upload.reconciliation_required", category: "content",
+        subject: { type: "video", id: reservation.video.id, label: reservation.video.title },
+        afterState: { status: "error", reconciliationRequired: true },
+        metadata: { code: "provider_asset_creation_outcome_unknown" }, requestId: String(req.id),
+      });
+    });
     req.log.error({ err: error, videoId: reservation.video.id }, "Upload initialization outcome is ambiguous");
     res.status(503).json({ error: "Upload initialization could not be confirmed. Retry with the same idempotency key." });
   }
@@ -689,7 +745,13 @@ router.post("/videos/:videoId/upload-complete", requirePermission("videos.create
       initializationRetryable: false,
     })
       .where(and(scopedVideoWhere(req.tenant.organizationId, videoId), eq(videosTable.status, "uploading")))
-      .returning({ id: videosTable.id });
+      .returning({ id: videosTable.id, title: videosTable.title });
+    if (updated) await writeAuditEvent(tx, {
+      organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+      action: "upload.completed", category: "content",
+      subject: { type: "video", id: updated.id, label: updated.title },
+      beforeState: { status: "uploading" }, afterState: { status: "processing" }, requestId: String(req.id),
+    });
     return updated ? readVideo(tx, req.tenant.organizationId, videoId) : undefined;
   });
   if (!video) {
@@ -730,15 +792,29 @@ router.post("/videos/:videoId/upload-cancel", requirePermission("videos.create")
         status: "error", uploadFailureDetail: "Upload cancelled", initializationRetryable: false,
       })
         .where(scopedVideoWhere(req.tenant.organizationId, videoId));
+      await writeAuditEvent(tx, {
+        organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+        action: "upload.cancelled", category: "content",
+        subject: { type: "video", id: videoId, label: video.title },
+        beforeState: { status: video.status }, afterState: { status: "error" }, requestId: String(req.id),
+      });
       return readVideo(tx, req.tenant.organizationId, videoId);
     });
     res.json(cancelled);
   } catch (error) {
-    await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
+    await withTenantDb(req.tenant, async (tx) => {
+      await tx.update(videosTable).set({
       status: "error", reconciliationRequired: "provider deletion outcome unknown",
       uploadFailureDetail: "Cancellation requires provider reconciliation.",
       initializationRetryable: false,
-    }).where(scopedVideoWhere(req.tenant.organizationId, videoId)));
+      }).where(scopedVideoWhere(req.tenant.organizationId, videoId));
+      await writeAuditEvent(tx, {
+        organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+        action: "upload.cancelled_ambiguous", category: "content",
+        subject: { type: "video", id: videoId, label: video.title },
+        beforeState: { status: video.status }, afterState: { status: "error", reconciliationRequired: true }, requestId: String(req.id),
+      });
+    });
     req.log.error({ err: error, videoId }, "Upload cancellation outcome is ambiguous");
     res.status(503).json({ error: "Cancellation could not be confirmed and requires reconciliation." });
   }
@@ -912,7 +988,8 @@ router.patch("/videos/:videoId", requirePermission("videos.update"), async (req,
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${req.tenant.organizationId}))`);
     }
     const [current] = await tx.select({
-      id: videosTable.id, title: videosTable.title,
+      id: videosTable.id, title: videosTable.title, description: videosTable.description,
+      folderId: videosTable.folderId, visibility: videosTable.visibility,
     }).from(videosTable).where(scopedVideoWhere(req.tenant.organizationId, videoId)).limit(1);
     if (!current) return { missing: "video" as const };
     if (update.folderId) {
@@ -922,17 +999,18 @@ router.patch("/videos/:videoId", requirePermission("videos.update"), async (req,
       )).limit(1);
       if (!folder) return { missing: "folder" as const };
     }
+    const changed = Object.entries(update).some(([key, value]) =>
+      current[key as keyof typeof current] !== value);
+    if (!changed) return { video: await readVideo(tx, req.tenant.organizationId, videoId) };
     const [updated] = await tx.update(videosTable).set(update)
       .where(scopedVideoWhere(req.tenant.organizationId, videoId))
       .returning({ id: videosTable.id });
     if (!updated) return { missing: "video" as const };
-    await tx.insert(auditLogsTable).values({
-      organizationId: req.tenant.organizationId,
-      actorUserId: req.tenant.userId,
-      action: update.folderId !== undefined ? "moved video" : "updated video",
-      subjectType: "video",
-      subjectId: videoId,
-      subjectLabel: update.title ?? current.title,
+    await writeAuditEvent(tx, {
+      organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+      action: update.folderId !== undefined ? "video.folder_changed" : "video.updated",
+      category: "content", subject: { type: "video", id: videoId, label: update.title ?? current.title },
+      ...auditDiff(current, { ...current, ...update }), requestId: String(req.id),
     });
     return { video: await readVideo(tx, req.tenant.organizationId, videoId) };
   });
@@ -989,12 +1067,17 @@ async function bulkUpdateVideos(req: Request, res: import("express").Response): 
     const succeeded: string[] = [];
     const failed: VideoActionFailure[] = [];
     for (const videoId of input.videoIds) {
-      const [current] = await tx.select({ id: videosTable.id, title: videosTable.title })
+      const [current] = await tx.select({
+        id: videosTable.id, title: videosTable.title, folderId: videosTable.folderId, visibility: videosTable.visibility,
+      })
         .from(videosTable).where(scopedVideoWhere(req.tenant.organizationId, videoId)).limit(1);
       if (!current) {
         failed.push({ videoId, status: 404, error: "Video not found" });
         continue;
       }
+      const before = folderOperation ? { folderId: current.folderId } : { visibility: current.visibility };
+      const after = folderOperation ? { folderId } : { visibility };
+      if (before.folderId === after.folderId && before.visibility === after.visibility) continue;
       const [updated] = await tx.update(videosTable).set(
         folderOperation ? { folderId } : { visibility: visibility! },
       ).where(scopedVideoWhere(req.tenant.organizationId, videoId)).returning({ id: videosTable.id });
@@ -1002,13 +1085,11 @@ async function bulkUpdateVideos(req: Request, res: import("express").Response): 
         failed.push({ videoId, status: 404, error: "Video not found" });
         continue;
       }
-      await tx.insert(auditLogsTable).values({
-        organizationId: req.tenant.organizationId,
-        actorUserId: req.tenant.userId,
-        action: folderOperation ? "moved video" : "updated video",
-        subjectType: "video",
-        subjectId: videoId,
-        subjectLabel: current.title,
+      await writeAuditEvent(tx, {
+        organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+        action: folderOperation ? "video.folder_changed" : "video.visibility_changed",
+        category: "content", subject: { type: "video", id: videoId, label: current.title },
+        ...auditDiff(before, after), requestId: String(req.id),
       });
       succeeded.push(videoId);
     }
@@ -1079,7 +1160,7 @@ async function deleteVideoDurably(
   if (!video.providerAssetId) {
     const claim = await claimVideoForDeletion(req, organizationId, videoId);
     if (!claim) return { status: 409, error: "Video deletion is already in progress or requires reconciliation." };
-    await withTenantDb(req.tenant, (tx) => deleteOwnedVideoMetadata(tx, organizationId, videoId, claim));
+    await withTenantDb(req.tenant, (tx) => deleteOwnedVideoMetadata(tx, organizationId, videoId, claim, req));
     return { status: 204 };
   }
   if (!video.providerAccountId || !video.providerTenantSpaceId) {
@@ -1131,18 +1212,26 @@ async function deleteVideoDurably(
   try {
     await provider.deleteAsset({ id: video.providerTenantSpaceId }, { id: video.providerAssetId });
   } catch (error) {
-    await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
-      status: "error",
-      reconciliationRequired: "provider asset deletion outcome unknown",
-      uploadFailureDetail: "Deletion requires provider reconciliation.",
-      initializationRetryable: false,
-    }).where(and(scopedVideoWhere(organizationId, videoId), eq(videosTable.deletionClaim, claim))));
+    await withTenantDb(req.tenant, async (tx) => {
+      await tx.update(videosTable).set({
+        status: "error",
+        reconciliationRequired: "provider asset deletion outcome unknown",
+        uploadFailureDetail: "Deletion requires provider reconciliation.",
+        initializationRetryable: false,
+      }).where(and(scopedVideoWhere(organizationId, videoId), eq(videosTable.deletionClaim, claim)));
+      await writeAuditEvent(tx, {
+        organizationId, actor: auditUser(req.tenant.userId), action: "video.deletion_ambiguous", category: "content",
+        subject: { type: "video", id: videoId, label: video.title },
+        beforeState: { status: video.status }, afterState: { status: "error", reconciliationRequired: true },
+        requestId: String(req.id),
+      });
+    });
     req.log.error({ err: error, videoId }, "Video provider deletion outcome is ambiguous");
     return { status: 503, error: "Video deletion could not be confirmed and requires reconciliation." };
   }
 
   try {
-    await withTenantDb(req.tenant, (tx) => deleteOwnedVideoMetadata(tx, organizationId, videoId, claim));
+    await withTenantDb(req.tenant, (tx) => deleteOwnedVideoMetadata(tx, organizationId, videoId, claim, req));
     return { status: 204 };
   } catch (error) {
     await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
@@ -1161,6 +1250,7 @@ async function claimVideoForDeletion(req: Request, organizationId: string, video
     const [locked] = await tx.select({
       deletionClaim: videosTable.deletionClaim,
       reconciliationRequired: videosTable.reconciliationRequired,
+      title: videosTable.title,
     }).from(videosTable).where(scopedVideoWhere(organizationId, videoId)).for("update").limit(1);
     if (!locked || locked.deletionClaim || locked.reconciliationRequired) return undefined;
     const claim = randomUUID();
@@ -1172,6 +1262,11 @@ async function claimVideoForDeletion(req: Request, organizationId: string, video
       sql`${videosTable.deletionClaim} is null`,
       sql`${videosTable.reconciliationRequired} is null`,
     )).returning({ id: videosTable.id });
+    if (claimed) await writeAuditEvent(tx, {
+      organizationId, actor: auditUser(req.tenant.userId), action: "video.deletion_requested", category: "content",
+      subject: { type: "video", id: videoId, label: locked.title },
+      beforeState: { status: "deleting" }, requestId: String(req.id),
+    });
     return claimed ? claim : undefined;
   });
 }
@@ -1185,15 +1280,25 @@ async function deleteOwnedVideoMetadata(
   organizationId: string,
   videoId: string,
   deletionClaim: string,
+  req: Request,
 ) {
   // Serialize with every thumbnail mutation and verify the persisted lifecycle
   // claim before enumerating object keys or cascading upload intents.
   const [lockedVideo] = await tx.select({
     deletionClaim: videosTable.deletionClaim,
+    title: videosTable.title,
   }).from(videosTable).where(scopedVideoWhere(organizationId, videoId)).for("update").limit(1);
   if (!lockedVideo || !deletionClaim || lockedVideo.deletionClaim !== deletionClaim) {
     throw new Error("Owned video deletion claim changed before metadata deletion");
   }
+  // This is intentionally before the local destructive delete, preserving the
+  // owned subject ID and label if the provider deletion already succeeded.
+  await writeAuditEvent(tx, {
+    organizationId, actor: auditUser(req.tenant.userId), action: "video.deletion_succeeded", category: "content",
+    subject: { type: "video", id: videoId, label: lockedVideo.title },
+    afterState: { status: "deleted" },
+    requestId: String(req.id),
+  });
   await releaseReservationInTransaction(tx, organizationId, videoId);
   const [thumbnail] = await tx.select({ objectKey: videosTable.thumbnailObjectKey })
     .from(videosTable).where(scopedVideoWhere(organizationId, videoId)).limit(1);
@@ -1222,7 +1327,7 @@ async function deleteOwnedVideoMetadata(
   if (!deleted) throw new Error("Owned video deletion claim changed before metadata deletion");
 }
 
-router.get("/activity", async (req, res) => {
+router.get("/activity", requirePermission("audit.read"), async (req, res) => {
   const activity = await withTenantDb(req.tenant, (tx) => tx.select({
     id: auditLogsTable.id,
     action: auditLogsTable.action,
@@ -1232,9 +1337,143 @@ router.get("/activity", async (req, res) => {
   }).from(auditLogsTable)
     .leftJoin(usersTable, eq(usersTable.id, auditLogsTable.actorUserId))
     .where(eq(auditLogsTable.organizationId, req.tenant.organizationId))
-    .orderBy(desc(auditLogsTable.createdAt))
+    .orderBy(desc(auditLogsTable.createdAt), desc(auditLogsTable.id))
     .limit(10));
   res.json(ListActivityResponse.parse(activity.map((item) => ({ ...item, actor: item.actor ?? "System" }))));
+});
+
+type AuditFilters = { category?: string; action?: string; subjectType?: string; subjectId?: string; actorKind?: string; actorUserId?: string; from?: Date; to?: Date; search?: string };
+type AuditCursor = { v: 1; tenant: string; filters: string; snapshotAt: string; snapshotId: string; lastAt: string; lastId: string; expiresAt: number };
+function auditBadRequest(res: import("express").Response, message: string) { res.status(400).json({ error: message }); }
+function auditQuery(req: Request): { limit: number; cursor?: string; filters: AuditFilters } | undefined {
+  const allowed = new Set(["limit", "cursor", "category", "action", "subjectType", "subjectId", "actorKind", "actorUserId", "from", "to", "search"]);
+  if (Object.keys(req.query).some((key) => !allowed.has(key))) return undefined;
+  const single = (key: string) => { const v = req.query[key]; return typeof v === "string" ? v : v === undefined ? undefined : null; };
+  const limitText = single("limit"); const limit = limitText === undefined ? 50 : /^\d+$/.test(limitText ?? "") ? Number(limitText) : NaN;
+  const category = single("category"), action = single("action"), subjectType = single("subjectType"), subjectId = single("subjectId"), actorKind = single("actorKind"), actorUserId = single("actorUserId"), search = single("search"), cursor = single("cursor");
+  const date = (value: string | undefined | null) => value === undefined ? undefined : value && /^\d{4}-\d\d-\d\d(T.*)?$/.test(value) && !Number.isNaN(Date.parse(value)) ? new Date(value) : null;
+  const from = date(single("from")), to = date(single("to"));
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100 || [action, subjectType].some((v) => v !== undefined && (!v || !auditMachinePattern.test(v)))
+    || (category !== undefined && (!category || category.length > 64 || !auditMachinePattern.test(category)))
+    || (subjectId !== undefined && (!subjectId || subjectId.length > 200)) || (actorKind !== undefined && (!actorKind || !auditActorKinds.has(actorKind)))
+    || (actorUserId !== undefined && (!actorUserId || !uuidPattern.test(actorUserId))) || (search !== undefined && (!search || search.length > 200))
+    || from === null || to === null || (from && to && from > to) || cursor === null) return undefined;
+  return { limit, cursor: cursor ?? undefined, filters: {
+    category: category ?? undefined, action: action ?? undefined, subjectType: subjectType ?? undefined,
+    subjectId: subjectId ?? undefined, actorKind: actorKind ?? undefined, actorUserId: actorUserId ?? undefined,
+    from: from ?? undefined, to: to ?? undefined, search: search ?? undefined,
+  } };
+}
+function auditFilterHash(filters: AuditFilters) {
+  return createHash("sha256").update(JSON.stringify({
+    ...filters, from: filters.from?.toISOString(), to: filters.to?.toISOString(),
+  })).digest("base64url");
+}
+function signAuditCursor(payload: AuditCursor) {
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `${body}.${createHmac("sha256", cursorSigningKey).update(`audit:v1.${body}`).digest("base64url")}`;
+}
+function parseAuditCursor(value: string, tenant: string, filters: string): AuditCursor | undefined {
+  const [body, signature, extra] = value.split(".");
+  if (!body || !signature || extra) return undefined;
+  const expected = createHmac("sha256", cursorSigningKey).update(`audit:v1.${body}`).digest("base64url");
+  if (signature.length !== expected.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return undefined;
+  try {
+    const item = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as AuditCursor;
+    return item.v === 1 && item.tenant === tenant && item.filters === filters && item.expiresAt >= Date.now()
+      && [item.snapshotAt, item.lastAt].every((d) => !Number.isNaN(Date.parse(d))) && uuidPattern.test(item.snapshotId) && uuidPattern.test(item.lastId) ? item : undefined;
+  } catch { return undefined; }
+}
+function auditWhere(tenant: string, filters: AuditFilters, anchor?: { at: string; id: string }, last?: { at: string; id: string }) {
+  const conditions: SQL[] = [eq(auditLogsTable.organizationId, tenant)];
+  if (filters.category) conditions.push(eq(auditLogsTable.category, filters.category));
+  if (filters.action) conditions.push(eq(auditLogsTable.action, filters.action));
+  if (filters.subjectType) conditions.push(eq(auditLogsTable.subjectType, filters.subjectType));
+  if (filters.subjectId) conditions.push(eq(auditLogsTable.subjectId, filters.subjectId));
+  if (filters.actorKind) conditions.push(eq(auditLogsTable.actorKind, filters.actorKind as "user" | "system" | "webhook" | "job"));
+  if (filters.actorUserId) conditions.push(eq(auditLogsTable.actorUserId, filters.actorUserId));
+  if (filters.from) conditions.push(gt(auditLogsTable.createdAt, filters.from));
+  if (filters.to) conditions.push(lte(auditLogsTable.createdAt, filters.to));
+  if (filters.search) conditions.push(or(ilike(auditLogsTable.subjectLabel, `%${filters.search.replace(/[%_\\]/g, "\\$&")}%`), ilike(auditLogsTable.action, `%${filters.search.replace(/[%_\\]/g, "\\$&")}%`))!);
+  if (anchor) conditions.push(or(lt(auditLogsTable.createdAt, new Date(anchor.at)), and(eq(auditLogsTable.createdAt, new Date(anchor.at)), lte(auditLogsTable.id, anchor.id)))!);
+  if (last) conditions.push(or(lt(auditLogsTable.createdAt, new Date(last.at)), and(eq(auditLogsTable.createdAt, new Date(last.at)), lt(auditLogsTable.id, last.id)))!);
+  return and(...conditions);
+}
+const auditProjection = {
+  id: auditLogsTable.id, action: auditLogsTable.action, category: auditLogsTable.category, actorKind: auditLogsTable.actorKind,
+  actorUserId: auditLogsTable.actorUserId, actorName: usersTable.name, subjectType: auditLogsTable.subjectType,
+  subjectId: auditLogsTable.subjectId, subjectLabel: auditLogsTable.subjectLabel, beforeState: auditLogsTable.beforeState,
+  afterState: auditLogsTable.afterState, metadata: auditLogsTable.metadata, requestId: auditLogsTable.requestId, createdAt: auditLogsTable.createdAt,
+};
+type AuditRow = {
+  id: string; action: string; category: string; actorKind: "user" | "system" | "webhook" | "job";
+  actorUserId: string | null; actorName: string | null; subjectType: string; subjectId: string | null; subjectLabel: string;
+  beforeState: Record<string, unknown> | null; afterState: Record<string, unknown> | null; metadata: Record<string, unknown>; requestId: string | null; createdAt: Date;
+};
+router.get("/audit-events", requirePermission("audit.read"), async (req, res) => {
+  const parsed = auditQuery(req); if (!parsed) return auditBadRequest(res, "Invalid audit query");
+  const hash = auditFilterHash(parsed.filters); const cursor = parsed.cursor ? parseAuditCursor(parsed.cursor, req.tenant.organizationId, hash) : undefined;
+  if (parsed.cursor && !cursor) return auditBadRequest(res, "Invalid or expired audit cursor");
+  const result = await withTenantDb(req.tenant, async (tx) => {
+    let anchor = cursor && { at: cursor.snapshotAt, id: cursor.snapshotId };
+    if (!anchor) {
+      const [latest] = await tx.select({ at: auditLogsTable.createdAt, id: auditLogsTable.id }).from(auditLogsTable)
+        .where(auditWhere(req.tenant.organizationId, parsed.filters)).orderBy(desc(auditLogsTable.createdAt), desc(auditLogsTable.id)).limit(1);
+      anchor = latest ? { at: latest.at.toISOString(), id: latest.id } : { at: new Date().toISOString(), id: "ffffffff-ffff-4fff-8fff-ffffffffffff" };
+    }
+    const items = await tx.select(auditProjection).from(auditLogsTable).leftJoin(usersTable, eq(usersTable.id, auditLogsTable.actorUserId))
+      .where(auditWhere(req.tenant.organizationId, parsed.filters, anchor, cursor && { at: cursor.lastAt, id: cursor.lastId }))
+      .orderBy(desc(auditLogsTable.createdAt), desc(auditLogsTable.id)).limit(parsed.limit + 1);
+    return { anchor, items };
+  }, { isolationLevel: "repeatable read" });
+  const page = result.items.slice(0, parsed.limit); const more = result.items.length > parsed.limit; const tail = page.at(-1);
+  res.json({ items: page.map((item) => ({
+    id: item.id, action: item.action, category: item.category, beforeState: item.beforeState, afterState: item.afterState,
+    metadata: item.metadata, requestId: item.requestId, createdAt: item.createdAt,
+    actor: { kind: item.actorKind, userId: item.actorUserId, name: item.actorName ?? (item.actorKind === "user" ? "Unknown user" : "System") },
+    subject: { type: item.subjectType, id: item.subjectId, label: item.subjectLabel },
+  })), snapshotAt: result.anchor.at, nextCursor: more && tail ? signAuditCursor({ v: 1, tenant: req.tenant.organizationId, filters: hash, snapshotAt: result.anchor.at, snapshotId: result.anchor.id, lastAt: tail.createdAt.toISOString(), lastId: tail.id, expiresAt: Date.now() + cursorLifetimeMs }) : null });
+});
+
+function csvField(value: unknown) {
+  let text = value === null || value === undefined ? "" : typeof value === "string" ? value : value instanceof Date ? value.toISOString() : JSON.stringify(value);
+  // Spreadsheet programs evaluate these prefixes even in a quoted CSV cell.
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+router.get("/audit-events/export", requirePermission("audit.export"), async (req, res) => {
+  // Reuse the strict filter parser while intentionally ignoring pagination state.
+  const query = { ...req.query, limit: "100", cursor: undefined };
+  const parsed = auditQuery({ ...req, query } as unknown as Request);
+  if (!parsed) return auditBadRequest(res, "Invalid audit export query");
+  const now = new Date(); const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const from = parsed.filters.from ?? defaultFrom; const to = parsed.filters.to ?? now;
+  if (to.getTime() - from.getTime() > 90 * 24 * 60 * 60 * 1000) return auditBadRequest(res, "Audit export range may not exceed 90 days");
+  parsed.filters.from = from; parsed.filters.to = to;
+  let rows: AuditRow[];
+  try {
+    rows = await withTenantDb(req.tenant, async (tx) => {
+      await consumeAuditExportLimit(tx, req.tenant.organizationId, req.tenant.userId);
+      return tx.select(auditProjection).from(auditLogsTable)
+        .leftJoin(usersTable, eq(usersTable.id, auditLogsTable.actorUserId))
+        .where(auditWhere(req.tenant.organizationId, parsed.filters))
+        .orderBy(desc(auditLogsTable.createdAt), desc(auditLogsTable.id)).limit(10_001);
+    });
+  } catch (error) {
+    if (error instanceof AuditExportRateLimitError) {
+      res.set("Retry-After", String(error.retryAfter)).status(429).json({ error: error.message }); return;
+    }
+    throw error;
+  }
+  const truncated = rows.length > 10_000; const header = ["id", "created_at", "category", "action", "actor_kind", "actor_user_id", "actor_name", "subject_type", "subject_id", "subject_label", "before_state", "after_state", "metadata", "request_id"];
+  const body = [header, ...rows.slice(0, 10_000).map((row) => [row.id, row.createdAt, row.category, row.action, row.actorKind, row.actorUserId, row.actorName, row.subjectType, row.subjectId, row.subjectLabel, row.beforeState, row.afterState, row.metadata, row.requestId])]
+    .map((row) => row.map(csvField).join(",")).join("\r\n") + "\r\n";
+  res.status(200).set({
+    "Content-Type": "text/csv; charset=utf-8",
+    "Content-Disposition": "attachment; filename=\"audit-events.csv\"",
+    "X-Audit-Export-Truncated": truncated ? "true" : "false",
+    "X-Content-Type-Options": "nosniff",
+  }).send(body);
 });
 
 export default router;

@@ -2,7 +2,6 @@ import { and, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { Router, type IRouter, type Response } from "express";
 import {
-  auditLogsTable,
   objectCleanupOutboxTable,
   thumbnailUploadIntentsTable,
   videosTable,
@@ -20,6 +19,7 @@ import {
 import { requirePermission } from "../lib/permissions";
 import { requireCreateAccess } from "../lib/entitlements";
 import { withTenantDb } from "../lib/tenant-db";
+import { auditDiff, auditUser, writeAuditEvent } from "../lib/audit";
 import {
   getThumbnailStorage,
   ThumbnailObjectNotFoundError,
@@ -208,14 +208,15 @@ router.post(
         if (video.thumbnailObjectKey && video.thumbnailObjectKey !== intent.objectKey) {
           await enqueueCleanup(tx, req.tenant.organizationId, video.thumbnailObjectKey);
         }
-        await tx.insert(auditLogsTable).values({
-          organizationId: req.tenant.organizationId,
-          actorUserId: req.tenant.userId,
-          action: "updated video thumbnail",
-          subjectType: "video",
-          subjectId: videoId,
-          subjectLabel: video.title,
-          metadata: { contentType: metadata.contentType, sizeBytes: metadata.size },
+        await writeAuditEvent(tx, {
+          organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+          action: "thumbnail.updated", category: "content",
+          subject: { type: "video", id: videoId, label: video.title },
+          ...auditDiff(
+            { present: Boolean(video.thumbnailObjectKey), contentType: video.thumbnailContentType, sizeBytes: video.thumbnailSizeBytes },
+            { present: true, contentType: metadata.contentType, sizeBytes: metadata.size },
+          ),
+          requestId: String(req.id),
         });
         return thumbnailResponse(videoId, metadata.contentType, metadata.size, finalVersion);
       });
@@ -251,18 +252,17 @@ router.delete(
       )).for("update").limit(1);
       if (!video) return false;
       if (video.deletionClaim) return "deleting" as const;
+      if (!video.thumbnailObjectKey) return "unchanged" as const;
       await tx.update(videosTable).set({
         thumbnailObjectKey: null, thumbnailContentType: null, thumbnailSizeBytes: null,
         thumbnailVersion: null, thumbnailGeneration: null, thumbnailMutableUntil: null,
       }).where(and(eq(videosTable.organizationId, req.tenant.organizationId), eq(videosTable.id, videoId)));
       if (video.thumbnailObjectKey) await enqueueCleanup(tx, req.tenant.organizationId, video.thumbnailObjectKey);
-      await tx.insert(auditLogsTable).values({
-        organizationId: req.tenant.organizationId,
-        actorUserId: req.tenant.userId,
-        action: "removed video thumbnail",
-        subjectType: "video",
-        subjectId: videoId,
-        subjectLabel: video.title,
+      await writeAuditEvent(tx, {
+        organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+        action: "thumbnail.removed", category: "content",
+        subject: { type: "video", id: videoId, label: video.title },
+        beforeState: { present: true }, afterState: { present: false }, requestId: String(req.id),
       });
       return true;
     });

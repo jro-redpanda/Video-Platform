@@ -1,11 +1,15 @@
-import { useEffect, useMemo } from "react"
+import { useEffect, useMemo, useRef, useCallback } from "react"
 import { useParams } from "wouter"
 import { LoaderCircle, AlertCircle } from "lucide-react"
-import { createPlaybackEvents, useGetPublicVideo, getGetPublicVideoQueryKey } from "@workspace/api-client-react"
+import { useGetPublicVideo, getGetPublicVideoQueryKey } from "@workspace/api-client-react"
+import { useQueryClient } from "@tanstack/react-query"
 import { Player } from "@/components/player"
+import { usePlaybackAnalytics } from "@/hooks/use-playback-analytics"
 
 export default function EmbedPlayer() {
   const { id } = useParams<{ id: string }>()
+  const queryClient = useQueryClient()
+
   const video = useGetPublicVideo(id, {
     query: {
       queryKey: getGetPublicVideoQueryKey(id),
@@ -20,27 +24,86 @@ export default function EmbedPlayer() {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
       return crypto.randomUUID()
     }
-    return Math.random().toString(36).substring(2, 15)
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = (Math.random() * 16) | 0;
+      const v = c === 'x' ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
   }, [])
 
+  const refetchVideo = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: getGetPublicVideoQueryKey(id) })
+  }, [queryClient, id])
+
+  const { emitEvent, flushQueue } = usePlaybackAnalytics({
+    video: video.data,
+    sessionId,
+    refetchVideo,
+  })
+
+  const hasEmittedLoadRef = useRef(false)
+  const lastHeartbeatTimeRef = useRef(0)
+
   useEffect(() => {
-    if (!video.data) return
-    void createPlaybackEvents({
-      events: [{
-        videoId: video.data.id,
-        sessionId,
-        eventType: "load",
-        positionSeconds: 0,
-        occurredAt: new Date().toISOString(),
-      }],
-    })
-  }, [sessionId, video.data])
+    if (!video.data || hasEmittedLoadRef.current) return
+    hasEmittedLoadRef.current = true
+    emitEvent("load")
+  }, [video.data, emitEvent])
 
   useEffect(() => {
     if (video.data) {
       document.title = `${video.data.title} - Video Player`
     }
   }, [video.data])
+
+  const getPlayerState = useCallback((event: any) => {
+    let positionSeconds = 0;
+    if (typeof event?.detail === 'number') {
+      positionSeconds = event.detail;
+    } else if (event?.target?.currentTime !== undefined) {
+      positionSeconds = event.target.currentTime;
+    }
+
+    let durationSeconds = 0;
+    if (event?.target?.duration !== undefined && !isNaN(event?.target?.duration)) {
+      durationSeconds = event.target.duration;
+    }
+
+    if (isNaN(positionSeconds) || !isFinite(positionSeconds)) positionSeconds = 0;
+    if (isNaN(durationSeconds) || !isFinite(durationSeconds)) durationSeconds = 0;
+
+    return { positionSeconds, durationSeconds }
+  }, [])
+
+  const onPlay = useCallback((e: any) => emitEvent('play', getPlayerState(e)), [emitEvent, getPlayerState])
+  const onPause = useCallback((e: any) => emitEvent('pause', getPlayerState(e)), [emitEvent, getPlayerState])
+  const onEnded = useCallback((e: any) => emitEvent('ended', getPlayerState(e)), [emitEvent, getPlayerState])
+
+  const onTimeUpdate = useCallback((e: any) => {
+    const now = Date.now()
+    if (now - lastHeartbeatTimeRef.current >= 10000) {
+      lastHeartbeatTimeRef.current = now
+      emitEvent('progress', getPlayerState(e))
+    }
+  }, [emitEvent, getPlayerState])
+
+  const onError = useCallback((e: any) => {
+    let errorCategory: any = 'unknown'
+    if (e?.detail?.code === 1 || e?.detail?.message?.includes('network')) errorCategory = 'network'
+    else if (e?.detail?.code === 3 || e?.detail?.message?.includes('decode')) errorCategory = 'decode'
+    else if (e?.detail?.code === 4 || e?.detail?.message?.includes('src')) errorCategory = 'source'
+    else if (e?.detail?.message?.includes('media')) errorCategory = 'media'
+
+    emitEvent('error', { ...getPlayerState(e), errorCategory })
+  }, [emitEvent, getPlayerState])
+
+  // Periodic flush
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      flushQueue()
+    }, 5000)
+    return () => window.clearInterval(interval)
+  }, [flushQueue])
 
   if (video.isLoading) {
     return (
@@ -112,6 +175,11 @@ export default function EmbedPlayer() {
         message={item.status === 'ready' && !src ? "Playback source is not connected." : undefined}
         load="visible"
         className="w-full h-full rounded-none border-none ring-0"
+        onPlay={onPlay}
+        onPause={onPause}
+        onEnded={onEnded}
+        onTimeUpdate={onTimeUpdate}
+        onError={onError}
       />
     </main>
   )

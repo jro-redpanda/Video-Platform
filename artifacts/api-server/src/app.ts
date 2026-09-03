@@ -14,6 +14,7 @@ import providerWebhooksRouter from "./routes/provider-webhooks";
 import { processStripeWebhook } from "./lib/stripe-webhook";
 
 const app: Express = express();
+app.set("trust proxy", 1);
 app.locals.videoProviders = videoProviders;
 
 app.use(

@@ -1,6 +1,7 @@
 import { db, embedGenerationOutboxTable, videoEmbedsTable, videosTable } from "@workspace/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { Request } from "express";
+import { auditJob, writeAuditEvent } from "./audit";
 
 export const EMBED_GENERATION_VERSION = 1;
 
@@ -12,6 +13,7 @@ export async function generateVideoEmbed(videoId: string, outboxId?: string) {
       title: videosTable.title,
       description: videosTable.description,
       durationSeconds: videosTable.durationSeconds,
+      organizationId: videosTable.organizationId,
     }).from(videosTable).where(eq(videosTable.id, videoId)).limit(1);
     if (!video) throw new Error(`Owned video ${videoId} does not exist`);
 
@@ -21,6 +23,7 @@ export async function generateVideoEmbed(videoId: string, outboxId?: string) {
       description: video.description,
       durationSeconds: video.durationSeconds,
     };
+    const [prior] = await tx.select().from(videoEmbedsTable).where(eq(videoEmbedsTable.videoId, videoId)).limit(1);
     const [embed] = await tx.insert(videoEmbedsTable).values({
       videoId,
       embedPath: `/v/${videoId}`,
@@ -39,6 +42,16 @@ export async function generateVideoEmbed(videoId: string, outboxId?: string) {
         updatedAt: now,
       },
     }).returning();
+    const changed = !prior || prior.generationStatus !== "generated"
+      || prior.generationVersion !== EMBED_GENERATION_VERSION
+      || JSON.stringify(prior.generatedMetadata) !== JSON.stringify(metadata);
+    if (changed) await writeAuditEvent(tx, {
+      organizationId: video.organizationId, actor: auditJob(),
+      action: prior ? "embed.regenerated" : "embed.generated", category: "embed",
+      subject: { type: "video", id: videoId, label: video.title },
+      beforeState: prior ? { generationStatus: prior.generationStatus, generationVersion: prior.generationVersion } : undefined,
+      afterState: { generationStatus: "generated", generationVersion: EMBED_GENERATION_VERSION },
+    });
 
     if (outboxId) {
       await tx.update(embedGenerationOutboxTable).set({
@@ -67,6 +80,12 @@ export function trustedRequestOrigin(req: Request) {
   if (!host || !/^[a-z0-9.[\]:-]+$/i.test(host)) throw new Error("A valid request host is required");
   const allowedHosts = process.env.REPLIT_DOMAINS?.split(",").map((value) => value.trim().toLowerCase()).filter(Boolean) ?? [];
   const normalizedHost = host.toLowerCase().replace(/:443$/, "");
+  // Isolated smoke servers bind an ephemeral loopback port while the ambient
+  // Replit allowlist still contains the preview domain. This is test-only;
+  // production continues to require the configured trusted host.
+  if (process.env.NODE_ENV === "test" && /^(?:127\.0\.0\.1|localhost)(?::\d+)?$/i.test(normalizedHost)) {
+    return `${req.protocol}://${host}`;
+  }
   if (allowedHosts.length && !allowedHosts.includes(normalizedHost)) throw new Error("Request host is not allowlisted");
   if (process.env.NODE_ENV === "production" && !allowedHosts.length) throw new Error("A trusted public origin is not configured");
   return `${req.protocol}://${host}`;

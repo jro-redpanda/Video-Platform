@@ -1,7 +1,6 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
-  auditLogsTable,
   foldersTable,
   videosTable,
 } from "@workspace/db";
@@ -20,6 +19,7 @@ import {
 import { requirePermission } from "../lib/permissions";
 import { requireCreateAccess } from "../lib/entitlements";
 import { withTenantDb, type TenantTransaction } from "../lib/tenant-db";
+import { auditDiff, auditUser, writeAuditEvent } from "../lib/audit";
 
 const router: IRouter = Router();
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -162,9 +162,11 @@ router.post("/folders", requirePermission("videos.update"), requireCreateAccess,
       const [created] = await tx.insert(foldersTable).values({
         organizationId: req.tenant.organizationId, parentId, name,
       }).returning();
-      await tx.insert(auditLogsTable).values({
-        organizationId: req.tenant.organizationId, actorUserId: req.tenant.userId,
-        action: "created folder", subjectType: "folder", subjectId: created!.id, subjectLabel: name,
+      await writeAuditEvent(tx, {
+        organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+        action: "folder.created", category: "content",
+        subject: { type: "folder", id: created!.id, label: name },
+        afterState: { name, parentId }, requestId: String(req.id),
       });
       return detailFor(tx, req.tenant.organizationId, created!);
     });
@@ -258,10 +260,12 @@ router.patch("/folders/:folderId", requirePermission("videos.update"), async (re
         eq(foldersTable.organizationId, req.tenant.organizationId),
         eq(foldersTable.id, current.id),
       )).returning();
-      await tx.insert(auditLogsTable).values({
-        organizationId: req.tenant.organizationId, actorUserId: req.tenant.userId,
-        action: parsed.data.parentId !== undefined ? "moved folder" : "renamed folder",
-        subjectType: "folder", subjectId: current.id, subjectLabel: updated!.name,
+      await writeAuditEvent(tx, {
+        organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+        action: parsed.data.parentId !== undefined ? "folder.moved" : "folder.renamed",
+        category: "content", subject: { type: "folder", id: current.id, label: updated!.name },
+        ...auditDiff({ name: current.name, parentId: current.parentId }, { name: updated!.name, parentId: updated!.parentId }),
+        requestId: String(req.id),
       });
       return detailFor(tx, req.tenant.organizationId, updated!);
     });
@@ -305,14 +309,16 @@ router.delete("/folders/:folderId", requirePermission("videos.update"), async (r
       eq(foldersTable.id, folder.id),
     )).limit(1);
     if (contents!.childCount || contents!.videoCount) return "not-empty" as const;
+    await writeAuditEvent(tx, {
+      organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+      action: "folder.deleted", category: "content",
+      subject: { type: "folder", id: folder.id, label: folder.name },
+      beforeState: { name: folder.name, parentId: folder.parentId }, requestId: String(req.id),
+    });
     await tx.delete(foldersTable).where(and(
       eq(foldersTable.organizationId, req.tenant.organizationId),
       eq(foldersTable.id, folder.id),
     ));
-    await tx.insert(auditLogsTable).values({
-      organizationId: req.tenant.organizationId, actorUserId: req.tenant.userId,
-      action: "deleted folder", subjectType: "folder", subjectId: folder.id, subjectLabel: folder.name,
-    });
     return "deleted" as const;
   });
   if (outcome === "missing") {

@@ -126,7 +126,11 @@ async function main() {
           : file.name === "0021_billing.sql" ? "billingBase"
           : file.name === "0022_billing_checkout_claim.sql" ? "billingCheckoutBase"
           : file.name === "0023_billing_provider_status.sql" ? "billingProviderBase"
-          : file.name === "0024_billing_customer_generation.sql" ? "billing" : "thumbnailIntegrity");
+           : file.name === "0024_billing_customer_generation.sql" ? "billing"
+            : file.name === "0025_production_analytics.sql" ? "analyticsBase"
+            : file.name === "0026_analytics_session_attestations.sql" ? "analytics"
+            : file.name === "0027_audit_log_foundation.sql" ? "audit"
+            : file.name === "0028_audit_export_rate_window.sql" ? "auditExport" : "thumbnailIntegrity");
         await client.query("insert into public.schema_migrations(name, checksum) values($1,$2)", [file.name, file.checksum]);
         await client.query("commit");
       } catch (error) {

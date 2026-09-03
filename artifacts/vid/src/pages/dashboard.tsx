@@ -6,7 +6,7 @@ import { PlayCircle, Clock, CheckCircle2, TrendingUp, Activity } from "lucide-re
 
 export default function Dashboard() {
   const { data: dashboard, isLoading: isLoadingDash } = useGetDashboard()
-  const { data: activity, isLoading: isLoadingActivity } = useListActivity()
+  const { data: activity, isLoading: isLoadingActivity, isError: activityDenied } = useListActivity()
 
   return (
     <div className="flex-1 p-8 overflow-y-auto">
@@ -88,6 +88,8 @@ export default function Dashboard() {
                <div className="space-y-4">
                  {[1, 2, 3, 4, 5].map(i => <Skeleton key={i} className="h-10 w-full" />)}
                </div>
+            ) : activityDenied ? (
+              <div className="py-8 text-center text-muted-foreground">Activity is not available for your role.</div>
             ) : activity?.length ? (
               <div className="space-y-5 relative before:absolute before:left-2 before:top-2 before:bottom-2 before:w-px before:bg-border">
                 {activity.map((item) => (

@@ -807,6 +807,72 @@ export const ListActivityResponseItem = zod.object({
 export const ListActivityResponse = zod.array(ListActivityResponseItem)
 
 
+export const listAuditEventsQueryLimitDefault = 50;
+export const listAuditEventsQueryLimitMax = 100;
+
+export const listAuditEventsQuerySearchMax = 200;
+
+
+
+export const ListAuditEventsQueryParams = zod.object({
+  "limit": zod.coerce.number().int().min(1).max(listAuditEventsQueryLimitMax).default(listAuditEventsQueryLimitDefault),
+  "cursor": zod.coerce.string().optional(),
+  "category": zod.coerce.string().optional(),
+  "action": zod.coerce.string().optional(),
+  "subjectType": zod.coerce.string().optional(),
+  "subjectId": zod.coerce.string().optional(),
+  "actorKind": zod.enum(['user', 'system', 'webhook', 'job']).optional(),
+  "actorUserId": zod.coerce.string().optional(),
+  "from": zod.date().optional(),
+  "to": zod.date().optional(),
+  "search": zod.coerce.string().max(listAuditEventsQuerySearchMax).optional()
+})
+
+export const ListAuditEventsResponse = zod.object({
+  "items": zod.array(zod.object({
+  "id": zod.string(),
+  "action": zod.string(),
+  "category": zod.string(),
+  "actor": zod.object({
+  "kind": zod.enum(['user', 'system', 'webhook', 'job']),
+  "userId": zod.string().nullable(),
+  "name": zod.string()
+}),
+  "subject": zod.object({
+  "type": zod.string(),
+  "id": zod.string().nullable(),
+  "label": zod.string()
+}),
+  "beforeState": zod.record(zod.string(), zod.unknown()).nullish(),
+  "afterState": zod.record(zod.string(), zod.unknown()).nullish(),
+  "metadata": zod.record(zod.string(), zod.unknown()),
+  "requestId": zod.string().nullish(),
+  "createdAt": zod.coerce.date()
+})),
+  "nextCursor": zod.string().nullable(),
+  "snapshotAt": zod.coerce.date()
+})
+
+
+export const exportAuditEventsQuerySearchMax = 200;
+
+
+
+export const ExportAuditEventsQueryParams = zod.object({
+  "category": zod.coerce.string().optional(),
+  "action": zod.coerce.string().optional(),
+  "subjectType": zod.coerce.string().optional(),
+  "subjectId": zod.coerce.string().optional(),
+  "actorKind": zod.enum(['user', 'system', 'webhook', 'job']).optional(),
+  "actorUserId": zod.coerce.string().optional(),
+  "from": zod.date().optional(),
+  "to": zod.date().optional(),
+  "search": zod.coerce.string().max(exportAuditEventsQuerySearchMax).optional()
+})
+
+export const ExportAuditEventsResponse = zod.unknown()
+
+
 export const ListPermissionGroupsResponseItem = zod.object({
   "id": zod.string(),
   "name": zod.string(),
@@ -953,7 +1019,9 @@ export const GetPublicVideoResponse = zod.object({
   "sourceExpiresAt": zod.coerce.date().optional(),
   "posterUrl": zod.string().nullish(),
   "logoUrl": zod.string().optional(),
-  "watermarkUrl": zod.string().optional()
+  "watermarkUrl": zod.string().optional(),
+  "analyticsGrant": zod.string().optional(),
+  "analyticsGrantExpiresAt": zod.coerce.date().optional()
 })
 
 
@@ -974,24 +1042,37 @@ export const GetPublicVideoThumbnailParams = zod.object({
 export const GetPublicVideoThumbnailResponse = zod.unknown()
 
 
+export const createPlaybackEventsBodyGrantMin = 20;
+export const createPlaybackEventsBodyGrantMax = 4096;
+
+export const createPlaybackEventsBodyEventsItemEventIdRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$');
+export const createPlaybackEventsBodyEventsItemSessionIdRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$');
 export const createPlaybackEventsBodyEventsItemPositionSecondsMin = 0;
+export const createPlaybackEventsBodyEventsItemPositionSecondsMax = 86400;
+
+export const createPlaybackEventsBodyEventsItemDurationSecondsMin = 0;
+export const createPlaybackEventsBodyEventsItemDurationSecondsMax = 86400;
 
 export const createPlaybackEventsBodyEventsMax = 50;
 
 
 
 export const CreatePlaybackEventsBody = zod.object({
+  "grant": zod.string().min(createPlaybackEventsBodyGrantMin).max(createPlaybackEventsBodyGrantMax),
   "events": zod.array(zod.object({
-  "videoId": zod.string(),
-  "sessionId": zod.string(),
-  "eventType": zod.enum(['load', 'play', 'progress', 'pause', 'ended', 'error']),
-  "positionSeconds": zod.number().min(createPlaybackEventsBodyEventsItemPositionSecondsMin),
-  "occurredAt": zod.coerce.date()
+  "eventId": zod.string().regex(createPlaybackEventsBodyEventsItemEventIdRegExp),
+  "sessionId": zod.string().regex(createPlaybackEventsBodyEventsItemSessionIdRegExp),
+  "type": zod.enum(['load', 'play', 'progress', 'pause', 'ended', 'error']),
+  "positionSeconds": zod.number().min(createPlaybackEventsBodyEventsItemPositionSecondsMin).max(createPlaybackEventsBodyEventsItemPositionSecondsMax).optional(),
+  "durationSeconds": zod.number().min(createPlaybackEventsBodyEventsItemDurationSecondsMin).max(createPlaybackEventsBodyEventsItemDurationSecondsMax).optional(),
+  "occurredAt": zod.coerce.date(),
+  "errorCategory": zod.enum(['network', 'media', 'decode', 'source', 'unknown']).optional()
 })).min(1).max(createPlaybackEventsBodyEventsMax)
 })
 
 export const CreatePlaybackEventsResponse = zod.object({
-  "accepted": zod.number()
+  "accepted": zod.number(),
+  "duplicates": zod.number()
 })
 
 

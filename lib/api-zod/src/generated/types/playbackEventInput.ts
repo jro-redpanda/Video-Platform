@@ -5,13 +5,25 @@
  * Multi-tenant video platform API
  * OpenAPI spec version: 0.1.0
  */
-import type { PlaybackEventInputEventType } from './playbackEventInputEventType';
+import type { PlaybackEventInputErrorCategory } from './playbackEventInputErrorCategory';
+import type { PlaybackEventInputType } from './playbackEventInputType';
 
 export interface PlaybackEventInput {
-  videoId: string;
+  /** @pattern ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ */
+  eventId: string;
+  /** @pattern ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ */
   sessionId: string;
-  eventType: PlaybackEventInputEventType;
-  /** @minimum 0 */
-  positionSeconds: number;
+  type: PlaybackEventInputType;
+  /**
+     * @minimum 0
+     * @maximum 86400
+     */
+  positionSeconds?: number;
+  /**
+     * @minimum 0
+     * @maximum 86400
+     */
+  durationSeconds?: number;
   occurredAt: Date;
+  errorCategory?: PlaybackEventInputErrorCategory;
 }

@@ -21,6 +21,7 @@ import type {
 
 import type {
   ActivityItem,
+  AuditEventPage,
   AuthenticatedPlaybackVideo,
   BillingActionInput,
   BillingCancellation,
@@ -36,6 +37,7 @@ import type {
   BulkVideoUpdate,
   CreatePlaybackEvents202,
   Dashboard,
+  ExportAuditEventsParams,
   Folder,
   FolderDetail,
   FolderInput,
@@ -43,6 +45,7 @@ import type {
   HealthStatus,
   Invitation,
   InvitationInput,
+  ListAuditEventsParams,
   ListBillingInvoicesParams,
   ListFoldersParams,
   ListVideosParams,
@@ -2487,6 +2490,162 @@ export function useListActivity<TData = Awaited<ReturnType<typeof listActivity>>
 
 
 
+export const getListAuditEventsUrl = (params?: ListAuditEventsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/audit-events?${stringifiedParams}` : `/api/audit-events`
+}
+
+export const listAuditEvents = async (params?: ListAuditEventsParams, options?: Parameters<typeof customFetch>[1]): Promise<AuditEventPage> => {
+
+  return customFetch<AuditEventPage>(getListAuditEventsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAuditEventsQueryKey = (params?: ListAuditEventsParams,) => {
+    return [
+    `/api/audit-events`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListAuditEventsQueryOptions = <TData = Awaited<ReturnType<typeof listAuditEvents>>, TError = ErrorType<unknown>>(params?: ListAuditEventsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAuditEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAuditEventsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAuditEvents>>> = ({ signal }) => listAuditEvents(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAuditEvents>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAuditEventsQueryResult = NonNullable<Awaited<ReturnType<typeof listAuditEvents>>>
+export type ListAuditEventsQueryError = ErrorType<unknown>
+
+
+
+export function useListAuditEvents<TData = Awaited<ReturnType<typeof listAuditEvents>>, TError = ErrorType<unknown>>(
+ params?: ListAuditEventsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAuditEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAuditEventsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getExportAuditEventsUrl = (params?: ExportAuditEventsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/audit-events/export?${stringifiedParams}` : `/api/audit-events/export`
+}
+
+export const exportAuditEvents = async (params?: ExportAuditEventsParams, options?: Parameters<typeof customFetch>[1]): Promise<Blob> => {
+
+  return customFetch<Blob>(getExportAuditEventsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getExportAuditEventsQueryKey = (params?: ExportAuditEventsParams,) => {
+    return [
+    `/api/audit-events/export`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getExportAuditEventsQueryOptions = <TData = Awaited<ReturnType<typeof exportAuditEvents>>, TError = ErrorType<unknown>>(params?: ExportAuditEventsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportAuditEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getExportAuditEventsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof exportAuditEvents>>> = ({ signal }) => exportAuditEvents(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof exportAuditEvents>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ExportAuditEventsQueryResult = NonNullable<Awaited<ReturnType<typeof exportAuditEvents>>>
+export type ExportAuditEventsQueryError = ErrorType<unknown>
+
+
+
+export function useExportAuditEvents<TData = Awaited<ReturnType<typeof exportAuditEvents>>, TError = ErrorType<unknown>>(
+ params?: ExportAuditEventsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportAuditEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getExportAuditEventsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getListPermissionGroupsUrl = () => {
 
 
@@ -3266,7 +3425,7 @@ export const createPlaybackEvents = async (playbackEventBatch: PlaybackEventBatc
 
 
 
-export const getCreatePlaybackEventsMutationOptions = <TError = ErrorType<unknown>,
+export const getCreatePlaybackEventsMutationOptions = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPlaybackEvents>>, TError,{data: BodyType<PlaybackEventBatch>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createPlaybackEvents>>, TError,{data: BodyType<PlaybackEventBatch>}, TContext> => {
 
@@ -3295,9 +3454,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CreatePlaybackEventsMutationResult = NonNullable<Awaited<ReturnType<typeof createPlaybackEvents>>>
     export type CreatePlaybackEventsMutationBody = BodyType<PlaybackEventBatch>
-    export type CreatePlaybackEventsMutationError = ErrorType<unknown>
+    export type CreatePlaybackEventsMutationError = ErrorType<void>
 
-    export const useCreatePlaybackEvents = <TError = ErrorType<unknown>,
+    export const useCreatePlaybackEvents = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPlaybackEvents>>, TError,{data: BodyType<PlaybackEventBatch>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof createPlaybackEvents>>,

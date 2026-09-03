@@ -163,7 +163,7 @@ try {
   ]);
   assert.equal(visibility.text.includes("provider"), false);
   const audits = await db.select().from(auditLogsTable).where(and(
-    eq(auditLogsTable.organizationId, organizationId), eq(auditLogsTable.action, "updated video"),
+    eq(auditLogsTable.organizationId, organizationId), eq(auditLogsTable.action, "video.visibility_changed"),
   ));
   assert.equal(audits.filter(({ subjectId }) => updateIds.includes(subjectId ?? "")).length, 2);
 

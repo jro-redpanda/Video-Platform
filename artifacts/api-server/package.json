@@ -19,6 +19,8 @@
     "thumbnail:storage-smoke": "pnpm run build && node ./dist/thumbnail-storage-roundtrip-smoke.mjs",
     "thumbnail:cleanup-once": "pnpm run build && node ./dist/thumbnail-cleanup-once.mjs",
     "billing:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/billing-step18-smoke.mjs",
+    "analytics:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/analytics-smoke.mjs",
+    "audit:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/audit-smoke.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

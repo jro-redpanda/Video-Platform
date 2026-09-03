@@ -1,9 +1,10 @@
 import { and, eq, isNotNull, or, sql } from "drizzle-orm";
 import {
-  auditLogsTable, db, organizationBillingTable, organizationsTable, plansTable,
+  db, organizationBillingTable, organizationsTable, plansTable,
 } from "@workspace/db";
 import { billingProvider, type ProviderSubscription } from "./billing-provider";
 import { billingLifecycleLockKey } from "./billing-lifecycle-lock";
+import { auditJob, auditUser, writeAuditEvent } from "./audit";
 
 const granting = new Set(["active", "trialing"]);
 const accepted = new Set(["incomplete", "incomplete_expired", "active", "trialing", "past_due", "unpaid", "canceled", "paused"]);
@@ -82,26 +83,28 @@ export async function reconcileOrganizationBilling(organizationId: string, actor
       if (granting.has(status) || status === "past_due") {
         await tx.update(organizationsTable).set({ planId: plan.id }).where(eq(organizationsTable.id, organizationId));
       }
-      if (previousStatus !== status) await tx.insert(auditLogsTable).values({
-        organizationId, actorUserId, action: status === "past_due"
-          ? "billing payment failed"
-          : previousStatus === "past_due" && status === "active"
-            ? "billing payment recovered" : "billing reconciliation changed",
-        subjectType: "billing", subjectId: row.stripeSubscriptionId,
-        subjectLabel: status, metadata: { previousStatus, status },
-      });
+       if (previousStatus !== status) await writeAuditEvent(tx, {
+         organizationId,
+         actor: actorUserId ? auditUser(actorUserId) : auditJob(),
+         action: "billing.status_changed", category: "billing",
+         // Provider subscription IDs are not audit subjects; the tenant's
+         // billing projection is the durable state that changed.
+         subject: { type: "billing", id: organizationId, label: status },
+         beforeState: { status: previousStatus }, afterState: { status, providerStatus },
+       });
       return [row];
     })();
     return updated;
   } catch (error) {
-    const code = error instanceof Error ? error.message.slice(0, 120) : "billing_reconciliation_failed";
+    const code = "billing_reconciliation_failed";
     await tx.update(organizationBillingTable).set({
       status: "quarantined", lastErrorCode: code, lastReconciledAt: new Date(), updatedAt: new Date(),
     }).where(eq(organizationBillingTable.organizationId, organizationId));
-    await tx.insert(auditLogsTable).values({
-      organizationId, actorUserId, action: "billing reconciliation failed",
-      subjectType: "billing", subjectId: snapshot.stripeSubscriptionId,
-      subjectLabel: "quarantined", metadata: { code },
+    await writeAuditEvent(tx, {
+      organizationId, actor: actorUserId ? auditUser(actorUserId) : auditJob(),
+      action: "billing.reconciliation.failed", category: "billing",
+      subject: { type: "billing", id: organizationId, label: "quarantined" },
+      beforeState: { status: snapshot.status }, afterState: { status: "quarantined" }, metadata: { code },
     });
     throw error;
   }

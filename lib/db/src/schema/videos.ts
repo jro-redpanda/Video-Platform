@@ -1,4 +1,4 @@
-import { boolean, check, doublePrecision, foreignKey, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { bigint, boolean, check, date, doublePrecision, foreignKey, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { organizationsTable } from "./organizations";
 import { providerAccountsTable } from "./operations";
@@ -125,19 +125,79 @@ export const videoAnalyticsRollupsTable = pgTable("video_analytics_rollups", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: uuid("organization_id").notNull().references(() => organizationsTable.id, { onDelete: "cascade" }),
   videoId: uuid("video_id").notNull().references(() => videosTable.id, { onDelete: "cascade" }),
-  day: text("day").notNull(),
+  day: date("day", { mode: "string" }).notNull(),
   plays: integer("plays").notNull().default(0),
+  uniqueSessions: integer("unique_sessions").notNull().default(0),
   watchTimeSeconds: integer("watch_time_seconds").notNull().default(0),
+  completions: integer("completions").notNull().default(0),
   completionRate: doublePrecision("completion_rate").notNull().default(0),
-}, (table) => [uniqueIndex("video_rollups_video_day_idx").on(table.videoId, table.day)]);
+}, (table) => [
+  uniqueIndex("video_rollups_org_video_day_idx").on(table.organizationId, table.videoId, table.day),
+  index("video_rollups_org_day_idx").on(table.organizationId, table.day),
+]);
 
 export const playbackEventsTable = pgTable("playback_events", {
   id: uuid("id").primaryKey().defaultRandom(),
+  eventId: uuid("event_id").notNull(),
   organizationId: uuid("organization_id").notNull().references(() => organizationsTable.id, { onDelete: "cascade" }),
   videoId: uuid("video_id").notNull().references(() => videosTable.id, { onDelete: "cascade" }),
+  embedId: uuid("embed_id").notNull().references(() => videoEmbedsTable.videoId, { onDelete: "cascade" }),
   sessionId: uuid("session_id").notNull(),
   eventType: text("event_type").notNull(),
   positionSeconds: doublePrecision("position_seconds").notNull().default(0),
+  durationSeconds: doublePrecision("duration_seconds"),
+  errorCategory: text("error_category"),
   metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
   occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [index("playback_events_org_time_idx").on(table.organizationId, table.occurredAt)]);
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("playback_events_org_event_idx").on(table.organizationId, table.eventId),
+  index("playback_events_org_time_idx").on(table.organizationId, table.occurredAt),
+  index("playback_events_org_video_session_idx").on(table.organizationId, table.videoId, table.sessionId, table.occurredAt, table.eventId),
+  index("playback_events_retention_idx").on(table.receivedAt),
+]);
+
+export const analyticsDirtyDaysTable = pgTable("analytics_dirty_days", {
+  organizationId: uuid("organization_id").notNull().references(() => organizationsTable.id, { onDelete: "cascade" }),
+  videoId: uuid("video_id").notNull().references(() => videosTable.id, { onDelete: "cascade" }),
+  day: date("day", { mode: "string" }).notNull(),
+  version: bigint("version", { mode: "number" }).notNull().default(1),
+  availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+  attempts: integer("attempts").notNull().default(0),
+  lastError: text("last_error"),
+  claimedAt: timestamp("claimed_at", { withTimezone: true }),
+}, (table) => [
+  primaryKey({ columns: [table.organizationId, table.videoId, table.day] }),
+  index("analytics_dirty_days_available_idx").on(table.availableAt, table.claimedAt),
+]);
+
+export const analyticsRateWindowsTable = pgTable("analytics_rate_windows", {
+  organizationId: uuid("organization_id").notNull().references(() => organizationsTable.id, { onDelete: "cascade" }),
+  dimensionType: text("dimension_type").notNull(),
+  dimensionHash: text("dimension_hash").notNull(),
+  windowStartedAt: timestamp("window_started_at", { withTimezone: true }).notNull(),
+  requestCount: integer("request_count").notNull().default(0),
+  eventCount: integer("event_count").notNull().default(0),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.organizationId, table.dimensionType, table.dimensionHash, table.windowStartedAt] }),
+  index("analytics_rate_windows_expiry_idx").on(table.expiresAt),
+]);
+
+/** Server-receipt attestation; never stores a grant, IP address, or provider identity. */
+export const analyticsPlaybackSessionsTable = pgTable("analytics_playback_sessions", {
+  organizationId: uuid("organization_id").notNull().references(() => organizationsTable.id, { onDelete: "cascade" }),
+  videoId: uuid("video_id").notNull().references(() => videosTable.id, { onDelete: "cascade" }),
+  embedId: uuid("embed_id").notNull().references(() => videoEmbedsTable.videoId, { onDelete: "cascade" }),
+  clientSessionId: uuid("client_session_id").notNull(),
+  grantJtiHash: text("grant_jti_hash").notNull(),
+  firstReceivedAt: timestamp("first_received_at", { withTimezone: true }).notNull(),
+  loadOccurredAt: timestamp("load_occurred_at", { withTimezone: true }).notNull(),
+  lastReceivedAt: timestamp("last_received_at", { withTimezone: true }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.organizationId, table.videoId, table.clientSessionId] }),
+  uniqueIndex("analytics_playback_sessions_org_jti_idx").on(table.organizationId, table.grantJtiHash),
+  index("analytics_playback_sessions_expiry_idx").on(table.expiresAt),
+  index("analytics_playback_sessions_org_video_idx").on(table.organizationId, table.videoId, table.clientSessionId),
+]);

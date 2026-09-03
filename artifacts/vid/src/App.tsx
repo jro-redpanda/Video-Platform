@@ -18,6 +18,7 @@ import VideoDetail from "@/pages/video-detail";
 import Analytics from "@/pages/analytics";
 import Members from "@/pages/members";
 import Customization from "@/pages/customization";
+import Audit from "@/pages/audit";
 import Settings from "@/pages/settings";
 import EmbedPlayer from "@/pages/embed-player";
 import Login from "@/pages/login";
@@ -60,6 +61,7 @@ function AuthenticatedRouter() {
           <Route path="/analytics" component={Analytics} />
           <Route path="/members" component={Members} />
           <Route path="/customization" component={Customization} />
+          <Route path="/audit" component={Audit} />
           <Route path="/settings" component={Settings} />
           <Route component={NotFound} />
         </Switch>

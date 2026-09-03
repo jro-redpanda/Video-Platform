@@ -8,4 +8,5 @@
 
 export type CreatePlaybackEvents202 = {
   accepted: number;
+  duplicates: number;
 };

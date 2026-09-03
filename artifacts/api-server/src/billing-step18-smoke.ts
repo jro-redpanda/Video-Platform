@@ -196,8 +196,27 @@ try {
   assert.equal(fake.calls.filter((item) => item.operation === "customer").length, 1);
 
   const audit = await db.select().from(auditLogsTable).where(eq(auditLogsTable.organizationId, organizationId));
-  assert(audit.some((item) => item.action === "billing payment failed"));
-  assert(audit.some((item) => item.action === "billing payment recovered"));
+  const statusChanges = audit.filter((item) => item.action === "billing.status_changed");
+  assert(statusChanges.some((item) =>
+    (item.beforeState as { status?: string } | null)?.status === "active"
+    && (item.afterState as { status?: string } | null)?.status === "past_due"),
+  "past-due transition uses billing.status_changed");
+  assert(statusChanges.some((item) =>
+    (item.beforeState as { status?: string } | null)?.status === "past_due"
+    && (item.afterState as { status?: string } | null)?.status === "active"),
+  "payment recovery uses billing.status_changed");
+  assert(statusChanges.every((item) => item.actorKind === "user" && item.actorUserId === userId));
+  for (const item of statusChanges) {
+    const serialized = JSON.stringify({
+      subjectId: item.subjectId,
+      beforeState: item.beforeState,
+      afterState: item.afterState,
+      metadata: item.metadata,
+    });
+    assert.equal(/cus_fake_|sub_fake_|stripe/i.test(serialized), false, "audit excludes Stripe IDs");
+    assert.equal(/https?:\/\//i.test(serialized), false, "audit excludes provider URLs");
+    assert.deepEqual(item.metadata, {}, "status transition metadata is sanitized and minimal");
+  }
   const entitlements = await db.transaction((tx) => resolveEntitlements(tx, organizationId));
   assert.equal(entitlements["limits.max_videos"], 2500);
 

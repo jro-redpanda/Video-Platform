@@ -30,4 +30,6 @@ export interface PublicVideo {
   posterUrl?: string | null;
   logoUrl?: string;
   watermarkUrl?: string;
+  analyticsGrant?: string;
+  analyticsGrantExpiresAt?: Date;
 }

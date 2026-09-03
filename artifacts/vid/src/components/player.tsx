@@ -18,6 +18,11 @@ export interface PlayerProps {
   status?: string;
   message?: string;
   autoPlay?: boolean;
+  onPlay?: (event: any) => void;
+  onPause?: (event: any) => void;
+  onEnded?: (event: any) => void;
+  onTimeUpdate?: (event: any) => void;
+  onError?: (event: any) => void;
 }
 
 export function Player({
@@ -34,6 +39,11 @@ export function Player({
   status,
   message,
   autoPlay,
+  onPlay,
+  onPause,
+  onEnded,
+  onTimeUpdate,
+  onError,
 }: PlayerProps) {
   const playerRef = useRef<MediaPlayerElement>(null);
   const id = useId().replace(/:/g, '');
@@ -136,6 +146,11 @@ export function Player({
         autoPlay={autoPlay}
         load={load as any}
         ref={playerRef}
+        onPlay={onPlay}
+        onPause={onPause}
+        onEnded={onEnded}
+        onTimeUpdate={onTimeUpdate}
+        onError={onError}
       >
         <MediaOutlet />
         <MediaCommunitySkin />

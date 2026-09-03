@@ -6,9 +6,10 @@ import {
 import { TenantSpaceCreationRejectedError, type VideoProvider } from "@workspace/providers";
 import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import type { ProvisioningProviderResolver } from "./provider-registry";
+import { auditJob, writeAuditEvent } from "./audit";
 
 const groups = [
-  { name: "Owners", description: "Full workspace access", permissions: ["workspace.manage", "videos.read", "videos.create", "videos.update", "videos.delete", "members.manage", "analytics.read"] },
+  { name: "Owners", description: "Full workspace access", permissions: ["workspace.manage", "videos.read", "videos.create", "videos.update", "videos.delete", "members.manage", "analytics.read", "audit.read", "audit.export"] },
   { name: "Editors", description: "Create and manage videos", permissions: ["videos.read", "videos.create", "videos.update", "videos.delete", "analytics.read"] },
   { name: "Viewers", description: "View videos and analytics", permissions: ["videos.read", "analytics.read"] },
 ] as const;
@@ -18,6 +19,7 @@ const catalog = [
   ["videos.create", "Create videos and upload media"], ["videos.update", "Edit video metadata and visibility"],
   ["videos.delete", "Delete videos and provider media"],
   ["members.manage", "Invite, suspend, and assign members"], ["analytics.read", "View workspace analytics"],
+  ["audit.read", "View the immutable audit trail"], ["audit.export", "Export the immutable audit trail"],
 ] as const;
 
 export async function provisionTenantOrganization(organizationId: string, resolveProvider: ProvisioningProviderResolver) {
@@ -51,6 +53,11 @@ export async function provisionTenantOrganization(organizationId: string, resolv
     const [inserted] = await tx.insert(providerTenantSpacesTable).values({
       organizationId, providerAccountId: account.id, idempotencyKey: randomUUID(), state: "creating",
     }).returning();
+    await writeAuditEvent(tx, {
+      organizationId, actor: auditJob(), action: "provider.account_provisioning.requested", category: "provider",
+      subject: { type: "provider_tenant_space", id: inserted.id, label: "creating" },
+      afterState: { state: "creating" },
+    });
     return inserted;
   });
   if (!space) throw new Error(`Unable to reserve tenant space for organization ${organizationId}`);
@@ -67,8 +74,17 @@ export async function provisionTenantOrganization(organizationId: string, resolv
     if (!claimed) {
       // A surviving claim represents an interrupted external call. Repeating
       // it could create a second remote library, so reconciliation is required.
-      await db.update(providerTenantSpacesTable).set({ reconciliationRequired: true })
-        .where(eq(providerTenantSpacesTable.id, space.id));
+      await db.transaction(async (tx) => {
+        const [changed] = await tx.update(providerTenantSpacesTable).set({ reconciliationRequired: true })
+          .where(and(eq(providerTenantSpacesTable.id, space.id), eq(providerTenantSpacesTable.reconciliationRequired, false)))
+          .returning({ id: providerTenantSpacesTable.id });
+        if (changed) await writeAuditEvent(tx, {
+          organizationId, actor: auditJob(), action: "provider.account_provisioning.reconciliation_required", category: "provider",
+          subject: { type: "provider_tenant_space", id: space.id, label: "reconciliation_required" },
+          beforeState: { state: "creating" }, afterState: { state: "creating", reconciliationRequired: true },
+          metadata: { code: "interrupted_external_call_claim" },
+        });
+      });
       throw new Error(`Provider tenant-space creation requires reconciliation for ${organizationId}`);
     }
     space = claimed;
@@ -78,7 +94,7 @@ export async function provisionTenantOrganization(organizationId: string, resolv
     try {
       provider = await resolveProvider(account, space);
     } catch (error) {
-      await releaseUnclaimedReservation(space);
+      await releaseUnclaimedReservation(space, "provider_resolver_failed");
       throw error;
     }
     // Bunny persists its ID and credentials through its awaited internal
@@ -87,7 +103,7 @@ export async function provisionTenantOrganization(organizationId: string, resolv
     try {
       tenantSpace = await provider.createTenantSpace({ name: organization.name });
     } catch (error) {
-      if (error instanceof TenantSpaceCreationRejectedError) await releaseUnclaimedReservation(space);
+      if (error instanceof TenantSpaceCreationRejectedError) await releaseUnclaimedReservation(space, "provider_tenant_space_rejected");
       throw error;
     }
     const persisted = await db.update(providerTenantSpacesTable).set({ providerSpaceId: tenantSpace.id, externalCallClaim: null, externalCallClaimedAt: null })
@@ -97,10 +113,7 @@ export async function provisionTenantOrganization(organizationId: string, resolv
     else [space] = await db.select().from(providerTenantSpacesTable).where(eq(providerTenantSpacesTable.id, space.id)).limit(1);
   }
   if (space?.state === "creating" && space.providerSpaceId) {
-    const [created] = await db.update(providerTenantSpacesTable).set({ state: "created" })
-      .where(and(eq(providerTenantSpacesTable.id, space.id), eq(providerTenantSpacesTable.state, "creating")))
-      .returning();
-    if (created) space = created;
+    space = await finalizeProviderTenantSpaceProvisioning(organizationId, space.id) ?? space;
   }
   if (!space || space.state !== "created" || !space.providerSpaceId) throw new Error("Provider tenant space was not created");
 
@@ -121,13 +134,53 @@ export async function provisionTenantOrganization(organizationId: string, resolv
   return { organizationId, status: "active" as const, providerSpaceId: space.providerSpaceId };
 }
 
-async function releaseUnclaimedReservation(space: typeof providerTenantSpacesTable.$inferSelect) {
+/** Atomically publishes the provider space and its audit record. */
+export async function finalizeProviderTenantSpaceProvisioning(
+  organizationId: string,
+  tenantSpaceId: string,
+  auditWriter: typeof writeAuditEvent = writeAuditEvent,
+) {
+  return db.transaction(async (tx) => {
+    const [created] = await tx.update(providerTenantSpacesTable).set({ state: "created" })
+      .where(and(
+        eq(providerTenantSpacesTable.id, tenantSpaceId),
+        eq(providerTenantSpacesTable.organizationId, organizationId),
+        eq(providerTenantSpacesTable.state, "creating"),
+      ))
+      .returning();
+    if (!created) {
+      const [current] = await tx.select().from(providerTenantSpacesTable)
+        .where(and(
+          eq(providerTenantSpacesTable.id, tenantSpaceId),
+          eq(providerTenantSpacesTable.organizationId, organizationId),
+        )).limit(1);
+      return current;
+    }
+    await auditWriter(tx, {
+      organizationId, actor: auditJob(), action: "provider.account_provisioning.succeeded", category: "provider",
+      subject: { type: "provider_tenant_space", id: created.id, label: "created" },
+      beforeState: { state: "creating" }, afterState: { state: "created" },
+    });
+    return created;
+  });
+}
+
+async function releaseUnclaimedReservation(space: typeof providerTenantSpacesTable.$inferSelect, code: string) {
   const [current] = await db.select().from(providerTenantSpacesTable)
     .where(eq(providerTenantSpacesTable.id, space.id)).limit(1);
   // Resolver failures happen before a remote call. If an external ID exists,
   // its outcome is ambiguous and the reservation intentionally remains.
   if (current?.providerSpaceId) return;
   await db.transaction(async (tx) => {
+    const [locked] = await tx.select({ id: providerTenantSpacesTable.id }).from(providerTenantSpacesTable)
+      .where(and(eq(providerTenantSpacesTable.id, space.id), isNull(providerTenantSpacesTable.providerSpaceId)))
+      .for("update").limit(1);
+    if (!locked) return;
+    await writeAuditEvent(tx, {
+      organizationId: space.organizationId, actor: auditJob(), action: "provider.account_provisioning.failed", category: "provider",
+      subject: { type: "provider_tenant_space", id: space.id, label: "released" },
+      beforeState: { state: "creating" }, afterState: { state: "released" }, metadata: { code },
+    });
     const deleted = await tx.delete(providerTenantSpacesTable).where(and(
       eq(providerTenantSpacesTable.id, space.id),
       isNull(providerTenantSpacesTable.providerSpaceId),

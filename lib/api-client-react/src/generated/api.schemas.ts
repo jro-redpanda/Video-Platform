@@ -642,6 +642,65 @@ export interface ActivityItem {
   createdAt: string;
 }
 
+export type AuditEventActorKind = typeof AuditEventActorKind[keyof typeof AuditEventActorKind];
+
+
+export const AuditEventActorKind = {
+  user: 'user',
+  system: 'system',
+  webhook: 'webhook',
+  job: 'job',
+} as const;
+
+export type AuditEventActor = {
+  kind: AuditEventActorKind;
+  /** @nullable */
+  userId: string | null;
+  name: string;
+};
+
+export type AuditEventSubject = {
+  type: string;
+  /** @nullable */
+  id: string | null;
+  label: string;
+};
+
+/**
+ * @nullable
+ */
+export type AuditEventBeforeState = { [key: string]: unknown } | null;
+
+/**
+ * @nullable
+ */
+export type AuditEventAfterState = { [key: string]: unknown } | null;
+
+export type AuditEventMetadata = { [key: string]: unknown };
+
+export interface AuditEvent {
+  id: string;
+  action: string;
+  category: string;
+  actor: AuditEventActor;
+  subject: AuditEventSubject;
+  /** @nullable */
+  beforeState?: AuditEventBeforeState;
+  /** @nullable */
+  afterState?: AuditEventAfterState;
+  metadata: AuditEventMetadata;
+  /** @nullable */
+  requestId?: string | null;
+  createdAt: string;
+}
+
+export interface AuditEventPage {
+  items: AuditEvent[];
+  /** @nullable */
+  nextCursor: string | null;
+  snapshotAt: string;
+}
+
 export interface PermissionGroup {
   id: string;
   name: string;
@@ -768,6 +827,8 @@ export interface PublicVideo {
   posterUrl?: string | null;
   logoUrl?: string;
   watermarkUrl?: string;
+  analyticsGrant?: string;
+  analyticsGrantExpiresAt?: string;
 }
 
 export type AuthenticatedPlaybackVideoStatus = typeof AuthenticatedPlaybackVideoStatus[keyof typeof AuthenticatedPlaybackVideoStatus];
@@ -821,10 +882,10 @@ export interface AuthenticatedPlaybackVideo {
   watermarkUrl?: string;
 }
 
-export type PlaybackEventInputEventType = typeof PlaybackEventInputEventType[keyof typeof PlaybackEventInputEventType];
+export type PlaybackEventInputType = typeof PlaybackEventInputType[keyof typeof PlaybackEventInputType];
 
 
-export const PlaybackEventInputEventType = {
+export const PlaybackEventInputType = {
   load: 'load',
   play: 'play',
   progress: 'progress',
@@ -833,16 +894,43 @@ export const PlaybackEventInputEventType = {
   error: 'error',
 } as const;
 
+export type PlaybackEventInputErrorCategory = typeof PlaybackEventInputErrorCategory[keyof typeof PlaybackEventInputErrorCategory];
+
+
+export const PlaybackEventInputErrorCategory = {
+  network: 'network',
+  media: 'media',
+  decode: 'decode',
+  source: 'source',
+  unknown: 'unknown',
+} as const;
+
 export interface PlaybackEventInput {
-  videoId: string;
+  /** @pattern ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ */
+  eventId: string;
+  /** @pattern ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ */
   sessionId: string;
-  eventType: PlaybackEventInputEventType;
-  /** @minimum 0 */
-  positionSeconds: number;
+  type: PlaybackEventInputType;
+  /**
+     * @minimum 0
+     * @maximum 86400
+     */
+  positionSeconds?: number;
+  /**
+     * @minimum 0
+     * @maximum 86400
+     */
+  durationSeconds?: number;
   occurredAt: string;
+  errorCategory?: PlaybackEventInputErrorCategory;
 }
 
 export interface PlaybackEventBatch {
+  /**
+     * @minLength 20
+     * @maxLength 4096
+     */
+  grant: string;
   /**
      * @minItems 1
      * @maxItems 50
@@ -921,7 +1009,64 @@ export type ListFoldersParams = {
 parentId: string;
 };
 
+export type ListAuditEventsParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+cursor?: string;
+category?: string;
+action?: string;
+subjectType?: string;
+subjectId?: string;
+actorKind?: ListAuditEventsActorKind;
+actorUserId?: string;
+from?: string;
+to?: string;
+/**
+ * @maxLength 200
+ */
+search?: string;
+};
+
+export type ListAuditEventsActorKind = typeof ListAuditEventsActorKind[keyof typeof ListAuditEventsActorKind];
+
+
+export const ListAuditEventsActorKind = {
+  user: 'user',
+  system: 'system',
+  webhook: 'webhook',
+  job: 'job',
+} as const;
+
+export type ExportAuditEventsParams = {
+category?: string;
+action?: string;
+subjectType?: string;
+subjectId?: string;
+actorKind?: ExportAuditEventsActorKind;
+actorUserId?: string;
+from?: string;
+to?: string;
+/**
+ * @maxLength 200
+ */
+search?: string;
+};
+
+export type ExportAuditEventsActorKind = typeof ExportAuditEventsActorKind[keyof typeof ExportAuditEventsActorKind];
+
+
+export const ExportAuditEventsActorKind = {
+  user: 'user',
+  system: 'system',
+  webhook: 'webhook',
+  job: 'job',
+} as const;
+
 export type CreatePlaybackEvents202 = {
   accepted: number;
+  duplicates: number;
 };
 

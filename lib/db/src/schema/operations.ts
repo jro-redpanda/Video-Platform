@@ -93,10 +93,20 @@ export const auditLogsTable = pgTable("audit_logs", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: uuid("organization_id").references(() => organizationsTable.id, { onDelete: "set null" }),
   actorUserId: uuid("actor_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  actorKind: text("actor_kind").notNull().default("user").$type<"user" | "system" | "webhook" | "job">(),
   action: text("action").notNull(),
+  category: text("category").notNull().default("general"),
   subjectType: text("subject_type").notNull(),
   subjectId: text("subject_id"),
   subjectLabel: text("subject_label").notNull(),
+  beforeState: jsonb("before_state").$type<Record<string, unknown> | null>(),
+  afterState: jsonb("after_state").$type<Record<string, unknown> | null>(),
   metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+  requestId: text("request_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [index("audit_logs_org_time_idx").on(table.organizationId, table.createdAt)]);
+}, (table) => [
+  index("audit_logs_org_time_idx").on(table.organizationId, table.createdAt, table.id),
+  index("audit_logs_org_category_time_idx").on(table.organizationId, table.category, table.createdAt, table.id),
+  index("audit_logs_org_subject_time_idx").on(table.organizationId, table.subjectType, table.subjectId, table.createdAt, table.id),
+  index("audit_logs_org_actor_time_idx").on(table.organizationId, table.actorKind, table.actorUserId, table.createdAt, table.id),
+]);

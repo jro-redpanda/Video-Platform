@@ -28,6 +28,7 @@ import {
 import { requirePermission } from "../lib/permissions";
 import { withTenantDb } from "../lib/tenant-db";
 import { requireCreateAccess, requireEntitlement, resolveEntitlements } from "../lib/entitlements";
+import { auditDiff, auditUser, writeAuditEvent } from "../lib/audit";
 
 const router: IRouter = Router();
 
@@ -112,7 +113,14 @@ router.post("/permission-groups", requirePermission("members.manage"), requireCr
         input.permissions.map((permissionKey) => ({ groupId: created.id, permissionKey })),
       );
     }
-    return readGroup(tx, req.tenant.organizationId, created.id);
+    const group = await readGroup(tx, req.tenant.organizationId, created.id);
+    if (group) await writeAuditEvent(tx, {
+      organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+      action: "rbac.permission_group.created", category: "members",
+      subject: { type: "permission_group", id: group.id, label: group.name },
+      afterState: { permissionCount: group.permissions.length }, requestId: String(req.id),
+    });
+    return group;
   });
   if (!group) return void res.status(400).json({ error: "Unknown permission" });
   res.status(201).json(CreatePermissionGroupResponse.parse(group));
@@ -133,6 +141,10 @@ router.patch("/permission-groups/:groupId", requirePermission("members.manage"),
       const others = await countOtherPermissionHolders(tx, req.tenant.organizationId, "members.manage", groupId);
       if (others === 0) return { status: "lockout" as const };
     }
+    const same = current.name === input.name && current.description === input.description
+      && current.permissions.length === input.permissions.length
+      && current.permissions.every((permission) => input.permissions.includes(permission));
+    if (same) return { status: "ok" as const, group: current };
     await tx.update(permissionGroupsTable).set({
       name: input.name,
       description: input.description,
@@ -146,7 +158,17 @@ router.patch("/permission-groups/:groupId", requirePermission("members.manage"),
         input.permissions.map((permissionKey) => ({ groupId, permissionKey })),
       );
     }
-    return { status: "ok" as const, group: await readGroup(tx, req.tenant.organizationId, groupId) };
+    const group = await readGroup(tx, req.tenant.organizationId, groupId);
+    if (group) await writeAuditEvent(tx, {
+      organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+      action: "rbac.permission_group.updated", category: "members",
+      subject: { type: "permission_group", id: group.id, label: group.name },
+      ...auditDiff(
+        { name: current.name, description: current.description, permissionCount: current.permissions.length },
+        { name: group.name, description: group.description, permissionCount: group.permissions.length },
+      ), requestId: String(req.id),
+    });
+    return { status: "ok" as const, group };
   });
   if (result.status === "missing") return void res.status(404).json({ error: "Permission group not found" });
   if (result.status === "invalid") return void res.status(400).json({ error: "Unknown permission" });
@@ -163,10 +185,17 @@ router.delete("/permission-groups/:groupId", requirePermission("members.manage")
         eq(membershipsTable.groupId, groupId),
       ));
     if (usage.count > 0) return "in-use" as const;
+    const current = await readGroup(tx, req.tenant.organizationId, groupId);
     const [deleted] = await tx.delete(permissionGroupsTable).where(and(
       eq(permissionGroupsTable.organizationId, req.tenant.organizationId),
       eq(permissionGroupsTable.id, groupId),
     )).returning({ id: permissionGroupsTable.id });
+    if (deleted && current) await writeAuditEvent(tx, {
+      organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+      action: "rbac.permission_group.deleted", category: "members",
+      subject: { type: "permission_group", id: groupId, label: current.name },
+      beforeState: { permissionCount: current.permissions.length }, requestId: String(req.id),
+    });
     return deleted ? "deleted" as const : "missing" as const;
   });
   if (result === "in-use") return void res.status(409).json({ error: "Reassign members before deleting this group" });
@@ -262,7 +291,25 @@ router.patch("/members/:membershipId", requirePermission("members.manage"), asyn
       if (others === 0) return { status: "lockout" as const };
     }
 
+    if (update.groupId === current.groupId && (update.status === undefined || update.status === current.status)
+      || update.status === current.status && update.groupId === undefined) {
+      const [member] = await tx.select({
+        id: membershipsTable.id, name: usersTable.name, email: usersTable.email,
+        groupId: permissionGroupsTable.id, role: permissionGroupsTable.name, status: membershipsTable.status,
+      }).from(membershipsTable).innerJoin(usersTable, eq(usersTable.id, membershipsTable.userId))
+        .innerJoin(permissionGroupsTable, eq(permissionGroupsTable.id, membershipsTable.groupId))
+        .where(eq(membershipsTable.id, membershipId));
+      return { status: "ok" as const, member };
+    }
     await tx.update(membershipsTable).set(update).where(eq(membershipsTable.id, membershipId));
+    await writeAuditEvent(tx, {
+      organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+      action: update.groupId !== undefined ? "member.group_changed" : "member.status_changed",
+      category: "members", subject: { type: "membership", id: membershipId, label: "member" },
+      ...auditDiff({ groupId: current.groupId, status: current.status },
+        { groupId: update.groupId ?? current.groupId, status: update.status ?? current.status }),
+      requestId: String(req.id),
+    });
     const [member] = await tx.select({
       id: membershipsTable.id,
       name: usersTable.name,
@@ -312,6 +359,12 @@ router.post("/invitations", requirePermission("members.manage"), requireCreateAc
       invitedByUserId: req.tenant.userId,
       expiresAt,
     }).returning({ id: invitationsTable.id, email: invitationsTable.email });
+    await writeAuditEvent(tx, {
+      organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+      action: "invitation.created", category: "members",
+      subject: { type: "invitation", id: created.id, label: "invited" },
+      afterState: { status: "invited", groupId: group.id }, requestId: String(req.id),
+    });
 
     return {
       ...created,

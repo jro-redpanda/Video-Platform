@@ -16,6 +16,7 @@ import {
 } from "@workspace/providers";
 import { resolveBunnyWebhookProvider } from "../lib/provider-registry";
 import { enqueueEmbedDispatchWakeup } from "../lib/jobs";
+import { auditWebhook, writeAuditEvent } from "../lib/audit";
 
 const router: IRouter = Router();
 
@@ -121,6 +122,7 @@ async function processVerifiedEvent(
       id: videosTable.id,
       organizationId: videosTable.organizationId,
       status: videosTable.status,
+      title: videosTable.title,
     }).from(videosTable).where(and(
       eq(videosTable.providerAccountId, providerAccountId),
       eq(videosTable.providerTenantSpaceId, event.tenantSpaceId),
@@ -164,6 +166,14 @@ async function processVerifiedEvent(
         : "terminal_state_noop",
       processedAt: new Date(),
     }).where(eq(webhookEventsTable.id, receipt.id));
+    if (changed.length) await writeAuditEvent(tx, {
+      organizationId: video.organizationId, actor: auditWebhook(),
+      action: "provider.bunny.encode_status_changed", category: "provider",
+      subject: { type: "video", id: video.id, label: video.title },
+      beforeState: { status: video.status },
+      afterState: { status: update.status },
+      metadata: { provider: "bunny" }, requestId: undefined,
+    });
 
     if (changed.length && event.status.state === "ready") {
       await tx.insert(embedGenerationOutboxTable).values({

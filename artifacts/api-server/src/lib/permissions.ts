@@ -10,7 +10,9 @@ export type Permission =
   | "videos.update"
   | "videos.delete"
   | "members.manage"
-  | "analytics.read";
+  | "analytics.read"
+  | "audit.read"
+  | "audit.export";
 
 export function requirePermission(permission: Permission) {
   return async (req: Request, res: Response, next: NextFunction) => {

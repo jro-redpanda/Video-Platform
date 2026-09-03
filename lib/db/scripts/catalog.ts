@@ -1,17 +1,20 @@
 import { createHash } from "node:crypto";
 import type pg from "pg";
 
-export type CatalogStage = "pre15" | "step15" | "thumbnailIntegrity" | "final" | "billingBase" | "billingCheckoutBase" | "billingProviderBase" | "billing";
+export type CatalogStage = "pre15" | "step15" | "thumbnailIntegrity" | "final" | "billingBase" | "billingCheckoutBase" | "billingProviderBase" | "billing" | "analyticsBase" | "analytics" | "audit" | "auditExport";
 const pre = ["accounts","audit_logs","embed_generation_outbox","folders","group_permissions","invitations","memberships","organization_customization","organization_entitlement_overrides","organizations","permission_groups","permissions","plans","playback_events","provider_accounts","provider_tenant_spaces","sessions","users","verifications","video_analytics_rollups","video_embeds","videos","webhook_events"];
 const step15 = [...pre, "thumbnail_upload_intents", "object_cleanup_outbox"];
 const billing = [...step15, "organization_billing", "billing_operations", "billing_event_receipts"];
+const analyticsBase = [...billing, "analytics_dirty_days", "analytics_rate_windows"];
+const analytics = [...analyticsBase, "analytics_playback_sessions"];
 const enums = ["membership_status","organization_status","provider_tenant_space_state","video_status","video_visibility"];
 const billingEnums = [...enums, "billing_status","billing_interval","billing_operation_state"];
 const compact = (value: string | null) => value?.replace(/\s+/g, " ").trim() ?? null;
 
 export async function catalogFingerprint(client: pg.Client, stage: CatalogStage) {
-  const billingStage = stage === "billing" || stage === "billingBase" || stage === "billingCheckoutBase" || stage === "billingProviderBase";
-  const tables = stage === "pre15" ? pre : billingStage ? billing : step15;
+  const analyticsStage = stage === "analytics" || stage === "audit" || stage === "auditExport";
+  const billingStage = stage === "billing" || stage === "billingBase" || stage === "billingCheckoutBase" || stage === "billingProviderBase" || analyticsStage;
+  const tables = stage === "pre15" ? pre : analyticsStage ? analytics : stage === "analyticsBase" ? analyticsBase : billingStage ? billing : step15;
   const enumRows = await client.query(`select t.typname as name,e.enumsortorder::int as position,e.enumlabel as label from pg_type t join pg_enum e on e.enumtypid=t.oid join pg_namespace n on n.oid=t.typnamespace where n.nspname='public' and t.typname=any($1) order by 1,2`, [billingStage ? billingEnums : enums]);
   const relations = await client.query(`select c.relname as name,c.relkind as kind,c.relrowsecurity as rls,c.relforcerowsecurity as forced from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname=any($1) order by 1`, [tables]);
   const columns = await client.query(`select c.relname as relation,a.attname as name,format_type(a.atttypid,a.atttypmod) as type,a.attnotnull as not_null,pg_get_expr(d.adbin,d.adrelid) as default,a.attidentity as identity,a.attgenerated as generated,coll.collname as collation from pg_class c join pg_namespace n on n.oid=c.relnamespace join pg_attribute a on a.attrelid=c.oid and a.attnum>0 and not a.attisdropped left join pg_attrdef d on d.adrelid=c.oid and d.adnum=a.attnum left join pg_collation coll on coll.oid=a.attcollation where n.nspname='public' and c.relname=any($1) order by 1,2`, [tables]);
@@ -45,4 +48,8 @@ export const EXPECTED_CATALOG_HASHES: Record<CatalogStage, string> = {
   billingCheckoutBase: "622aef0183be3f3f2e880bd6c59ee404be72b38ad4caf43f3812dfb9dc96e3ad",
   billingProviderBase: "0fd3b5c64b0bdb8e19a6cecb4d97c2989032a8209f946b491a9c9c2831b7a88d",
   billing: "8097cb64e4fd023769dafd8c8da86c8d30ea560456504e0c64db49f9296d4ee2",
+  analytics: "1e3b1a54d5814cadf5f3d575758a0e4965c8d8b20192c5441d556c14d761afc1",
+  analyticsBase: "97eea02ba9e957bb52fa293007c22b7dec7f088c71295f386594b7a2d6214eec",
+  audit: "9c81b785d8180cae9e867311df88726c7590f60eb31cf7e4a0456c47e0ea9076",
+  auditExport: "d487c687729bc68b2ef81a4de096dcf570be8f488031c0229725486525562d20",
 };

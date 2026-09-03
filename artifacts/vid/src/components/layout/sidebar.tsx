@@ -8,7 +8,8 @@ import {
   Users,
   Palette,
   Settings,
-  MonitorPlay
+  MonitorPlay,
+  ClipboardList
 } from "lucide-react"
 
 import { useGetWorkspace } from "@workspace/api-client-react"
@@ -20,6 +21,7 @@ const navItems = [
   { href: "/analytics", label: "Analytics", icon: BarChart2 },
   { href: "/members", label: "Members", icon: Users },
   { href: "/customization", label: "Customization", icon: Palette },
+  { href: "/audit", label: "Audit Log", icon: ClipboardList },
   { href: "/settings", label: "Settings", icon: Settings },
 ]
 

@@ -1,14 +1,14 @@
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import { runtimeConfig } from "../lib/config";
 import { GetRuntimeConfigResponse } from "@workspace/api-zod";
 import {
   db,
   organizationCustomizationTable,
-  playbackEventsTable,
   providerAccountsTable,
   providerTenantSpacesTable,
   videosTable,
+  videoEmbedsTable,
 } from "@workspace/db";
 import {
   CreatePlaybackEventsBody,
@@ -19,6 +19,12 @@ import {
 import { resolveProvisioningProvider, videoProviders } from "../lib/provider-registry";
 import { getThumbnailStorage, ThumbnailObjectNotFoundError } from "../lib/thumbnail-storage";
 import { streamThumbnail } from "./thumbnails";
+import {
+  AnalyticsHttpError,
+  consumeGrantIssueLimit,
+  ingestPlaybackEvents,
+  issueAnalyticsGrant,
+} from "../lib/playback-analytics";
 
 const router: IRouter = Router();
 
@@ -118,6 +124,7 @@ router.get("/videos/:videoId", async (req, res): Promise<void> => {
   const { videoId } = GetPublicVideoParams.parse(req.params);
   const [video] = await db.select({
     id: videosTable.id,
+    organizationId: videosTable.organizationId,
     title: videosTable.title,
     description: videosTable.description,
     status: videosTable.status,
@@ -135,12 +142,16 @@ router.get("/videos/:videoId", async (req, res): Promise<void> => {
     providerTenantSpaceId: videosTable.providerTenantSpaceId,
     account: providerAccountsTable,
     space: providerTenantSpacesTable,
+    embedId: videoEmbedsTable.videoId,
+    embedGeneration: videoEmbedsTable.generationVersion,
+    embedStatus: videoEmbedsTable.generationStatus,
   }).from(videosTable)
     .innerJoin(
       organizationCustomizationTable,
       eq(organizationCustomizationTable.organizationId, videosTable.organizationId),
     )
     .leftJoin(providerAccountsTable, eq(providerAccountsTable.id, videosTable.providerAccountId))
+    .leftJoin(videoEmbedsTable, eq(videoEmbedsTable.videoId, videosTable.id))
     .leftJoin(providerTenantSpacesTable, and(
       eq(providerTenantSpacesTable.organizationId, videosTable.organizationId),
       eq(providerTenantSpacesTable.providerAccountId, videosTable.providerAccountId),
@@ -158,15 +169,33 @@ router.get("/videos/:videoId", async (req, res): Promise<void> => {
   }
   const {
     providerAssetId, providerTenantSpaceId, account, space, thumbnailObjectKey, thumbnailVersion,
-    thumbnailMutableUntil, ...rest
+    thumbnailMutableUntil, organizationId, embedId, embedGeneration, embedStatus, ...rest
   } = video;
   const thumbnailUrl = thumbnailObjectKey && thumbnailVersion
     && (!thumbnailMutableUntil || thumbnailMutableUntil.getTime() <= Date.now())
     ? `/api/public/videos/${videoId}/thumbnail?v=${thumbnailVersion}` : null;
+  let analytics: ReturnType<typeof issueAnalyticsGrant> | undefined;
+  if (embedId && embedGeneration && embedStatus === "generated") {
+    try {
+      await consumeGrantIssueLimit(organizationId, videoId, req.ip ?? "unknown");
+      analytics = issueAnalyticsGrant({ organizationId, videoId, embedId, generation: embedGeneration });
+    } catch (error) {
+      if (error instanceof AnalyticsHttpError) {
+        if (error.retryAfter) res.setHeader("Retry-After", String(error.retryAfter));
+        res.status(error.status).json({ error: "Playback analytics request rejected", code: error.code });
+        return;
+      }
+      throw error;
+    }
+  }
   const metadata = {
     ...rest,
     thumbnailUrl,
     posterUrl: thumbnailUrl,
+    ...(analytics ? {
+      analyticsGrant: analytics.grant,
+      analyticsGrantExpiresAt: analytics.expiresAt.toISOString(),
+    } : {}),
   };
   if (video.status !== "ready") {
     res.setHeader("Cache-Control", "private, no-store");
@@ -203,33 +232,23 @@ router.get("/videos/:videoId", async (req, res): Promise<void> => {
   }
 });
 
-// PRELIMINARY SCAFFOLDING: replace this beacon ingestion at Step 16.
-// MOCK: replaced at step 16
 router.post("/playback-events", async (req, res) => {
-  const { events } = CreatePlaybackEventsBody.parse(req.body);
-  const videoIds = [...new Set(events.map((event) => event.videoId))];
-  const visibleVideos = await db.select({
-    id: videosTable.id,
-    organizationId: videosTable.organizationId,
-  }).from(videosTable).where(and(
-    inArray(videosTable.id, videoIds),
-    ne(videosTable.visibility, "private"),
-  ));
-  const organizationsByVideo = new Map(visibleVideos.map((video) => [video.id, video.organizationId]));
-  const accepted = events.filter((event) => organizationsByVideo.has(event.videoId));
-
-  if (accepted.length) {
-    await db.insert(playbackEventsTable).values(accepted.map((event) => ({
-      organizationId: organizationsByVideo.get(event.videoId)!,
-      videoId: event.videoId,
-      sessionId: event.sessionId,
-      eventType: event.eventType,
-      positionSeconds: event.positionSeconds,
-      occurredAt: new Date(event.occurredAt),
-    })));
+  const parsed = CreatePlaybackEventsBody.safeParse(req.body);
+  if (!parsed.success) return void res.status(400).json({ error: "Invalid playback event batch", code: "invalid_event_batch" });
+  try {
+    const result = await ingestPlaybackEvents({
+      grant: parsed.data.grant,
+      events: parsed.data.events,
+      ip: req.ip ?? "unknown",
+    });
+    res.status(202).json(CreatePlaybackEventsResponse.parse(result));
+  } catch (error) {
+    if (error instanceof AnalyticsHttpError) {
+      if (error.retryAfter) res.setHeader("Retry-After", String(error.retryAfter));
+      return void res.status(error.status).json({ error: "Playback analytics request rejected", code: error.code });
+    }
+    throw error;
   }
-
-  res.status(202).json(CreatePlaybackEventsResponse.parse({ accepted: accepted.length }));
 });
 
 export default router;

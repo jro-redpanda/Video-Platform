@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { PgBoss, type Job } from "pg-boss";
-import { db, organizationsTable, plansTable, providerAccountsTable, providerTenantSpacesTable } from "@workspace/db";
+import { auditLogsTable, db, organizationsTable, plansTable, providerAccountsTable, providerTenantSpacesTable } from "@workspace/db";
 import { encryptProviderCredentials } from "./lib/credential-encryption";
-import { provisionTenantOrganization } from "./lib/tenant-provisioning";
+import { finalizeProviderTenantSpaceProvisioning, provisionTenantOrganization } from "./lib/tenant-provisioning";
 import { Step7SmokeVideoProvider } from "@workspace/providers/test-only";
 
 const suffix = randomUUID();
@@ -61,10 +61,40 @@ try {
   if (activeOrganization?.status !== "active" || spaces.length !== 1) {
     throw new Error("Idempotency assertion failed: expected one tenant space and active organization");
   }
+  const successAudits = await db.select().from(auditLogsTable).where(and(
+    eq(auditLogsTable.organizationId, organization.id),
+    eq(auditLogsTable.action, "provider.account_provisioning.succeeded"),
+  ));
+  if (successAudits.length !== 1) throw new Error("Expected exactly one provisioning success audit");
+  await finalizeProviderTenantSpaceProvisioning(organization.id, spaces[0]!.id);
+  const repeatedAudits = await db.select().from(auditLogsTable).where(and(
+    eq(auditLogsTable.organizationId, organization.id),
+    eq(auditLogsTable.action, "provider.account_provisioning.succeeded"),
+  ));
+  if (repeatedAudits.length !== 1) throw new Error("Idempotent finalization duplicated its success audit");
+
+  await db.update(providerTenantSpacesTable).set({ state: "creating" }).where(eq(providerTenantSpacesTable.id, spaces[0]!.id));
+  await finalizeProviderTenantSpaceProvisioning(
+    organization.id,
+    spaces[0]!.id,
+    async () => { throw new Error("deterministic_audit_insert_failure"); },
+  ).then(() => { throw new Error("Expected audit insertion failure"); }, () => undefined);
+  const [rolledBack] = await db.select({ state: providerTenantSpacesTable.state })
+    .from(providerTenantSpacesTable).where(eq(providerTenantSpacesTable.id, spaces[0]!.id));
+  if (rolledBack?.state !== "creating") throw new Error("Audit failure did not roll back provider-space transition");
+  await finalizeProviderTenantSpaceProvisioning(organization.id, spaces[0]!.id);
+  const postRollbackAudits = await db.select().from(auditLogsTable).where(and(
+    eq(auditLogsTable.organizationId, organization.id),
+    eq(auditLogsTable.action, "provider.account_provisioning.succeeded"),
+  ));
+  if (postRollbackAudits.length !== 2) throw new Error("Successful transition after rollback did not create one audit");
   console.log(JSON.stringify({ organizationId: organization.id, tenantSpaces: spaces.length, status: activeOrganization.status }));
 } finally {
   await boss.stop({ graceful: true, timeout: 5_000 });
-  if (organizationId) await db.delete(organizationsTable).where(eq(organizationsTable.id, organizationId));
+  if (organizationId) {
+    await db.delete(auditLogsTable).where(eq(auditLogsTable.organizationId, organizationId));
+    await db.delete(organizationsTable).where(eq(organizationsTable.id, organizationId));
+  }
   if (accountId) await db.delete(providerAccountsTable).where(eq(providerAccountsTable.id, accountId));
   await db.delete(plansTable).where(eq(plansTable.code, planCode));
 }

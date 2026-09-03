@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import {
-  auditLogsTable, billingOperationsTable, db, groupPermissionsTable, membershipsTable,
+  billingOperationsTable, db, groupPermissionsTable, membershipsTable,
   organizationBillingTable, organizationsTable, plansTable,
 } from "@workspace/db";
 import { billingProvider, type BillingInterval } from "../lib/billing-provider";
@@ -12,6 +12,7 @@ import { withTenantDb } from "../lib/tenant-db";
 import { trustedRequestOrigin } from "../lib/video-embeds";
 import { getUncachableStripeClient } from "../lib/stripe-client";
 import { checkoutSubscriptionConflict, withBillingLifecycleLock } from "../lib/billing-lifecycle-lock";
+import { auditUser, writeAuditEvent } from "../lib/audit";
 
 const router: IRouter = Router();
 const commercial = new Map([
@@ -55,10 +56,11 @@ async function claim(req: Request, operation: string, request: unknown) {
       organizationId: req.tenant.organizationId, actorUserId: req.tenant.userId,
       operation, idempotencyKey: key, requestFingerprint,
     }).onConflictDoNothing().returning();
-    if (created) await tx.insert(auditLogsTable).values({
-      organizationId: req.tenant.organizationId, actorUserId: req.tenant.userId,
-      action: `billing ${operation} requested`, subjectType: "billing_operation",
-      subjectId: created.id, subjectLabel: operation,
+    if (created) await writeAuditEvent(tx, {
+      organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+      action: `billing.${operation}.requested`, category: "billing",
+      subject: { type: "billing_operation", id: created.id, label: operation },
+      requestId: String(req.id),
     });
     const row = created ?? (await tx.select().from(billingOperationsTable).where(and(
       eq(billingOperationsTable.organizationId, req.tenant.organizationId),
@@ -75,21 +77,26 @@ async function complete(req: Request, id: string, action: string, subjectId: str
     await tx.update(billingOperationsTable).set({
       state: "completed", result, stripeObjectId: subjectId, completedAt: new Date(), updatedAt: new Date(),
     }).where(eq(billingOperationsTable.id, id));
-    await tx.insert(auditLogsTable).values({
-      organizationId: req.tenant.organizationId, actorUserId: req.tenant.userId,
-      action, subjectType: "billing", subjectId, subjectLabel: action,
+    await writeAuditEvent(tx, {
+      organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+      action: action.replace(/\s+/g, ".").replace(/[^a-zA-Z0-9_.-]/g, "").toLowerCase(), category: "billing",
+      subject: { type: "billing_operation", id, label: "completed" },
+      afterState: { state: "completed" }, requestId: String(req.id),
     });
   });
 }
 
 async function fail(req: Request, id: string, action: string, error: unknown) {
-  const code = error instanceof Error ? error.message.slice(0, 120) : "stripe_operation_failed";
+  // Provider error text can contain URLs or opaque identifiers.
+  const code = "billing_operation_failed";
   await withTenantDb(req.tenant, async (tx) => {
     await tx.update(billingOperationsTable).set({ state: "failed", errorCode: code, updatedAt: new Date() })
       .where(eq(billingOperationsTable.id, id));
-    await tx.insert(auditLogsTable).values({
-      organizationId: req.tenant.organizationId, actorUserId: req.tenant.userId,
-      action, subjectType: "billing", subjectLabel: "failed", metadata: { code },
+    await writeAuditEvent(tx, {
+      organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
+      action: action.replace(/\s+/g, ".").replace(/[^a-zA-Z0-9_.-]/g, "").toLowerCase(), category: "billing",
+      subject: { type: "billing_operation", id, label: "failed" },
+      afterState: { state: "failed" }, metadata: { code }, requestId: String(req.id),
     });
   });
 }

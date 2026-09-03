@@ -61,10 +61,14 @@ await db.transaction(async (tx) => {
     { key: "videos.read", description: "Read videos" },
     { key: "videos.create", description: "Create videos" },
     { key: "videos.delete", description: "Delete videos" },
+    { key: "workspace.manage", description: "Manage workspace" },
+    { key: "members.manage", description: "Manage members" },
   ]).onConflictDoNothing();
   await tx.insert(groupPermissionsTable).values([
     { groupId, permissionKey: "videos.read" },
     { groupId, permissionKey: "videos.create" },
+    { groupId, permissionKey: "workspace.manage" },
+    { groupId, permissionKey: "members.manage" },
     { groupId: editorGroupId, permissionKey: "videos.read" },
     { groupId: editorGroupId, permissionKey: "videos.create" },
     { groupId: readOnlyGroupId, permissionKey: "videos.read" },
@@ -162,7 +166,7 @@ try {
     assert.equal(response.status, 200);
     return (await response.json() as { permissions: string[] }).permissions;
   };
-  assert.deepEqual(await workspacePermissions(owner.cookie), ["videos.create", "videos.delete", "videos.read"]);
+  assert.deepEqual(await workspacePermissions(owner.cookie), ["audit.export", "audit.read", "members.manage", "videos.create", "videos.delete", "videos.read", "workspace.manage"]);
   assert.deepEqual(await workspacePermissions(editor.cookie), ["videos.create", "videos.delete", "videos.read"]);
   assert.deepEqual(await workspacePermissions(viewer.cookie), ["videos.read"]);
 
