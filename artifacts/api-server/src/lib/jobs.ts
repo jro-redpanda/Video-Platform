@@ -9,7 +9,7 @@ import { cleanupThumbnailObjects } from "./thumbnail-cleanup";
 import { reconcileActiveBilling } from "./billing-reconciliation";
 import type { ThumbnailStorage } from "./thumbnail-storage";
 import { and, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
-import { db, embedGenerationOutboxTable, onboardingProvisioningIntentsTable, organizationsTable, videosTable } from "@workspace/db";
+import { embedGenerationOutboxTable, onboardingProvisioningIntentsTable, organizationsTable, videosTable } from "@workspace/db";
 import { auditJob, writeAuditEvent } from "./audit";
 import { randomUUID } from "node:crypto";
 import { processAnalyticsDirtyDays, purgeAnalyticsData } from "./analytics-rollup";
@@ -17,6 +17,7 @@ import { processCustomDomainVerification } from "./custom-domain";
 import { nodeDomainDnsResolver, type DomainDnsResolver } from "./domain-dns-resolver";
 import { customDomainsTable } from "@workspace/db";
 import { dispatchMasterStorageOperations, processMasterStorageOperation } from "./master-storage-operations";
+import { withWorkerDb } from "./worker-db";
 
 const queueSuffix = process.env.JOB_QUEUE_NAMESPACE ? `.${process.env.JOB_QUEUE_NAMESPACE}` : "";
 const QUEUE_NAME = `vid.system.health${queueSuffix}`;
@@ -258,8 +259,7 @@ export async function enqueueCustomDomainVerification(domainId: string) {
 
 export async function repairCustomDomainVerifications(instance?: PgBoss) {
   const queue = instance ?? boss ?? await startJobs();
-  const candidates = await db.transaction(async (tx) => {
-    await tx.execute(sql`select set_config('app.custom_domain_worker', 'on', true)`);
+  const candidates = await withWorkerDb("custom_domain", async (tx) => {
     // TXT lookup is read-only and idempotent, so stale workers can be retried
     // without operator reconciliation or duplicate external side effects.
     await tx.update(customDomainsTable).set({
@@ -345,8 +345,7 @@ export async function dispatchPendingOnboardingIntents(instance?: PgBoss) {
   const queue = instance ?? boss ?? await startJobs();
   let dispatched = 0;
   for (let index = 0; index < 100; index++) {
-    const candidate = await db.transaction(async (tx) => {
-      await tx.execute(sql`select set_config('app.onboarding_worker', 'on', true)`);
+    const candidate = await withWorkerDb("onboarding", async (tx) => {
       const staleBefore = new Date(Date.now() - 5 * 60_000);
       const claimable = or(
         eq(onboardingProvisioningIntentsTable.state, "pending"),
@@ -373,8 +372,7 @@ export async function dispatchPendingOnboardingIntents(instance?: PgBoss) {
     if (!candidate) break;
     try {
       await sendOnboardingProvisioningJob(queue, candidate.organizationId, candidate.id);
-      await db.transaction(async (tx) => {
-        await tx.execute(sql`select set_config('app.onboarding_worker', 'on', true)`);
+      await withWorkerDb("onboarding", async (tx) => {
         await tx.update(onboardingProvisioningIntentsTable).set({
           state: "queued", dispatchedAt: new Date(), dispatchClaim: null,
         }).where(and(
@@ -384,8 +382,7 @@ export async function dispatchPendingOnboardingIntents(instance?: PgBoss) {
       });
       dispatched++;
     } catch {
-      await db.transaction(async (tx) => {
-        await tx.execute(sql`select set_config('app.onboarding_worker', 'on', true)`);
+      await withWorkerDb("onboarding", async (tx) => {
         await tx.update(onboardingProvisioningIntentsTable).set({
           state: "pending", dispatchClaim: null, diagnosticCode: "enqueue_failed",
         }).where(and(
@@ -414,8 +411,7 @@ export async function processOnboardingProvisioningJob(
   organizationId: string,
   resolver: ProvisioningProviderResolver,
 ) {
-  const shouldRun = await db.transaction(async (tx) => {
-    await tx.execute(sql`select set_config('app.onboarding_worker', 'on', true)`);
+  const shouldRun = await withWorkerDb("onboarding", async (tx) => {
     const [intent] = await tx.update(onboardingProvisioningIntentsTable).set({ state: "processing" })
       .where(and(
         eq(onboardingProvisioningIntentsTable.organizationId, organizationId),
@@ -427,8 +423,7 @@ export async function processOnboardingProvisioningJob(
   try {
     return await provisionTenantOrganization(organizationId, resolver);
   } catch (error) {
-    await db.transaction(async (tx) => {
-      await tx.execute(sql`select set_config('app.onboarding_worker', 'on', true)`);
+    await withWorkerDb("onboarding", async (tx) => {
       const [intent] = await tx.select().from(onboardingProvisioningIntentsTable)
         .where(eq(onboardingProvisioningIntentsTable.organizationId, organizationId)).limit(1);
       if (!intent || intent.state === "reconciliation_required" || intent.state === "completed") return;
@@ -472,14 +467,15 @@ export async function dispatchPendingEmbedOutbox(instance?: PgBoss) {
   const queue = instance ?? boss ?? await startJobs();
   let dispatched = 0;
   const repairHorizon = new Date(Date.now() - 23 * 60 * 60_000);
-  await db.update(embedGenerationOutboxTable).set({
-    state: "reconciliation_required",
-    dispatchClaim: null,
-    diagnosticCode: "dispatch_outcome_unknown_after_retention_horizon",
-  }).where(and(
-    eq(embedGenerationOutboxTable.state, "dispatching"),
-    lt(embedGenerationOutboxTable.claimedAt, repairHorizon),
-  ));
+  await withWorkerDb("embed", (tx) =>
+    tx.update(embedGenerationOutboxTable).set({
+      state: "reconciliation_required",
+      dispatchClaim: null,
+      diagnosticCode: "dispatch_outcome_unknown_after_retention_horizon",
+    }).where(and(
+      eq(embedGenerationOutboxTable.state, "dispatching"),
+      lt(embedGenerationOutboxTable.claimedAt, repairHorizon),
+    )));
   for (let i = 0; i < 100; i++) {
     const claim = randomUUID();
     const staleBefore = new Date(Date.now() - 5 * 60_000);
@@ -491,37 +487,42 @@ export async function dispatchPendingEmbedOutbox(instance?: PgBoss) {
         lt(embedGenerationOutboxTable.claimedAt, staleBefore),
       ),
     );
-    const [candidate] = await db.select({ id: embedGenerationOutboxTable.id, videoId: embedGenerationOutboxTable.videoId })
-      .from(embedGenerationOutboxTable)
-      .where(claimable)
-      .orderBy(embedGenerationOutboxTable.createdAt)
-      .limit(1);
+    const candidate = await withWorkerDb("embed", async (tx) => {
+      const [row] = await tx.select({ id: embedGenerationOutboxTable.id, videoId: embedGenerationOutboxTable.videoId })
+        .from(embedGenerationOutboxTable)
+        .where(claimable)
+        .orderBy(embedGenerationOutboxTable.createdAt)
+        .limit(1);
+      if (!row) return undefined;
+      const [claimed] = await tx.update(embedGenerationOutboxTable).set({
+        state: "dispatching", dispatchClaim: claim, claimedAt: new Date(), attemptedAt: new Date(),
+        attempts: sql`${embedGenerationOutboxTable.attempts} + 1`,
+        diagnosticCode: null,
+      }).where(and(
+        eq(embedGenerationOutboxTable.id, row.id),
+        claimable,
+      )).returning({ id: embedGenerationOutboxTable.id });
+      return claimed ? row : undefined;
+    });
     if (!candidate) break;
-    const claimed = await db.update(embedGenerationOutboxTable).set({
-      state: "dispatching", dispatchClaim: claim, claimedAt: new Date(), attemptedAt: new Date(),
-      attempts: sql`${embedGenerationOutboxTable.attempts} + 1`,
-      diagnosticCode: null,
-    }).where(and(
-      eq(embedGenerationOutboxTable.id, candidate.id),
-      claimable,
-    )).returning({ id: embedGenerationOutboxTable.id });
-    if (!claimed.length) continue;
     try {
       await sendEmbedGenerationJob(queue, candidate.videoId, candidate.id);
-      await db.update(embedGenerationOutboxTable).set({
-        state: "dispatched", dispatchedAt: new Date(), dispatchClaim: null,
-      }).where(and(
-        eq(embedGenerationOutboxTable.id, candidate.id),
-        eq(embedGenerationOutboxTable.dispatchClaim, claim),
-      ));
+      await withWorkerDb("embed", (tx) =>
+        tx.update(embedGenerationOutboxTable).set({
+          state: "dispatched", dispatchedAt: new Date(), dispatchClaim: null,
+        }).where(and(
+          eq(embedGenerationOutboxTable.id, candidate.id),
+          eq(embedGenerationOutboxTable.dispatchClaim, claim),
+        )));
       dispatched++;
     } catch {
-      await db.update(embedGenerationOutboxTable).set({
-        state: "pending", dispatchClaim: null, diagnosticCode: "enqueue_failed",
-      }).where(and(
-        eq(embedGenerationOutboxTable.id, candidate.id),
-        eq(embedGenerationOutboxTable.dispatchClaim, claim),
-      ));
+      await withWorkerDb("embed", (tx) =>
+        tx.update(embedGenerationOutboxTable).set({
+          state: "pending", dispatchClaim: null, diagnosticCode: "enqueue_failed",
+        }).where(and(
+          eq(embedGenerationOutboxTable.id, candidate.id),
+          eq(embedGenerationOutboxTable.dispatchClaim, claim),
+        )));
     }
   }
   return { dispatched };
@@ -536,14 +537,15 @@ export async function reconcileEmbedGenerationOutbox(instance?: PgBoss) {
   const queue = instance ?? boss ?? await startJobs();
   const staleBefore = new Date(Date.now() - 5 * 60_000);
   const retentionHorizon = new Date(Date.now() - 23 * 60 * 60_000);
-  const candidates = await db.select({
-    id: embedGenerationOutboxTable.id,
-    videoId: embedGenerationOutboxTable.videoId,
-    dispatchedAt: embedGenerationOutboxTable.dispatchedAt,
-  }).from(embedGenerationOutboxTable).where(and(
-    eq(embedGenerationOutboxTable.state, "dispatched"),
-    lt(embedGenerationOutboxTable.dispatchedAt, staleBefore),
-  )).limit(100);
+  const candidates = await withWorkerDb("embed", (tx) =>
+    tx.select({
+      id: embedGenerationOutboxTable.id,
+      videoId: embedGenerationOutboxTable.videoId,
+      dispatchedAt: embedGenerationOutboxTable.dispatchedAt,
+    }).from(embedGenerationOutboxTable).where(and(
+      eq(embedGenerationOutboxTable.state, "dispatched"),
+      lt(embedGenerationOutboxTable.dispatchedAt, staleBefore),
+    )).limit(100));
   let recovered = 0;
   let quarantined = 0;
   for (const candidate of candidates) {
@@ -554,7 +556,7 @@ export async function reconcileEmbedGenerationOutbox(instance?: PgBoss) {
       continue;
     }
     if (!job && candidate.dispatchedAt && candidate.dispatchedAt < retentionHorizon) {
-      const changed = await db.transaction(async (tx) => {
+      const changed = await withWorkerDb("embed", async (tx) => {
         const [row] = await tx.update(embedGenerationOutboxTable).set({
           state: "reconciliation_required",
           diagnosticCode: "generation_job_missing_after_retention_horizon",

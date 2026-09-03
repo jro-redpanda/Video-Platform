@@ -1,5 +1,4 @@
 import {
-  db,
   organizationsTable,
   providerAccountsTable,
   providerTenantSpacesTable,
@@ -8,6 +7,7 @@ import {
 import type { VideoProvider } from "@workspace/providers";
 import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import { resolveProvisioningProvider, type ProvisioningProviderResolver } from "./provider-registry";
+import { withWorkerDb } from "./worker-db";
 
 export type UploadCleanupResult = {
   examined: number;
@@ -23,41 +23,46 @@ export async function cleanupExpiredUploads(
   resolveProvider: ProvisioningProviderResolver = resolveProvisioningProvider,
   now = new Date(),
 ): Promise<UploadCleanupResult> {
-  const expired = await db.select().from(videosTable).where(and(
-    lt(videosTable.reservationExpiresAt, now),
-    isNull(videosTable.quotaReleasedAt),
-    isNull(videosTable.reconciliationRequired),
-    isNull(videosTable.assetCreationClaim),
-  ));
+  const expired = await withWorkerDb("upload_expiry", (tx) =>
+    tx.select().from(videosTable).where(and(
+      lt(videosTable.reservationExpiresAt, now),
+      isNull(videosTable.quotaReleasedAt),
+      isNull(videosTable.reconciliationRequired),
+      isNull(videosTable.assetCreationClaim),
+    )));
   const result: UploadCleanupResult = { examined: expired.length, released: 0, reconciliationRequired: 0 };
 
   for (const video of expired) {
     try {
       if (video.providerAssetId && video.providerAccountId && video.providerTenantSpaceId) {
-        const [link] = await db.select({ account: providerAccountsTable, space: providerTenantSpacesTable })
-          .from(providerTenantSpacesTable)
-          .innerJoin(providerAccountsTable, eq(providerAccountsTable.id, providerTenantSpacesTable.providerAccountId))
-          .where(and(
-            eq(providerTenantSpacesTable.organizationId, video.organizationId),
-            eq(providerTenantSpacesTable.providerAccountId, video.providerAccountId),
-            eq(providerTenantSpacesTable.providerSpaceId, video.providerTenantSpaceId),
-          )).limit(1);
+        const providerAccountId = video.providerAccountId;
+        const providerTenantSpaceId = video.providerTenantSpaceId;
+        const [link] = await withWorkerDb("upload_expiry", (tx) =>
+          tx.select({ account: providerAccountsTable, space: providerTenantSpacesTable })
+            .from(providerTenantSpacesTable)
+            .innerJoin(providerAccountsTable, eq(providerAccountsTable.id, providerTenantSpacesTable.providerAccountId))
+            .where(and(
+              eq(providerTenantSpacesTable.organizationId, video.organizationId),
+              eq(providerTenantSpacesTable.providerAccountId, providerAccountId),
+              eq(providerTenantSpacesTable.providerSpaceId, providerTenantSpaceId),
+            )).limit(1));
         if (!link) throw new Error("Stored provider linkage is unavailable");
         const provider: VideoProvider = await resolveProvider(link.account, link.space);
-        await provider.deleteAsset({ id: video.providerTenantSpaceId }, { id: video.providerAssetId });
+        await provider.deleteAsset({ id: providerTenantSpaceId }, { id: video.providerAssetId });
       }
     } catch {
-      await db.update(videosTable).set({
-        status: "error",
-        reconciliationRequired: "expired upload provider deletion outcome unknown",
-        initializationRetryable: false,
-        uploadFailureDetail: "Expired upload requires provider reconciliation.",
-      }).where(and(eq(videosTable.id, video.id), isNull(videosTable.quotaReleasedAt)));
+      await withWorkerDb("upload_expiry", (tx) =>
+        tx.update(videosTable).set({
+          status: "error",
+          reconciliationRequired: "expired upload provider deletion outcome unknown",
+          initializationRetryable: false,
+          uploadFailureDetail: "Expired upload requires provider reconciliation.",
+        }).where(and(eq(videosTable.id, video.id), isNull(videosTable.quotaReleasedAt))));
       result.reconciliationRequired += 1;
       continue;
     }
 
-    const released = await db.transaction(async (tx) => {
+    const released = await withWorkerDb("upload_expiry", async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${video.organizationId}))`);
       const [claimed] = await tx.update(videosTable).set({
         status: "error",

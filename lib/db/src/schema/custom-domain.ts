@@ -1,4 +1,5 @@
-import { boolean, index, integer, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, check, index, integer, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { organizationsTable } from "./organizations";
 
 export const customDomainLifecycleEnum = pgEnum("custom_domain_lifecycle", [
@@ -26,7 +27,15 @@ export const customDomainsTable = pgTable("custom_domains", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 }, (table) => [
+  uniqueIndex("custom_domains_one_active_org_idx").on(table.organizationId)
+    .where(sql`${table.lifecycleState} not in ('removed')`),
+  uniqueIndex("custom_domains_unique_active_hostname_idx").on(table.hostname)
+    .where(sql`${table.lifecycleState} not in ('removed')`),
   index("custom_domains_worker_idx").on(table.lifecycleState, table.retryAfterAt, table.createdAt),
+  check("custom_domains_attempts_check", sql`${table.attempts} >= 0 and ${table.attempts} <= 8`),
+  check("custom_domains_active_fields", sql`(
+    ${table.lifecycleState} = 'removed' and ${table.removedAt} is not null and ${table.retryable} = false
+  ) or ${table.lifecycleState} <> 'removed'`),
 ]);
 
 export type CustomDomain = typeof customDomainsTable.$inferSelect;
@@ -36,4 +45,6 @@ export const customDomainVerificationWindowsTable = pgTable("custom_domain_verif
   windowStartedAt: timestamp("window_started_at", { withTimezone: true }).notNull(),
   attempts: integer("attempts").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
-});
+}, (table) => [
+  check("custom_domain_verification_windows_attempts_check", sql`${table.attempts} >= 1`),
+]);

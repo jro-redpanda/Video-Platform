@@ -1,13 +1,14 @@
-import { db, embedGenerationOutboxTable, videoEmbedsTable, videosTable } from "@workspace/db";
+import { embedGenerationOutboxTable, videoEmbedsTable, videosTable } from "@workspace/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { Request } from "express";
 import { auditJob, writeAuditEvent } from "./audit";
+import { withWorkerDb } from "./worker-db";
 
 export const EMBED_GENERATION_VERSION = 1;
 
 /** `outboxId` is the deterministic pg-boss job id; never complete a sibling receipt. */
 export async function generateVideoEmbed(videoId: string, outboxId?: string) {
-  return db.transaction(async (tx) => {
+  return withWorkerDb("embed", async (tx) => {
     const [video] = await tx.select({
       id: videosTable.id,
       title: videosTable.title,

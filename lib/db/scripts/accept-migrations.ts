@@ -22,6 +22,10 @@ const create = (name: string, migratedLike?: string) => {
     run("node",["--experimental-strip-types","scripts/migrate.ts"],{DATABASE_URL:url(name)});
   }
 };
+const migrateThrough = (database: string, target: string) =>
+  run("node",["--experimental-strip-types","scripts/migrate.ts"],{
+    DATABASE_URL:url(database), NODE_ENV:"test", MIGRATION_TARGET:target,
+  });
 const sql = (database: string, statement: string) => run("psql",[url(database),"-v","ON_ERROR_STOP=1","-c",statement]);
 const verifyFails = (database: string) => { try { run("node",["--experimental-strip-types","scripts/verify-schema.ts"],{DATABASE_URL:url(database)}); throw new Error("verification unexpectedly accepted corruption"); } catch (error) { if (error instanceof Error && error.message.includes("unexpectedly")) throw error; } };
 const adoptFailsWithout0020 = (database: string) => {
@@ -56,6 +60,22 @@ try {
   end $$;`);
   create(prefix); run("node",["--experimental-strip-types","scripts/migrate.ts"],{DATABASE_URL:url(prefix)});
   run("node",["--experimental-strip-types","scripts/migrate.ts"],{DATABASE_URL:url(prefix)});
+  for (const [suffix, target] of [
+    ["queue", "0020_pgboss_12_29_0.sql"],
+    ["audit", "0028_audit_export_rate_window.sql"],
+    ["archive", "0032_master_archive_integrity.sql"],
+    ["identity", "0033_g1_identity_integrity.sql"],
+  ] as const) {
+    const database = `${prefix}_upgrade_${suffix}`;
+    create(database);
+    migrateThrough(database, target);
+    const fixture = randomUUID();
+    sql(database, `insert into plans(id,code,name,storage_limit_gb) values('${fixture}','fixture-${suffix}','Fixture',1)`);
+    run("node",["--experimental-strip-types","scripts/migrate.ts"],{DATABASE_URL:url(database)});
+    run("node",["--experimental-strip-types","scripts/verify-schema.ts"],{DATABASE_URL:url(database)});
+    const preserved = run("psql",[url(database),"-Atc",`select count(*) from plans where id='${fixture}'`]).toString().trim();
+    if (preserved !== "1") throw new Error(`intermediate ${target} upgrade did not preserve data`);
+  }
   const mutations = [
     "alter table videos alter column title type varchar(500)",
     "alter table videos alter column description drop default",
@@ -68,6 +88,12 @@ try {
     "insert into schema_migrations values('9999_unknown.sql',repeat('0',64),now())",
     "update schema_migrations set checksum=repeat('0',64) where name='0015_thumbnails.sql'",
     "update vid_jobs.version set version=38",
+    "grant select on accounts to vid_app",
+    "alter role vid_app bypassrls",
+    "drop policy tenant_isolation on video_embeds; create policy tenant_isolation on video_embeds to public using(true)",
+    "grant execute on function lock_thumbnail_cleanup_video(uuid) to public",
+    "alter default privileges grant select on tables to vid_app",
+    "create table unexpected_runtime_table(id uuid primary key)",
   ];
   for (let index=0; index<mutations.length; index++) { const db=`${prefix}_${index}`; create(db,prefix); sql(db,mutations[index]!); verifyFails(db); }
   for (const [suffix, mutation] of [["function","create or replace function vid_jobs.delete_queue(queue_name text) returns void language sql as 'select'"],["index","drop index vid_jobs.job_common_i1"],["constraint","alter table vid_jobs.queue drop constraint queue_check"]] as const) {

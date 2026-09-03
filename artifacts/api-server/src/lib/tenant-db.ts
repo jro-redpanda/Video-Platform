@@ -4,6 +4,21 @@ import type { TenantContext } from "./tenant-context";
 
 export type TenantTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
+export async function withUserDb<T>(
+  userId: string,
+  operation: (tx: TenantTransaction) => Promise<T>,
+  organizationId?: string,
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql.raw("set local role vid_app"));
+    await tx.execute(sql`select set_config('app.user_id', ${userId}, true)`);
+    if (organizationId) {
+      await tx.execute(sql`select set_config('app.organization_id', ${organizationId}, true)`);
+    }
+    return operation(tx);
+  });
+}
+
 export async function withOrganizationDb<T>(
   organizationId: string,
   operation: (tx: TenantTransaction) => Promise<T>,

@@ -1,10 +1,12 @@
 import { and, eq, isNotNull, or, sql } from "drizzle-orm";
 import {
-  db, organizationBillingTable, organizationsTable, plansTable,
+  organizationBillingTable, organizationsTable, plansTable,
 } from "@workspace/db";
 import { billingProvider, type ProviderSubscription } from "./billing-provider";
 import { billingLifecycleLockKey } from "./billing-lifecycle-lock";
 import { auditJob, auditUser, writeAuditEvent } from "./audit";
+import { withOrganizationDb } from "./tenant-db";
+import { withWorkerDb } from "./worker-db";
 
 const granting = new Set(["active", "trialing"]);
 const accepted = new Set(["incomplete", "incomplete_expired", "active", "trialing", "past_due", "unpaid", "canceled", "paused"]);
@@ -21,7 +23,10 @@ function subscriptionPeriod(subscription: ProviderSubscription) {
 export async function reconcileOrganizationBilling(organizationId: string, actorUserId?: string) {
   // This transaction-scoped lock spans provider retrieve and projection apply. It
   // serializes webhook, owner, and worker paths for this tenant only.
-  return db.transaction(async (tx) => {
+  const transaction = actorUserId
+    ? <T>(operation: Parameters<typeof withOrganizationDb<T>>[1]) => withOrganizationDb(organizationId, operation)
+    : <T>(operation: Parameters<typeof withWorkerDb<T>>[1]) => withWorkerDb("billing", operation);
+  return transaction(async (tx) => {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${billingLifecycleLockKey(organizationId)}))`);
   let [snapshot] = await tx.select().from(organizationBillingTable)
     .where(eq(organizationBillingTable.organizationId, organizationId)).limit(1);
@@ -112,16 +117,17 @@ export async function reconcileOrganizationBilling(organizationId: string, actor
 }
 
 export async function reconcileActiveBilling(limit = 100) {
-  const rows = await db.select({ organizationId: organizationBillingTable.organizationId })
-    .from(organizationBillingTable).where(and(isNotNull(organizationBillingTable.stripeCustomerId), or(
-      eq(organizationBillingTable.status, "unmanaged"),
-      eq(organizationBillingTable.status, "incomplete"),
-      eq(organizationBillingTable.status, "active"),
-      eq(organizationBillingTable.status, "trialing"),
-      eq(organizationBillingTable.status, "past_due"),
-      eq(organizationBillingTable.status, "unpaid"),
-      eq(organizationBillingTable.status, "canceled"),
-    ))).limit(limit);
+  const rows = await withWorkerDb("billing", (tx) =>
+    tx.select({ organizationId: organizationBillingTable.organizationId })
+      .from(organizationBillingTable).where(and(isNotNull(organizationBillingTable.stripeCustomerId), or(
+        eq(organizationBillingTable.status, "unmanaged"),
+        eq(organizationBillingTable.status, "incomplete"),
+        eq(organizationBillingTable.status, "active"),
+        eq(organizationBillingTable.status, "trialing"),
+        eq(organizationBillingTable.status, "past_due"),
+        eq(organizationBillingTable.status, "unpaid"),
+        eq(organizationBillingTable.status, "canceled"),
+      ))).limit(limit));
   let reconciled = 0;
   for (const row of rows) {
     try { await reconcileOrganizationBilling(row.organizationId); reconciled++; } catch { /* quarantined */ }

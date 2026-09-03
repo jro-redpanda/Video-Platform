@@ -3,17 +3,16 @@ import {
   analyticsDirtyDaysTable,
   analyticsPlaybackSessionsTable,
   analyticsRateWindowsTable,
-  db,
   playbackEventsTable,
   videoAnalyticsRollupsTable,
 } from "@workspace/db";
-import { withOrganizationDb } from "./tenant-db";
 import { logger } from "./logger";
+import { withWorkerDb } from "./worker-db";
 
 type DirtyDay = { organizationId: string; videoId: string; day: string; version: number };
 
 export async function claimAnalyticsDirtyDay(now = new Date()): Promise<DirtyDay | undefined> {
-  return db.transaction(async (tx) => {
+  return withWorkerDb("analytics", async (tx) => {
     const result = await tx.execute<DirtyDay>(sql`
       select organization_id as "organizationId", video_id as "videoId", day::text as day, version::int as version
       from ${analyticsDirtyDaysTable}
@@ -36,7 +35,7 @@ export async function claimAnalyticsDirtyDay(now = new Date()): Promise<DirtyDay
 /** Complete recomputation makes retries, late events, and out-of-order delivery deterministic. */
 export async function recomputeAnalyticsDay(dirty: DirtyDay) {
   try {
-    return await withOrganizationDb(dirty.organizationId, async (tx) => {
+    return await withWorkerDb("analytics", async (tx) => {
       const result = await tx.execute<{
         plays: number; uniqueSessions: number; watchSeconds: number; completions: number;
       }>(sql`
@@ -151,7 +150,7 @@ export async function recomputeAnalyticsDay(dirty: DirtyDay) {
       return { clean: deleted.length === 1, ...metrics };
     });
   } catch (error) {
-    await withOrganizationDb(dirty.organizationId, async (tx) => {
+    await withWorkerDb("analytics", async (tx) => {
       await tx.update(analyticsDirtyDaysTable).set({
         claimedAt: null,
         availableAt: new Date(Date.now() + Math.min(60 * 60_000, 2 ** Math.min(10, dirty.version) * 1000)),
@@ -179,21 +178,23 @@ export async function processAnalyticsDirtyDays(limit = 100) {
 
 export async function purgeAnalyticsData(now = new Date()) {
   const rawCutoff = new Date(now.getTime() - 90 * 86_400_000);
-  const raw = await db.execute(sql`
-    delete from ${playbackEventsTable} event
-    where event.received_at < ${rawCutoff}
-      and not exists(select 1 from ${analyticsDirtyDaysTable} dirty
-        where dirty.organization_id=event.organization_id and dirty.video_id=event.video_id
-          and dirty.day=(event.occurred_at at time zone 'UTC')::date)
-      and exists(select 1 from ${videoAnalyticsRollupsTable} rollup
-        where rollup.organization_id=event.organization_id and rollup.video_id=event.video_id
-          and rollup.day=(event.occurred_at at time zone 'UTC')::date)
-  `);
-  const windows = await db.delete(analyticsRateWindowsTable).where(sql`${analyticsRateWindowsTable.expiresAt} < ${now}`).returning();
-  const sessions = await db.delete(analyticsPlaybackSessionsTable).where(sql`
-    ${analyticsPlaybackSessionsTable.expiresAt} < ${rawCutoff}
-    and not exists(select 1 from ${playbackEventsTable} event where event.organization_id=${analyticsPlaybackSessionsTable.organizationId}
-      and event.video_id=${analyticsPlaybackSessionsTable.videoId} and event.session_id=${analyticsPlaybackSessionsTable.clientSessionId})
-  `).returning();
-  return { rawEvents: raw.rowCount ?? 0, rateWindows: windows.length, sessions: sessions.length };
+  return withWorkerDb("analytics", async (tx) => {
+    const raw = await tx.execute(sql`
+      delete from ${playbackEventsTable} event
+      where event.received_at < ${rawCutoff}
+        and not exists(select 1 from ${analyticsDirtyDaysTable} dirty
+          where dirty.organization_id=event.organization_id and dirty.video_id=event.video_id
+            and dirty.day=(event.occurred_at at time zone 'UTC')::date)
+        and exists(select 1 from ${videoAnalyticsRollupsTable} rollup
+          where rollup.organization_id=event.organization_id and rollup.video_id=event.video_id
+            and rollup.day=(event.occurred_at at time zone 'UTC')::date)
+    `);
+    const windows = await tx.delete(analyticsRateWindowsTable).where(sql`${analyticsRateWindowsTable.expiresAt} < ${now}`).returning();
+    const sessions = await tx.delete(analyticsPlaybackSessionsTable).where(sql`
+      ${analyticsPlaybackSessionsTable.expiresAt} < ${rawCutoff}
+      and not exists(select 1 from ${playbackEventsTable} event where event.organization_id=${analyticsPlaybackSessionsTable.organizationId}
+        and event.video_id=${analyticsPlaybackSessionsTable.videoId} and event.session_id=${analyticsPlaybackSessionsTable.clientSessionId})
+    `).returning();
+    return { rawEvents: raw.rowCount ?? 0, rateWindows: windows.length, sessions: sessions.length };
+  });
 }

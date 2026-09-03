@@ -1,5 +1,5 @@
+import { randomUUID } from "node:crypto";
 import {
-  db,
   groupPermissionsTable,
   membershipsTable,
   onboardingProvisioningIntentsTable,
@@ -11,7 +11,7 @@ import {
 } from "@workspace/db";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { auditUser, writeAuditEvent } from "./audit";
-import type { TenantTransaction } from "./tenant-db";
+import { withUserDb, type TenantTransaction } from "./tenant-db";
 import { runtimeConfig } from "./config";
 import { permissionCatalog, systemGroups as defaultGroups } from "./permission-catalog";
 
@@ -75,10 +75,10 @@ export async function seedWorkspaceDefaults(tx: TenantTransaction, organizationI
 
 export async function createFirstWorkspace(userId: string, raw: { name: string; slug?: string }) {
   const input = normalizeWorkspaceInput(raw);
+  const organizationId = randomUUID();
   try {
-    return await db.transaction(async (tx) => {
+    return await withUserDb(userId, async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`workspace-onboarding:${userId}`}))`);
-      await tx.execute(sql`select set_config('app.user_id', ${userId}, true)`);
       const [membership] = await tx.select({ id: membershipsTable.id }).from(membershipsTable)
         .where(eq(membershipsTable.userId, userId)).limit(1);
       if (membership) throw new OnboardingConflictError("A workspace already exists for this account");
@@ -86,10 +86,9 @@ export async function createFirstWorkspace(userId: string, raw: { name: string; 
         .where(and(eq(plansTable.code, "growth"), eq(plansTable.active, true))).limit(1);
       if (!plan) throw new Error("The default workspace plan is not configured");
       const [organization] = await tx.insert(organizationsTable).values({
-        name: input.name, slug: input.slug, status: "provisioning", planId: plan.id,
+        id: organizationId, name: input.name, slug: input.slug, status: "provisioning", planId: plan.id,
       }).returning();
       if (!organization) throw new Error("Unable to create workspace");
-      await tx.execute(sql`select set_config('app.organization_id', ${organization.id}, true)`);
       const { ownerGroupId } = await seedWorkspaceDefaults(tx, organization.id, organization.name);
       await tx.insert(membershipsTable).values({
         organizationId: organization.id, userId, groupId: ownerGroupId, status: "active",
@@ -106,7 +105,7 @@ export async function createFirstWorkspace(userId: string, raw: { name: string; 
         afterState: { status: "provisioning" },
       });
       return organization;
-    });
+    }, organizationId);
   } catch (error) {
     if (error instanceof OnboardingConflictError) throw error;
     if (hasPostgresCode(error, "23505")) {
@@ -117,8 +116,7 @@ export async function createFirstWorkspace(userId: string, raw: { name: string; 
 }
 
 async function findOwnedOnboarding(userId: string) {
-  return db.transaction(async (tx) => {
-    await tx.execute(sql`select set_config('app.user_id', ${userId}, true)`);
+  return withUserDb(userId, async (tx) => {
     const [row] = await tx.select({
       membershipId: membershipsTable.id,
       id: organizationsTable.id,
@@ -158,9 +156,7 @@ export async function retryWorkspaceOnboarding(userId: string, workspaceId?: str
     throw new OnboardingConflictError("Workspace provisioning cannot be retried in its current state");
   }
   if (owned.intentState === "failed" || owned.intentState === "unavailable") {
-    await db.transaction(async (tx) => {
-      await tx.execute(sql`select set_config('app.user_id', ${userId}, true)`);
-      await tx.execute(sql`select set_config('app.organization_id', ${owned.id}, true)`);
+    await withUserDb(userId, async (tx) => {
       await tx.update(onboardingProvisioningIntentsTable).set({
         state: "pending", dispatchClaim: null, claimedAt: null, diagnosticCode: null,
       }).where(and(
@@ -170,7 +166,7 @@ export async function retryWorkspaceOnboarding(userId: string, workspaceId?: str
         eq(onboardingProvisioningIntentsTable.retryable, true),
       ));
       await tx.update(organizationsTable).set({ status: "provisioning" }).where(eq(organizationsTable.id, owned.id));
-    });
+    }, owned.id);
   }
   return getOnboardingState(userId);
 }

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
-  db, onboardingProvisioningIntentsTable, organizationsTable,
+  onboardingProvisioningIntentsTable, organizationsTable,
   providerAccountsTable, providerTenantSpacesTable,
 } from "@workspace/db";
 import { TenantSpaceCreationRejectedError, type VideoProvider } from "@workspace/providers";
@@ -8,15 +8,17 @@ import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import type { ProvisioningProviderResolver } from "./provider-registry";
 import { auditJob, writeAuditEvent } from "./audit";
 import { seedWorkspaceDefaults } from "./workspace-onboarding";
+import { withWorkerDb } from "./worker-db";
 
 export class ProvisioningUnavailableError extends Error {}
 
 export async function provisionTenantOrganization(organizationId: string, resolveProvider: ProvisioningProviderResolver) {
-  const [organization] = await db.select().from(organizationsTable).where(eq(organizationsTable.id, organizationId)).limit(1);
+  const [organization] = await withWorkerDb("onboarding", (tx) =>
+    tx.select().from(organizationsTable).where(eq(organizationsTable.id, organizationId)).limit(1));
   if (!organization) throw new Error(`Organization ${organizationId} does not exist`);
   if (organization.status === "active") return { organizationId, status: "active" as const };
 
-  let space = await db.transaction(async (tx) => {
+  let space = await withWorkerDb("onboarding", async (tx) => {
     // Serialize reservations per organization. Capacity is reserved before the
     // external call, so concurrently queued jobs cannot over-allocate an account.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${organizationId}))`);
@@ -53,13 +55,14 @@ export async function provisionTenantOrganization(organizationId: string, resolv
 
   if (space.state === "creating" && !space.providerSpaceId) {
     const claim = randomUUID();
-    const [claimed] = await db.update(providerTenantSpacesTable).set({
-      externalCallClaim: claim, externalCallClaimedAt: new Date(),
-    }).where(and(
-      eq(providerTenantSpacesTable.id, space.id),
-      isNull(providerTenantSpacesTable.providerSpaceId),
-      isNull(providerTenantSpacesTable.externalCallClaim),
-    )).returning();
+    const [claimed] = await withWorkerDb("onboarding", (tx) =>
+      tx.update(providerTenantSpacesTable).set({
+        externalCallClaim: claim, externalCallClaimedAt: new Date(),
+      }).where(and(
+        eq(providerTenantSpacesTable.id, space.id),
+        isNull(providerTenantSpacesTable.providerSpaceId),
+        isNull(providerTenantSpacesTable.externalCallClaim),
+      )).returning());
     if (!claimed) {
       // A surviving claim represents an interrupted external call. Repeating
       // it could create a second remote library, so reconciliation is required.
@@ -67,7 +70,8 @@ export async function provisionTenantOrganization(organizationId: string, resolv
       throw new Error(`Provider tenant-space creation requires reconciliation for ${organizationId}`);
     }
     space = claimed;
-    const [account] = await db.select().from(providerAccountsTable).where(eq(providerAccountsTable.id, space.providerAccountId)).limit(1);
+    const [account] = await withWorkerDb("onboarding", (tx) =>
+      tx.select().from(providerAccountsTable).where(eq(providerAccountsTable.id, space.providerAccountId)).limit(1));
     if (!account) {
       await releaseUnclaimedReservation(space, "provider_account_missing");
       throw new ProvisioningUnavailableError("provider_account_unavailable");
@@ -92,18 +96,23 @@ export async function provisionTenantOrganization(organizationId: string, resolv
       await markReconciliationRequired(organizationId, space.id, "provider_call_outcome_ambiguous");
       throw error;
     }
-    const persisted = await db.update(providerTenantSpacesTable).set({ providerSpaceId: tenantSpace.id, externalCallClaim: null, externalCallClaimedAt: null })
-      .where(and(eq(providerTenantSpacesTable.id, space.id), eq(providerTenantSpacesTable.state, "creating"), eq(providerTenantSpacesTable.externalCallClaim, claim)))
-      .returning();
-    if (persisted.length) space = persisted[0];
-    else [space] = await db.select().from(providerTenantSpacesTable).where(eq(providerTenantSpacesTable.id, space.id)).limit(1);
+    space = await withWorkerDb("onboarding", async (tx) => {
+      const [persisted] = await tx.update(providerTenantSpacesTable)
+        .set({ providerSpaceId: tenantSpace.id, externalCallClaim: null, externalCallClaimedAt: null })
+        .where(and(eq(providerTenantSpacesTable.id, space.id), eq(providerTenantSpacesTable.state, "creating"), eq(providerTenantSpacesTable.externalCallClaim, claim)))
+        .returning();
+      if (persisted) return persisted;
+      const [current] = await tx.select().from(providerTenantSpacesTable)
+        .where(eq(providerTenantSpacesTable.id, space.id)).limit(1);
+      return current;
+    });
   }
   if (space?.state === "creating" && space.providerSpaceId) {
     space = await finalizeProviderTenantSpaceProvisioning(organizationId, space.id) ?? space;
   }
   if (!space || space.state !== "created" || !space.providerSpaceId) throw new Error("Provider tenant space was not created");
 
-  await db.transaction(async (tx) => {
+  await withWorkerDb("onboarding", async (tx) => {
     await seedWorkspaceDefaults(tx, organizationId, organization.name);
     await tx.update(organizationsTable).set({ status: "active" }).where(eq(organizationsTable.id, organizationId));
     await tx.update(onboardingProvisioningIntentsTable).set({
@@ -114,7 +123,7 @@ export async function provisionTenantOrganization(organizationId: string, resolv
 }
 
 async function markReconciliationRequired(organizationId: string, tenantSpaceId: string, code: string) {
-  await db.transaction(async (tx) => {
+  await withWorkerDb("onboarding", async (tx) => {
     await tx.update(providerTenantSpacesTable).set({ reconciliationRequired: true })
       .where(eq(providerTenantSpacesTable.id, tenantSpaceId));
     await tx.update(organizationsTable).set({ status: "failed" })
@@ -137,7 +146,7 @@ export async function finalizeProviderTenantSpaceProvisioning(
   tenantSpaceId: string,
   auditWriter: typeof writeAuditEvent = writeAuditEvent,
 ) {
-  return db.transaction(async (tx) => {
+  return withWorkerDb("onboarding", async (tx) => {
     const [created] = await tx.update(providerTenantSpacesTable).set({ state: "created" })
       .where(and(
         eq(providerTenantSpacesTable.id, tenantSpaceId),
@@ -163,12 +172,13 @@ export async function finalizeProviderTenantSpaceProvisioning(
 }
 
 async function releaseUnclaimedReservation(space: typeof providerTenantSpacesTable.$inferSelect, code: string) {
-  const [current] = await db.select().from(providerTenantSpacesTable)
-    .where(eq(providerTenantSpacesTable.id, space.id)).limit(1);
+  const [current] = await withWorkerDb("onboarding", (tx) =>
+    tx.select().from(providerTenantSpacesTable)
+      .where(eq(providerTenantSpacesTable.id, space.id)).limit(1));
   // Resolver failures happen before a remote call. If an external ID exists,
   // its outcome is ambiguous and the reservation intentionally remains.
   if (current?.providerSpaceId) return;
-  await db.transaction(async (tx) => {
+  await withWorkerDb("onboarding", async (tx) => {
     const [locked] = await tx.select({ id: providerTenantSpacesTable.id }).from(providerTenantSpacesTable)
       .where(and(eq(providerTenantSpacesTable.id, space.id), isNull(providerTenantSpacesTable.providerSpaceId)))
       .for("update").limit(1);

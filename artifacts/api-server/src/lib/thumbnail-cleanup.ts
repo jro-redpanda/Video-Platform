@@ -1,8 +1,8 @@
 import { and, eq, isNull, lte, sql } from "drizzle-orm";
-import { db, objectCleanupOutboxTable, thumbnailUploadIntentsTable, videosTable } from "@workspace/db";
+import { objectCleanupOutboxTable, thumbnailUploadIntentsTable, videosTable } from "@workspace/db";
 import { getThumbnailStorage, type ThumbnailStorage } from "./thumbnail-storage";
 import { logger } from "./logger";
-import type { TenantTransaction } from "./tenant-db";
+import { withWorkerDb } from "./worker-db";
 
 const batchLimit = 100;
 export const MAX_THUMBNAIL_CLEANUP_ATTEMPTS = 8;
@@ -15,7 +15,7 @@ export async function cleanupThumbnailObjects(
   storage: ThumbnailStorage = getThumbnailStorage(),
   now = new Date(),
 ) {
-  const candidates = await withWorkerDb((tx) => tx.select({
+  const candidates = await withWorkerDb("thumbnail", (tx) => tx.select({
     id: thumbnailUploadIntentsTable.id,
     organizationId: thumbnailUploadIntentsTable.organizationId,
     videoId: thumbnailUploadIntentsTable.videoId,
@@ -25,7 +25,7 @@ export async function cleanupThumbnailObjects(
   )).limit(batchLimit));
   let expired = 0;
   for (const candidate of candidates) {
-    expired += await withWorkerDb(async (tx) => {
+    expired += await withWorkerDb("thumbnail", async (tx) => {
       // The same lifecycle order used by routes: video row, then intent row.
       await tx.execute(sql`select lock_thumbnail_cleanup_video(${candidate.videoId}::uuid)`);
       const [video] = await tx.select({
@@ -68,7 +68,7 @@ export async function cleanupThumbnailObjects(
   let quarantined = 0;
   for (let i = 0; i < batchLimit; i++) {
     const claimUntil = new Date(now.getTime() + 5 * 60_000);
-    const candidate = await withWorkerDb(async (tx) => {
+    const candidate = await withWorkerDb("thumbnail", async (tx) => {
       const [row] = await tx.select({
         id: objectCleanupOutboxTable.id,
         objectKey: objectCleanupOutboxTable.objectKey,
@@ -94,7 +94,7 @@ export async function cleanupThumbnailObjects(
     if (!candidate) break;
     try {
       await storage.deleteObject(candidate.objectKey);
-      await withWorkerDb((tx) => tx.update(objectCleanupOutboxTable).set({
+      await withWorkerDb("thumbnail", (tx) => tx.update(objectCleanupOutboxTable).set({
         completedAt: new Date(),
         lastError: null,
       }).where(and(
@@ -107,7 +107,7 @@ export async function cleanupThumbnailObjects(
       const lastError = error instanceof Error ? error.message.slice(0, 1000) : "Unknown storage deletion error";
       if (attempt >= MAX_THUMBNAIL_CLEANUP_ATTEMPTS) {
         const quarantinedAt = new Date();
-        await withWorkerDb((tx) => tx.update(objectCleanupOutboxTable).set({
+        await withWorkerDb("thumbnail", (tx) => tx.update(objectCleanupOutboxTable).set({
           quarantinedAt,
           lastError,
         }).where(and(
@@ -123,7 +123,7 @@ export async function cleanupThumbnailObjects(
         quarantined++;
       } else {
         const delayMs = Math.min(6 * 60 * 60_000, 30_000 * (2 ** Math.min(attempt - 1, 10)));
-        await withWorkerDb((tx) => tx.update(objectCleanupOutboxTable).set({
+        await withWorkerDb("thumbnail", (tx) => tx.update(objectCleanupOutboxTable).set({
           nextAttemptAt: new Date(now.getTime() + delayMs),
           lastError,
         }).where(and(
@@ -136,16 +136,4 @@ export async function cleanupThumbnailObjects(
     }
   }
   return { expired, completed, failed, quarantined };
-}
-
-/** Cross-tenant cleanup is isolated to the migration-owned maintenance role. */
-async function withWorkerDb<T>(operation: (tx: TenantTransaction) => Promise<T>) {
-  return db.transaction(async (tx) => {
-    // The service login enters its request role first. vid_app is NOINHERIT
-    // but is explicitly a member of vid_worker, so only this internal path
-    // switches again to the narrow cross-tenant maintenance role.
-    await tx.execute(sql.raw("set local role vid_app"));
-    await tx.execute(sql.raw("set local role vid_worker"));
-    return operation(tx);
-  });
 }

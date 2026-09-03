@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, inArray, lt, or, sql } from "drizzle-orm";
-import { db, masterStorageOperationsTable, videosTable } from "@workspace/db";
+import { masterStorageOperationsTable, videosTable } from "@workspace/db";
 import { auditJob, auditUser, writeAuditEvent } from "./audit";
 import type { TenantTransaction } from "./tenant-db";
 import { createColdMasterObjectKey, getRuntimeColdMasterStorage, type ColdMasterStorage, ColdMasterDefinitiveWriteRejectionError, ColdMasterIntegrityMismatchError, ColdMasterObjectNotFoundError, ColdMasterStorageUnavailableError } from "./cold-master-storage";
 import { getRuntimeColdMasterTransfer, type ColdMasterTransfer, ColdMasterTransferDefinitiveError, ColdMasterTransferTransientError, ColdMasterTransferUnavailableError } from "./cold-master-transfer";
+import { withWorkerDb } from "./worker-db";
 
 const maxAttempts = 8;
 const activeStates = ["pending", "dispatching", "queued", "processing"] as const;
@@ -107,8 +108,8 @@ export async function requestMasterOperation(tx: TenantTransaction, input: {
   return created;
 }
 
-async function workerTransaction<T>(work: (tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) => Promise<T>) {
-  return db.transaction(async (tx) => { await tx.execute(sql`select set_config('app.master_storage_worker', 'on', true)`); return work(tx); });
+async function workerTransaction<T>(work: (tx: TenantTransaction) => Promise<T>) {
+  return withWorkerDb("master_storage", work);
 }
 export async function dispatchMasterStorageOperations(enqueue: (job: { operationId: string; generation: number }) => Promise<unknown>) {
   const staleAt = new Date(Date.now() - 10 * 60_000);
@@ -222,7 +223,7 @@ async function fail(row: typeof masterStorageOperationsTable.$inferSelect, claim
     await terminalAudit(tx, changed);
   });
 }
-async function terminalAudit(tx: Parameters<Parameters<typeof db.transaction>[0]>[0], row: typeof masterStorageOperationsTable.$inferSelect) {
+async function terminalAudit(tx: TenantTransaction, row: typeof masterStorageOperationsTable.$inferSelect) {
   const [video] = await tx.select({ title: videosTable.title }).from(videosTable).where(eq(videosTable.id, row.videoId)).limit(1);
   if (video) await writeAuditEvent(tx, { organizationId: row.organizationId, actor: auditJob(), action: `master_storage.${row.operation}_failed`, category: "content", subject: { type: "video", id: row.videoId, label: video.title }, afterState: { operation: row.operation, state: row.state, retryable: false }, metadata: { code: row.diagnosticCode } });
 }

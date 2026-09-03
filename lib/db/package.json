@@ -13,6 +13,7 @@
     "verify-schema": "node --experimental-strip-types ./scripts/verify-schema.ts",
     "accept-migrations": "node --experimental-strip-types ./scripts/accept-migrations.ts",
     "g1:db-smoke": "node --experimental-strip-types ./scripts/g1-db-smoke.ts",
+    "g3:db-smoke": "node --experimental-strip-types ./scripts/g3-db-smoke.ts",
     "prototype:push": "test \"$NODE_ENV\" != production || { echo 'prototype:push is local-only' >&2; exit 1; }; drizzle-kit push --config ./drizzle.config.ts"
   },
   "dependencies": {

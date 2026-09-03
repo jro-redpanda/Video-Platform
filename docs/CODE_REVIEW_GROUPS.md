@@ -45,6 +45,64 @@ pnpm --filter @workspace/api-server run build
 pnpm --filter @workspace/api-server run g0:smoke
 ```
 
+### G3 — Database schema, migrations, RLS, and grants
+
+**Purpose:** Verify persistence integrity, tenant isolation, migration safety,
+and worker access.
+
+**Key files:**
+
+- `lib/db/src/schema/identity.ts`
+- `lib/db/src/schema/organizations.ts`
+- `lib/db/src/schema/videos.ts`
+- `lib/db/src/schema/operations.ts`
+- `lib/db/src/schema/billing.ts`
+- `lib/db/src/schema/thumbnails.ts`
+- `lib/db/src/schema/onboarding.ts`
+- `lib/db/src/schema/custom-domain.ts`
+- `lib/db/src/schema/index.ts`
+- `lib/db/scripts/catalog.ts`
+- `lib/db/scripts/accept-migrations.ts`
+- `lib/db/scripts/migrate.ts`
+- `lib/db/scripts/verify-schema.ts`
+- `lib/db/migrations/*.sql`
+
+**Important recent migrations:**
+
+- `0021`–`0024`: billing
+- `0025`–`0026`: analytics
+- `0027`–`0028`: audit
+- `0029`: onboarding
+- `0030`: custom domains
+- `0031`–`0032`: cold-master operations and integrity
+- `0033`: identity integrity
+- `0034`: database grants, RLS, and worker-boundary hardening
+
+**Validation:**
+
+```bash
+pnpm --filter @workspace/db run g3:db-smoke
+pnpm --filter @workspace/db run accept-migrations
+pnpm --filter @workspace/db run migrate
+pnpm --filter @workspace/db run verify-schema
+```
+
+The G3 smoke applies pending migrations inside an outer transaction and rolls
+back. The remaining database commands persist or create/drop database state and
+must run only against an approved isolated target.
+
+**Review for:**
+
+- Missing foreign keys or uniqueness constraints
+- Inconsistent Drizzle and SQL schemas
+- Incorrect RLS or grants
+- Worker roles with excessive access
+- Mutable audit records
+- Unsafe migration adoption or checksum handling
+- Migration behavior with legacy production data
+
+**Important:** Never use `prototype:push` against production.
+
 ### G1 — Authentication, tenant isolation, RBAC, and entitlements
 
 **Purpose:** Protect organization data and enforce permissions and plan
@@ -83,94 +141,7 @@ features server-side.
 
 **Depends on:** G0 and G3.
 
-### G2 — Workspace onboarding and provider provisioning
-
-**Purpose:** Create the first organization, owner membership, default
-configuration, and durable provider-provisioning intent.
-
-**Key files:**
-
-- `artifacts/api-server/src/routes/onboarding.ts`
-- `artifacts/api-server/src/lib/workspace-onboarding.ts`
-- `artifacts/api-server/src/lib/tenant-provisioning.ts`
-- `artifacts/api-server/src/lib/provider-registry.ts`
-- `artifacts/api-server/src/lib/credential-encryption.ts`
-- Onboarding portions of `artifacts/api-server/src/lib/jobs.ts`
-- `artifacts/vid/src/pages/onboarding.tsx`
-- `lib/db/src/schema/onboarding.ts`
-- `lib/db/migrations/0029_workspace_onboarding.sql`
-- `ONBOARDING_OPERATIONS.md`
-
-**Smoke:**
-
-```bash
-pnpm --filter @workspace/api-server run onboarding:smoke
-```
-
-**Review for:**
-
-- Duplicate workspace creation
-- Partial organization setup
-- Incorrect retry behavior
-- Provider side effects occurring before durable claims
-- Stuck pending/dispatching states
-- Reconciliation handling
-- False “ready” UI
-- Production use of test-provider seams
-
-**External gate:** Live Bunny provisioning must remain deferred until valid
-credentials exist.
-
-### G3 — Database schema, migrations, RLS, and grants
-
-**Purpose:** Verify persistence integrity, tenant isolation, migration safety,
-and worker access.
-
-**Key files:**
-
-- `lib/db/src/schema/identity.ts`
-- `lib/db/src/schema/organizations.ts`
-- `lib/db/src/schema/videos.ts`
-- `lib/db/src/schema/operations.ts`
-- `lib/db/src/schema/billing.ts`
-- `lib/db/src/schema/thumbnails.ts`
-- `lib/db/src/schema/onboarding.ts`
-- `lib/db/src/schema/custom-domain.ts`
-- `lib/db/src/schema/index.ts`
-- `lib/db/scripts/catalog.ts`
-- `lib/db/scripts/accept-migrations.ts`
-- `lib/db/scripts/migrate.ts`
-- `lib/db/scripts/verify-schema.ts`
-- `lib/db/migrations/*.sql`
-
-**Important recent migrations:**
-
-- `0021`–`0024`: billing
-- `0025`–`0026`: analytics
-- `0027`–`0028`: audit
-- `0029`: onboarding
-- `0030`: custom domains
-- `0031`–`0032`: cold-master operations and integrity
-
-**Validation:**
-
-```bash
-pnpm --filter @workspace/db run accept-migrations
-pnpm --filter @workspace/db run migrate
-pnpm --filter @workspace/db run verify-schema
-```
-
-**Review for:**
-
-- Missing foreign keys or uniqueness constraints
-- Inconsistent Drizzle and SQL schemas
-- Incorrect RLS or grants
-- Worker roles with excessive access
-- Mutable audit records
-- Unsafe migration adoption or checksum handling
-- Migration behavior with legacy production data
-
-**Important:** Never use `prototype:push` against production.
+## Provider and control plane
 
 ### G4 — Provider abstraction and Bunny adapter
 
@@ -215,9 +186,89 @@ pnpm --filter @workspace/api-server run provider:smoke
 
 This performs a real Bunny-dependent round trip and should remain deferred.
 
+### G5 — Durable jobs, workers, retries, and maintenance
+
+**Purpose:** Operate every background workflow safely and recover stale work.
+
+**Primary file:**
+
+- `artifacts/api-server/src/lib/jobs.ts`
+
+**Supporting files:**
+
+- `artifacts/api-server/src/lib/worker-db.ts`
+- `artifacts/api-server/src/lib/tenant-provisioning.ts`
+- `artifacts/api-server/src/lib/billing-reconciliation.ts`
+- `artifacts/api-server/src/lib/analytics-rollup.ts`
+- `artifacts/api-server/src/lib/thumbnail-cleanup.ts`
+- `artifacts/api-server/src/lib/upload-expiry-cleanup.ts`
+- `artifacts/api-server/src/lib/master-storage-operations.ts`
+- `artifacts/api-server/src/queue-smoke.ts`
+- `lib/db/migrations/0020_pgboss_12_29_0.sql`
+
+**Smoke:**
+
+```bash
+pnpm --filter @workspace/api-server run queue:smoke
+```
+
+**Review for:**
+
+- Missing durable claims
+- Duplicate side effects
+- Attempts consumed by enqueue failures
+- Stale dispatching/queued/processing states
+- Job-ID reuse
+- Retry storms
+- Dead-letter records without recovery
+- Worker shutdown during an active claim
+- One failing queue preventing unrelated workers from starting
+
+This group is especially suitable for one consolidated review because queue
+behavior crosses onboarding, billing, analytics, deletion, and cold-master
+operations.
+
+### G6 — Workspace onboarding and provider provisioning
+
+**Purpose:** Create the first organization, owner membership, default
+configuration, and durable provider-provisioning intent.
+
+**Key files:**
+
+- `artifacts/api-server/src/routes/onboarding.ts`
+- `artifacts/api-server/src/lib/workspace-onboarding.ts`
+- `artifacts/api-server/src/lib/tenant-provisioning.ts`
+- `artifacts/api-server/src/lib/provider-registry.ts`
+- `artifacts/api-server/src/lib/credential-encryption.ts`
+- Onboarding portions of `artifacts/api-server/src/lib/jobs.ts`
+- `artifacts/vid/src/pages/onboarding.tsx`
+- `lib/db/src/schema/onboarding.ts`
+- `lib/db/migrations/0029_workspace_onboarding.sql`
+- `ONBOARDING_OPERATIONS.md`
+
+**Smoke:**
+
+```bash
+pnpm --filter @workspace/api-server run onboarding:smoke
+```
+
+**Review for:**
+
+- Duplicate workspace creation
+- Partial organization setup
+- Incorrect retry behavior
+- Provider side effects occurring before durable claims
+- Stuck pending/dispatching states
+- Reconciliation handling
+- False “ready” UI
+- Production use of test-provider seams
+
+**External gate:** Live Bunny provisioning must remain deferred until valid
+credentials exist.
+
 ## Core video lifecycle
 
-### G5 — Video creation, direct upload, finalization, webhooks, and deletion
+### G7 — Video creation, direct upload, finalization, webhooks, and deletion
 
 **Purpose:** Manage the provider-neutral lifecycle from owned video creation
 through ready/error/deleted states.
@@ -254,7 +305,7 @@ pnpm --filter @workspace/api-server run webhook:smoke
 **External gate:** Real upload/webhook/delete behavior needs valid provider
 credentials.
 
-### G6 — Video library, folders, search, pagination, and bulk actions
+### G8 — Video library, folders, search, pagination, and bulk actions
 
 **Purpose:** Provide tenant-scoped video organization and high-volume
 mutations.
@@ -288,7 +339,7 @@ pnpm --filter @workspace/api-server run bulk-video:smoke
 - Selection state becoming stale
 - Search/filter inconsistencies
 
-### G7 — Embeds, playback resolution, and player security
+### G9 — Embeds, playback resolution, and player security
 
 **Purpose:** Serve stable owned embeds while resolving short-lived provider
 playback safely.
@@ -320,7 +371,7 @@ pnpm --filter @workspace/api-server run embed:smoke
 - XSS through video metadata or embed configuration
 - Player states when provider playback is unavailable
 
-### G8 — Thumbnails and object-storage lifecycle
+### G10 — Thumbnails and object-storage lifecycle
 
 **Purpose:** Upload, validate, promote, serve, replace, and clean up
 thumbnails.
@@ -368,7 +419,7 @@ pnpm --filter @workspace/api-server run thumbnail:cleanup-once
 
 ## Business and administrative capabilities
 
-### G9 — Analytics collection, abuse prevention, and rollups
+### G11 — Analytics collection, abuse prevention, and rollups
 
 **Purpose:** Collect playback events, prevent forged/unbounded telemetry, and
 calculate tenant analytics.
@@ -402,7 +453,7 @@ pnpm --filter @workspace/api-server run analytics:smoke
 - Time-window and timezone errors
 - Rate limits that fail open
 
-### G10 — Audit logs, cursor pagination, export, and redaction
+### G12 — Audit logs, cursor pagination, export, and redaction
 
 **Purpose:** Maintain an append-only tenant audit trail without exposing
 sensitive values.
@@ -434,7 +485,7 @@ pnpm --filter @workspace/api-server run audit:smoke
 - Cross-tenant cursors
 - Export rate-limit bypasses
 
-### G11 — Billing, plans, Stripe sync, checkout, and reconciliation
+### G13 — Billing, plans, Stripe sync, checkout, and reconciliation
 
 **Purpose:** Synchronize plans, create checkout sessions, process Stripe
 events, and resolve billing access.
@@ -478,7 +529,7 @@ pnpm --filter @workspace/scripts run stripe:seed
 - Reconciliation and dead-letter handling
 - Test billing adapter escaping into production
 
-### G12 — Branding, customization, and custom domains
+### G14 — Branding, customization, and custom domains
 
 **Purpose:** Control plan-gated branding and local DNS-verification lifecycle.
 
@@ -515,7 +566,7 @@ pnpm --filter @workspace/api-server run custom-domain:smoke
 **External gate:** TLS issuance, edge routing, and live custom-domain traffic
 are not currently implemented/configured.
 
-### G13 — Cold-master archive and restore
+### G15 — Cold-master archive and restore
 
 **Purpose:** Archive master video bytes independently of the delivery provider
 and restore them through durable operations.
@@ -556,50 +607,9 @@ pnpm --filter @workspace/api-server run master-storage:lifecycle-smoke
 **External gate:** Real cold storage and provider-transfer adapters are still
 unconfigured.
 
-### G14 — Durable jobs, workers, retries, and maintenance
-
-**Purpose:** Operate every background workflow safely and recover stale work.
-
-**Primary file:**
-
-- `artifacts/api-server/src/lib/jobs.ts`
-
-**Supporting files:**
-
-- `artifacts/api-server/src/lib/tenant-provisioning.ts`
-- `artifacts/api-server/src/lib/billing-reconciliation.ts`
-- `artifacts/api-server/src/lib/analytics-rollup.ts`
-- `artifacts/api-server/src/lib/thumbnail-cleanup.ts`
-- `artifacts/api-server/src/lib/upload-expiry-cleanup.ts`
-- `artifacts/api-server/src/lib/master-storage-operations.ts`
-- `artifacts/api-server/src/queue-smoke.ts`
-- `lib/db/migrations/0020_pgboss_12_29_0.sql`
-
-**Smoke:**
-
-```bash
-pnpm --filter @workspace/api-server run queue:smoke
-```
-
-**Review for:**
-
-- Missing durable claims
-- Duplicate side effects
-- Attempts consumed by enqueue failures
-- Stale dispatching/queued/processing states
-- Job-ID reuse
-- Retry storms
-- Dead-letter records without recovery
-- Worker shutdown during an active claim
-- One failing queue preventing unrelated workers from starting
-
-This group is especially suitable for one consolidated review because queue
-behavior crosses onboarding, billing, analytics, deletion, and cold-master
-operations.
-
 ## Contracts and frontend
 
-### G15 — OpenAPI contract, validation, and generated clients
+### G16 — OpenAPI contract, validation, and generated clients
 
 **Purpose:** Keep the backend API, request validation, frontend hooks, and
 generated types synchronized.
@@ -633,7 +643,7 @@ pnpm --filter @workspace/api-spec run codegen
 The codegen command writes files, so it should be run only when regeneration
 is intended.
 
-### G16 — Frontend shell, routing, query state, and shared UI
+### G17 — Frontend shell, routing, query state, and shared UI
 
 **Purpose:** Review the frontend as a complete application rather than
 duplicating every backend feature review.
@@ -653,12 +663,12 @@ duplicating every backend feature review.
 **Feature pages covered with their backend groups:**
 
 - `login.tsx`, `members.tsx`, `settings.tsx` → G1
-- `onboarding.tsx` → G2
-- `videos.tsx`, `video-detail.tsx` → G5/G6/G8
-- `embed-player.tsx`, `player.tsx` → G7
-- `analytics.tsx` → G9
-- `audit.tsx` → G10
-- `customization.tsx`, `custom-domain-manager.tsx` → G12
+- `onboarding.tsx` → G6
+- `videos.tsx`, `video-detail.tsx` → G7/G8/G10
+- `embed-player.tsx`, `player.tsx` → G9
+- `analytics.tsx` → G11
+- `audit.tsx` → G12
+- `customization.tsx`, `custom-domain-manager.tsx` → G14
 
 **Validation:**
 
@@ -679,7 +689,7 @@ pnpm --filter @workspace/vid run build
 - Internal `vid` or removed product names becoming visible
 - Mobile/responsive failures
 
-### G17 — Operational readiness, documentation, mocks, and security
+### G18 — Operational readiness, documentation, mocks, and security
 
 **Purpose:** Ensure the code’s operational behavior matches documented
 procedures and launch claims.
@@ -782,28 +792,28 @@ pnpm --filter @workspace/api-server run thumbnail:cleanup-once
 2. **G3** — Database/RLS/migrations
 3. **G1** — Auth/tenant/RBAC
 4. **G4** — Provider abstraction
-5. **G14** — Queues/workers
-6. **G2** — Onboarding/provisioning
-7. **G5** — Upload/video lifecycle
-8. **G6** — Library/folders/bulk
-9. **G7** — Embed/player/playback
-10. **G8** — Thumbnails/storage
-11. **G9** — Analytics
-12. **G10** — Audit
-13. **G11** — Billing
-14. **G12** — Branding/custom domains
-15. **G13** — Cold-master archive/restore
-16. **G15** — API/codegen consistency
-17. **G16** — Frontend integration and UX
-18. **G17** — Launch/security/operations
+5. **G5** — Queues/workers
+6. **G6** — Onboarding/provisioning
+7. **G7** — Upload/video lifecycle
+8. **G8** — Library/folders/bulk
+9. **G9** — Embed/player/playback
+10. **G10** — Thumbnails/storage
+11. **G11** — Analytics
+12. **G12** — Audit
+13. **G13** — Billing
+14. **G14** — Branding/custom domains
+15. **G15** — Cold-master archive/restore
+16. **G16** — API/codegen consistency
+17. **G17** — Frontend integration and UX
+18. **G18** — Launch/security/operations
 
 ## Larger review bundles
 
 - **Foundation bundle:** G0 + G1 + G3
-- **Provider/control-plane bundle:** G2 + G4 + G14
-- **Core video bundle:** G5 + G6 + G7 + G8
-- **Telemetry/compliance bundle:** G9 + G10
-- **Commercial/white-label bundle:** G11 + G12
-- **Portability bundle:** G13 + provider portions of G4
-- **Contract/frontend bundle:** G15 + G16
-- **Launch bundle:** G17 plus final checks from every preceding group
+- **Provider/control-plane bundle:** G4 + G5 + G6
+- **Core video bundle:** G7 + G8 + G9 + G10
+- **Telemetry/compliance bundle:** G11 + G12
+- **Commercial/white-label bundle:** G13 + G14
+- **Portability bundle:** G15 + provider portions of G4
+- **Contract/frontend bundle:** G16 + G17
+- **Launch bundle:** G18 plus final checks from every preceding group

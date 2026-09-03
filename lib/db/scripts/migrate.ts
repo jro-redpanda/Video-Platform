@@ -21,6 +21,11 @@ const pre15Columns: Record<string, string[]> = {
 type Migration = { name: string; bytes: Buffer; checksum: string };
 async function migrations(): Promise<Migration[]> {
   const names = (await readdir(migrationsDir)).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
+  for (let index = 1; index < names.length; index++) {
+    if (Number(names[index]!.slice(0, 4)) <= Number(names[index - 1]!.slice(0, 4))) {
+      throw new Error(`migration numbers must be strictly increasing: ${names[index - 1]}, ${names[index]}`);
+    }
+  }
   return Promise.all(names.map(async (name) => {
     const bytes = await readFile(join(migrationsDir, name));
     return { name, bytes, checksum: createHash("sha256").update(bytes).digest("hex") };
@@ -61,10 +66,17 @@ async function main() {
   try {
     await client.query("select pg_advisory_lock(hashtext($1))", [lockName]);
     await client.query("create table if not exists public.schema_migrations (name text primary key, checksum char(64) not null, applied_at timestamptz not null default now())");
-    const files = await migrations();
+    const allFiles = await migrations();
+    const target = process.env.MIGRATION_TARGET;
+    if (target && process.env.NODE_ENV !== "test") {
+      throw new Error("MIGRATION_TARGET is test-only");
+    }
+    const targetIndex = target ? allFiles.findIndex((file) => file.name === target) : allFiles.length - 1;
+    if (target && targetIndex < 0) throw new Error(`unknown MIGRATION_TARGET ${target}`);
+    const files = allFiles.slice(0, targetIndex + 1);
     const recorded = await client.query<{ name: string; checksum: string }>("select name, checksum from public.schema_migrations");
     const ledger = new Map(recorded.rows.map((row) => [row.name, row.checksum.trim()]));
-    const known = new Set(files.map((file) => file.name));
+    const known = new Set(allFiles.map((file) => file.name));
     for (const name of ledger.keys()) if (!known.has(name)) throw new Error(`unknown migration ledger row ${name}`);
     for (const file of files) {
       const seen = ledger.get(file.name);
@@ -135,7 +147,8 @@ async function main() {
               : file.name === "0030_custom_domains.sql" ? "customDomain"
                : file.name === "0031_master_storage_operations.sql" ? "masterStorage"
                  : file.name === "0032_master_archive_integrity.sql" ? "masterArchiveIntegrity"
-                  : file.name === "0033_g1_identity_integrity.sql" ? "g1Identity" : "thumbnailIntegrity");
+                   : file.name === "0033_g1_identity_integrity.sql" ? "g1Identity"
+                    : file.name === "0034_g3_database_hardening.sql" ? "g3Hardening" : "thumbnailIntegrity");
         await client.query("insert into public.schema_migrations(name, checksum) values($1,$2)", [file.name, file.checksum]);
         await client.query("commit");
       } catch (error) {

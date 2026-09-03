@@ -16,6 +16,7 @@ import { and, eq, or, sql } from "drizzle-orm";
 import { runtimeConfig } from "./config";
 import { EMBED_GENERATION_VERSION } from "./video-embeds";
 import { permissionCatalog, systemGroups } from "./permission-catalog";
+import { missingRequiredApiMigrations } from "./migration-gate";
 
 export const developmentTenant = {
   organizationId: "a23d95cc-33a5-4ca9-8220-cd2192bf86e8",
@@ -29,8 +30,8 @@ export const developmentTenant = {
 export async function bootstrapDevelopmentTenant() {
   // DDL, grants, and RLS are owned by immutable migrations, never by a replica.
   await assertMigratedSchema();
-  await reconcileSystemVideoDeletePermission();
   if (process.env.NODE_ENV !== "development") return;
+  await reconcileSystemVideoDeletePermission();
 
   await db.transaction(async (tx) => {
     await tx.insert(plansTable).values({
@@ -230,12 +231,13 @@ export async function reconcileSystemVideoDeletePermission() {
   });
 }
 
-async function assertMigratedSchema() {
-  const result = await db.execute(sql`
-    select count(*)::int as count from public.schema_migrations
-    where name in ('0000_baseline.sql', '0015_thumbnails.sql', '0016_thumbnail_integrity.sql', '0029_workspace_onboarding.sql', '0030_custom_domains.sql', '0031_master_storage_operations.sql', '0032_master_archive_integrity.sql', '0033_g1_identity_integrity.sql')
-  `);
-  if (result.rows[0]?.count !== 8) {
+export async function assertMigratedSchema() {
+  const applied = await db.transaction(async (tx) => {
+    await tx.execute(sql.raw("set local role vid_app"));
+    return tx.execute<{ name: string }>(sql`select name from public.schema_migrations`);
+  });
+  const missing = missingRequiredApiMigrations(applied.rows.map((row) => row.name));
+  if (missing.length) {
     throw new Error("database schema is not migrated; run @workspace/db migrate (or adopt-baseline --confirm for a reviewed existing database) before starting the API");
   }
 }

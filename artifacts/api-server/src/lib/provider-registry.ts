@@ -1,8 +1,9 @@
-import { db, providerAccountsTable, providerTenantSpacesTable } from "@workspace/db";
+import { providerAccountsTable, providerTenantSpacesTable } from "@workspace/db";
 import { BunnyVideoProvider, type BunnyLibraryCredentials, UnconfiguredVideoProvider, VideoProviderRegistry, type VideoProvider } from "@workspace/providers";
 import { Step7SmokeVideoProvider } from "@workspace/providers/test-only";
 import { and, eq } from "drizzle-orm";
 import { decryptProviderCredentials, encryptProviderCredentials } from "./credential-encryption";
+import { withWorkerDb } from "./worker-db";
 
 export const videoProviders = new VideoProviderRegistry();
 if (process.env.NODE_ENV === "test") {
@@ -11,7 +12,12 @@ if (process.env.NODE_ENV === "test") {
 }
 const bunnyAccountApiKey = process.env.BUNNY_API_KEY;
 if (bunnyAccountApiKey) {
-  videoProviders.register(new BunnyVideoProvider({ accountApiKey: bunnyAccountApiKey, resolveLibraryCredentials }));
+  videoProviders.register(new BunnyVideoProvider({
+    accountApiKey: bunnyAccountApiKey,
+    resolveLibraryCredentials: async () => {
+      throw new Error("A tenant-bound Bunny provider is required");
+    },
+  }));
 } else {
   // Live Bunny remains explicitly unconfigured rather than falling back to a fake.
   videoProviders.register(new UnconfiguredVideoProvider("bunny"));
@@ -31,17 +37,18 @@ export const resolveProvisioningProvider: ProvisioningProviderResolver = async (
   if (!accountApiKey) throw new Error(`Stored Bunny account credentials are invalid for account ${account.id}`);
   return new BunnyVideoProvider({
     accountApiKey,
-    resolveLibraryCredentials,
+    resolveLibraryCredentials: selectedLibraryResolver(space),
     onLibraryCreated: async (library) => {
-      const updated = await db.update(providerTenantSpacesTable).set({
-        providerSpaceId: library.libraryId,
-        encryptedCredentials: encryptLibraryCredentials(library),
-        metadata: libraryMetadata(library),
-      }).where(and(
-        eq(providerTenantSpacesTable.id, space.id),
-        eq(providerTenantSpacesTable.state, "creating"),
-        eq(providerTenantSpacesTable.idempotencyKey, space.idempotencyKey),
-      )).returning({ id: providerTenantSpacesTable.id });
+      const updated = await withWorkerDb("onboarding", (tx) =>
+        tx.update(providerTenantSpacesTable).set({
+          providerSpaceId: library.libraryId,
+          encryptedCredentials: encryptLibraryCredentials(library),
+          metadata: libraryMetadata(library),
+        }).where(and(
+          eq(providerTenantSpacesTable.id, space.id),
+          eq(providerTenantSpacesTable.state, "creating"),
+          eq(providerTenantSpacesTable.idempotencyKey, space.idempotencyKey),
+        )).returning({ id: providerTenantSpacesTable.id }));
       if (!updated.length) throw new Error(`Reserved tenant space ${space.id} is no longer available`);
     },
   });
@@ -62,16 +69,18 @@ export async function resolveBunnyWebhookProvider(
   const webhookCredentials = libraryCredentialsFromSpace(space);
   return new BunnyVideoProvider({
     accountApiKey: accountSecrets.accountApiKey,
-    resolveLibraryCredentials,
+    resolveLibraryCredentials: selectedLibraryResolver(space),
     webhookCredentials,
   });
 }
 
-async function resolveLibraryCredentials(libraryId: string): Promise<BunnyLibraryCredentials> {
-  const [space] = await db.select().from(providerTenantSpacesTable)
-    .where(eq(providerTenantSpacesTable.providerSpaceId, libraryId)).limit(1);
-  if (!space) throw new Error(`Stored Bunny credentials are unavailable for library ${libraryId}`);
-  return libraryCredentialsFromSpace(space);
+function selectedLibraryResolver(space: typeof providerTenantSpacesTable.$inferSelect) {
+  return async (libraryId: string): Promise<BunnyLibraryCredentials> => {
+    if (space.providerSpaceId !== libraryId) {
+      throw new Error(`Stored Bunny credentials are unavailable for library ${libraryId}`);
+    }
+    return libraryCredentialsFromSpace(space);
+  };
 }
 
 function libraryCredentialsFromSpace(

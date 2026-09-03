@@ -5,7 +5,6 @@ import { and, eq, inArray, lt, or, sql } from "drizzle-orm";
 import {
   customDomainsTable,
   customDomainVerificationWindowsTable,
-  db,
   organizationCustomizationTable,
 } from "@workspace/db";
 import type { TenantTransaction } from "./tenant-db";
@@ -13,6 +12,7 @@ import { runtimeConfig } from "./config";
 import { auditJob, auditUser, writeAuditEvent } from "./audit";
 import type { DomainDnsResolver } from "./domain-dns-resolver";
 import { resolveExactTxt } from "./domain-dns-resolver";
+import { withWorkerDb } from "./worker-db";
 
 const active = ["pending_verification", "verifying", "verified", "failed", "suspended", "reconciliation_required"] as const;
 const retryDelayMs = 60_000, maxAttempts = 8;
@@ -122,8 +122,7 @@ export async function processCustomDomainVerification(
   auditWriter: typeof writeAuditEvent = writeAuditEvent,
 ) {
   const claim = randomUUID();
-  const row = await db.transaction(async (tx) => {
-    await tx.execute(sql`select set_config('app.custom_domain_worker', 'on', true)`);
+  const row = await withWorkerDb("custom_domain", async (tx) => {
     const [claimed] = await tx.update(customDomainsTable).set({ lifecycleState: "verifying", claimToken: claim, claimedAt: new Date() })
       .where(and(eq(customDomainsTable.id, domainId), inArray(customDomainsTable.lifecycleState, ["pending_verification", "failed"]))).returning();
     return claimed;
@@ -133,8 +132,7 @@ export async function processCustomDomainVerification(
   let matched = false, diagnostic = "dns_lookup_failed";
   try { matched = await resolveExactTxt(resolver, row.challengeName, row.challengeValue); diagnostic = matched ? "" : "txt_not_found"; } catch (error) { diagnostic = error instanceof Error && error.message === "dns_timeout" ? "dns_timeout" : "dns_lookup_failed"; }
 
-  return db.transaction(async (tx) => {
-    await tx.execute(sql`select set_config('app.custom_domain_worker', 'on', true)`);
+  return withWorkerDb("custom_domain", async (tx) => {
     const attempts = row.attempts + 1, retryable = !matched && attempts < maxAttempts;
     const state = matched ? "verified" : retryable ? "failed" : "suspended";
     const [changed] = await tx.update(customDomainsTable).set({ lifecycleState: state, attempts, retryable, lastCheckedAt: new Date(), verifiedAt: matched ? new Date() : null, retryAfterAt: retryable ? new Date(Date.now() + retryDelayMs * attempts) : null, claimToken: null, claimedAt: null, diagnosticCode: diagnostic || null })
