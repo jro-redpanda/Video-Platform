@@ -19,6 +19,7 @@ export async function cleanupThumbnailObjects(
     id: thumbnailUploadIntentsTable.id,
     organizationId: thumbnailUploadIntentsTable.organizationId,
     videoId: thumbnailUploadIntentsTable.videoId,
+    expiresAt: thumbnailUploadIntentsTable.expiresAt,
   }).from(thumbnailUploadIntentsTable).where(and(
     isNull(thumbnailUploadIntentsTable.finalizedAt),
     lte(thumbnailUploadIntentsTable.expiresAt, now),
@@ -56,6 +57,7 @@ export async function cleanupThumbnailObjects(
       await tx.insert(objectCleanupOutboxTable).values({
         organizationId: candidate.organizationId,
         objectKey: intent.objectKey,
+        nextAttemptAt: new Date(Math.max(now.getTime(), candidate.expiresAt.getTime() + 60_000)),
       })
         .onConflictDoNothing({ target: objectCleanupOutboxTable.objectKey });
       await tx.delete(thumbnailUploadIntentsTable).where(eq(thumbnailUploadIntentsTable.id, intent.id));
@@ -71,6 +73,7 @@ export async function cleanupThumbnailObjects(
     const candidate = await withWorkerDb("thumbnail", async (tx) => {
       const [row] = await tx.select({
         id: objectCleanupOutboxTable.id,
+        organizationId: objectCleanupOutboxTable.organizationId,
         objectKey: objectCleanupOutboxTable.objectKey,
         attempts: objectCleanupOutboxTable.attempts,
       }).from(objectCleanupOutboxTable).where(and(
@@ -92,6 +95,44 @@ export async function cleanupThumbnailObjects(
       return claimed ? row : undefined;
     });
     if (!candidate) break;
+    const videoId = ownedThumbnailVideoId(candidate.organizationId, candidate.objectKey);
+    if (!videoId) {
+      const quarantinedAt = new Date();
+      await withWorkerDb("thumbnail", (tx) => tx.update(objectCleanupOutboxTable).set({
+        quarantinedAt,
+        lastError: "Cleanup object key is outside its tenant-owned thumbnail hierarchy",
+      }).where(and(
+        eq(objectCleanupOutboxTable.id, candidate.id),
+        isNull(objectCleanupOutboxTable.completedAt),
+        isNull(objectCleanupOutboxTable.quarantinedAt),
+      )));
+      logger.fatal({ outboxId: candidate.id }, "Unsafe thumbnail cleanup key was quarantined");
+      quarantined++;
+      continue;
+    }
+    const stillReferenced = await withWorkerDb("thumbnail", async (tx) => {
+      // A finalize transaction locks the video before reserving its delayed
+      // compensation key. Waiting for that lock closes the in-flight promotion
+      // window before cleanup decides whether deletion is safe.
+      await tx.execute(sql`select lock_thumbnail_cleanup_video(${videoId}::uuid)`);
+      const [active] = await tx.select({ id: videosTable.id }).from(videosTable).where(and(
+        eq(videosTable.organizationId, candidate.organizationId),
+        eq(videosTable.thumbnailObjectKey, candidate.objectKey),
+      )).limit(1);
+      return Boolean(active);
+    });
+    if (stillReferenced) {
+      await withWorkerDb("thumbnail", (tx) => tx.update(objectCleanupOutboxTable).set({
+        attempts: sql`greatest(${objectCleanupOutboxTable.attempts} - 1, 0)`,
+        nextAttemptAt: new Date(now.getTime() + 5 * 60_000),
+        lastError: "Deletion deferred because the thumbnail is still referenced",
+      }).where(and(
+        eq(objectCleanupOutboxTable.id, candidate.id),
+        isNull(objectCleanupOutboxTable.completedAt),
+        isNull(objectCleanupOutboxTable.quarantinedAt),
+      )));
+      continue;
+    }
     try {
       await storage.deleteObject(candidate.objectKey);
       await withWorkerDb("thumbnail", (tx) => tx.update(objectCleanupOutboxTable).set({
@@ -136,4 +177,20 @@ export async function cleanupThumbnailObjects(
     }
   }
   return { expired, completed, failed, quarantined };
+}
+
+function ownedThumbnailVideoId(organizationId: string, objectKey: string) {
+  const segments = objectKey.split("/");
+  if (segments.length !== 4
+    || !["thumbnails", "thumbnail-candidates", "thumbnail-finals"].includes(segments[0] ?? "")
+    || segments[1]?.toLowerCase() !== organizationId.toLowerCase()
+    || !isUuid(segments[2] ?? "")
+    || !/^[a-zA-Z0-9_-]+$/.test(segments[3] ?? "")) {
+    return undefined;
+  }
+  return segments[2];
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }

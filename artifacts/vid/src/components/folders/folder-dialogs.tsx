@@ -24,6 +24,9 @@ export function CreateFolderDialog({ open, onOpenChange, parentId, onSuccess }: 
       onSuccess: () => {
         toast({ title: "Folder created" })
         queryClient.invalidateQueries({ queryKey: getListFoldersQueryKey() })
+        if (parentId !== "root") {
+          queryClient.invalidateQueries({ queryKey: getGetFolderQueryKey(parentId) })
+        }
         onSuccess?.()
         onOpenChange(false)
       },
@@ -115,6 +118,9 @@ export function DeleteFolderDialog({ folder, open, onOpenChange, onSuccess }: { 
       onSuccess: () => {
         toast({ title: "Folder deleted" })
         queryClient.invalidateQueries({ queryKey: getListFoldersQueryKey() })
+        if (folder.parentId) {
+          queryClient.invalidateQueries({ queryKey: getGetFolderQueryKey(folder.parentId) })
+        }
         onSuccess?.()
         onOpenChange(false)
       },

@@ -72,6 +72,9 @@ export default function OnboardingFlow({ onboarding }: { onboarding: WorkspaceOn
     retryOnboarding.mutate({ data: {} }, {
       onSuccess: (data) => {
         queryClient.setQueryData(getGetOnboardingQueryKey(), data);
+      },
+      onSettled: () => {
+        void queryClient.invalidateQueries({ queryKey: getGetOnboardingQueryKey() });
       }
     });
   };

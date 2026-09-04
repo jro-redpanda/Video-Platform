@@ -899,6 +899,15 @@ export const CompleteVideoUploadParams = zod.object({
   "videoId": zod.coerce.string().uuid()
 })
 
+export const completeVideoUploadBodyIdempotencyKeyMin = 16;
+export const completeVideoUploadBodyIdempotencyKeyMax = 128;
+
+
+
+export const CompleteVideoUploadBody = zod.object({
+  "idempotencyKey": zod.string().min(completeVideoUploadBodyIdempotencyKeyMin).max(completeVideoUploadBodyIdempotencyKeyMax)
+})
+
 export const CompleteVideoUploadResponse = zod.object({
   "id": zod.string(),
   "title": zod.string(),
@@ -934,6 +943,15 @@ export const CompleteVideoUploadResponse = zod.object({
 
 export const CancelVideoUploadParams = zod.object({
   "videoId": zod.coerce.string().uuid()
+})
+
+export const cancelVideoUploadBodyIdempotencyKeyMin = 16;
+export const cancelVideoUploadBodyIdempotencyKeyMax = 128;
+
+
+
+export const CancelVideoUploadBody = zod.object({
+  "idempotencyKey": zod.string().min(cancelVideoUploadBodyIdempotencyKeyMin).max(cancelVideoUploadBodyIdempotencyKeyMax)
 })
 
 export const CancelVideoUploadResponse = zod.object({

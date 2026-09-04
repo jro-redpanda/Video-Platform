@@ -1,4 +1,4 @@
-import { useState, useRef } from "react"
+import { useEffect, useState, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import {
   useCreateThumbnailUploadIntent,
@@ -26,11 +26,19 @@ export function ThumbnailManager({ video, canUpdate }: { video: any, canUpdate: 
   const finalizeUpload = useFinalizeThumbnail()
   const deleteThumbnail = useDeleteVideoThumbnail()
 
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl)
+    }
+  }, [previewUrl])
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
     setError(null)
+    setSelectedFile(null)
+    setPreviewUrl(null)
 
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
       setError("Only JPEG, PNG, and WebP images are supported.")
@@ -52,7 +60,6 @@ export function ThumbnailManager({ video, canUpdate }: { video: any, canUpdate: 
   }
 
   const handleCancel = () => {
-    if (previewUrl) URL.revokeObjectURL(previewUrl)
     setSelectedFile(null)
     setPreviewUrl(null)
     setError(null)
@@ -79,11 +86,17 @@ export function ThumbnailManager({ video, canUpdate }: { video: any, canUpdate: 
         }
       })
 
-      const uploadRes = await fetch(intentRes.uploadUrl, {
+      const uploadUrl = new URL(intentRes.uploadUrl)
+      if (uploadUrl.protocol !== "https:" || uploadUrl.username || uploadUrl.password
+        || uploadUrl.port || uploadUrl.hash) {
+        throw new Error("Storage returned an unsafe upload URL")
+      }
+      const uploadRes = await fetch(uploadUrl, {
         method: 'PUT',
         headers: intentRes.requiredHeaders,
         body: selectedFile,
-        credentials: 'omit'
+        credentials: 'omit',
+        redirect: 'error'
       })
 
       if (!uploadRes.ok) {

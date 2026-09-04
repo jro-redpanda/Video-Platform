@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, Fragment } from "react"
 import { useParams, Link } from "wouter"
-import { useGetVideo, useUpdateVideo, getGetVideoQueryKey, useGetAuthenticatedVideoPlayback, getGetAuthenticatedVideoPlaybackQueryKey, useGetWorkspace } from "@workspace/api-client-react"
+import { useGetVideo, useUpdateVideo, getGetVideoQueryKey, getListVideosQueryKey, useGetAuthenticatedVideoPlayback, getGetAuthenticatedVideoPlaybackQueryKey, useGetWorkspace } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -15,6 +15,7 @@ import { formatDate, formatDuration, formatNumber } from "@/lib/utils"
 import { Player } from "@/components/player"
 import { MoveVideoDialog } from "@/components/video-library/move-video-dialog"
 import { ThumbnailManager } from "@/components/thumbnail-manager"
+import { useToast } from "@/components/ui/use-toast"
 
 export default function VideoDetail() {
   const { id } = useParams<{ id: string }>()
@@ -31,6 +32,7 @@ export default function VideoDetail() {
 
   const queryClient = useQueryClient()
   const updateVideo = useUpdateVideo()
+  const { toast } = useToast()
   const { data: workspace } = useGetWorkspace()
   const canUpdate = workspace?.permissions?.includes("videos.update") ?? false
 
@@ -49,18 +51,27 @@ export default function VideoDetail() {
     }
   }, [video, id])
 
-  const handleUpdate = (updates: any) => {
+  const handleUpdate = (updates: any, successMessage: string) => {
     updateVideo.mutate({ videoId: id, data: updates }, {
       onSuccess: (updatedData) => {
         queryClient.setQueryData(getGetVideoQueryKey(id), (old: any) =>
           old ? { ...old, ...updatedData } : old
         )
+        queryClient.invalidateQueries({ queryKey: getListVideosQueryKey() })
+        toast({ title: successMessage })
+      },
+      onError: (error: any) => {
+        toast({
+          title: "Video update failed",
+          description: error?.message || "The video could not be updated. Please try again.",
+          variant: "destructive",
+        })
       }
     })
   }
 
   const handleVisibilityChange = (value: string) => {
-    handleUpdate({ visibility: value })
+    handleUpdate({ visibility: value }, "Visibility updated")
   }
 
   const handleCopy = async () => {
@@ -140,8 +151,12 @@ export default function VideoDetail() {
             </a>
           </Button>
           {canUpdate && (
-            <Button className="gap-2" onClick={() => handleUpdate({ title, description })}>
-              Save Changes
+            <Button
+              className="gap-2"
+              onClick={() => handleUpdate({ title, description }, "Video details saved")}
+              disabled={updateVideo.isPending}
+            >
+              {updateVideo.isPending ? "Saving..." : "Save Changes"}
             </Button>
           )}
         </div>
@@ -257,7 +272,11 @@ export default function VideoDetail() {
                 <Activity className="h-4 w-4" /> Visibility
               </h3>
               <div className="space-y-2">
-                <Select value={video.visibility} onValueChange={handleVisibilityChange} disabled={!canUpdate}>
+                <Select
+                  value={video.visibility}
+                  onValueChange={handleVisibilityChange}
+                  disabled={!canUpdate || updateVideo.isPending}
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>

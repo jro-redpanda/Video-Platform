@@ -25,7 +25,7 @@ const {
 } = await import("@workspace/db");
 const { and, eq } = await import("drizzle-orm");
 const { default: app } = await import("./app");
-const { generateVideoEmbed, serializeEmbed } = await import("./lib/video-embeds");
+const { generateVideoEmbed, serializeEmbed, trustedRequestOrigin } = await import("./lib/video-embeds");
 const { reconcileEmbedGenerationOutbox } = await import("./lib/jobs");
 const { videoProviders } = await import("./lib/provider-registry");
 const { Step7SmokeVideoProvider } = await import("@workspace/providers/test-only");
@@ -177,6 +177,31 @@ assert(address && typeof address === "object");
 const root = `http://127.0.0.1:${address.port}`;
 
 try {
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalPublicOrigin = process.env.PUBLIC_APP_ORIGIN;
+  try {
+    process.env.NODE_ENV = "production";
+    delete process.env.PUBLIC_APP_ORIGIN;
+    assert.throws(
+      () => trustedRequestOrigin({} as never),
+      /PUBLIC_APP_ORIGIN is required in production/,
+    );
+    process.env.PUBLIC_APP_ORIGIN = "http://videos.example.test";
+    assert.throws(
+      () => trustedRequestOrigin({} as never),
+      /must use HTTPS in production/,
+    );
+    process.env.PUBLIC_APP_ORIGIN = "https://videos.example.test/path";
+    assert.throws(
+      () => trustedRequestOrigin({} as never),
+      /must be an origin/,
+    );
+  } finally {
+    process.env.NODE_ENV = originalNodeEnv;
+    if (originalPublicOrigin === undefined) delete process.env.PUBLIC_APP_ORIGIN;
+    else process.env.PUBLIC_APP_ORIGIN = originalPublicOrigin;
+  }
+
   const email = `step11-${marker}@example.test`;
   const signUp = await fetch(`${root}/api/auth/sign-up/email`, {
     method: "POST",
@@ -226,6 +251,7 @@ try {
   assert.match(owned.embedCode, /position:relative/);
   assert.match(owned.embedCode, /padding-top:56\.25%/);
   assert.match(owned.embedCode, /loading="lazy"/);
+  assert.match(owned.embedCode, /referrerpolicy="no-referrer"/);
   assert.match(owned.embedCode, /allowfullscreen/);
   assert.match(owned.embedCode, /picture-in-picture/);
   assert.equal(owned.videoObject["@type"], "VideoObject");
@@ -234,6 +260,8 @@ try {
   const response = await fetch(`${root}/api/public/videos/${readyVideoId}`);
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
   const publicText = await response.text();
   const publicVideo = JSON.parse(publicText) as Record<string, unknown>;
   assert.equal(publicVideo.sourceType, "hls");
@@ -248,6 +276,7 @@ try {
   const sourceResponse = await fetch(`${root}${String(publicVideo.sourceUrl)}`, { redirect: "manual" });
   assert.equal(sourceResponse.status, 307);
   assert.equal(sourceResponse.headers.get("cache-control"), "private, no-store");
+  assert.equal(sourceResponse.headers.get("referrer-policy"), "no-referrer");
   assert.match(sourceResponse.headers.get("location") ?? "", /^https:\/\/playback\.test\.invalid\//);
 
   await db.update(videosTable).set({
@@ -285,6 +314,7 @@ try {
   const privatePlayback = await fetch(`${root}/api/videos/${privateVideoId}/playback`, { headers: { cookie } });
   assert.equal(privatePlayback.status, 200);
   assert.equal(privatePlayback.headers.get("cache-control"), "private, no-store");
+  assert.equal(privatePlayback.headers.get("referrer-policy"), "no-referrer");
   const privatePlaybackText = await privatePlayback.text();
   const privatePlaybackJson = JSON.parse(privatePlaybackText) as Record<string, unknown>;
   assert.equal(privatePlaybackJson.sourceUrl, `/api/videos/${privateVideoId}/playback/source`);
@@ -296,6 +326,7 @@ try {
   });
   assert.equal(privateSource.status, 307);
   assert.equal(privateSource.headers.get("cache-control"), "private, no-store");
+  assert.equal(privateSource.headers.get("referrer-policy"), "no-referrer");
 
   // The test adapter normally produces the trusted hostname above. Its
   // test-only override verifies both public and authenticated routes reject a
@@ -314,6 +345,70 @@ try {
     }
   } finally {
     testProvider.playbackUrlOverride = undefined;
+  }
+
+  for (const unsafeSource of [
+    "http://playback.test.invalid/master.m3u8",
+    "https://user@playback.test.invalid/master.m3u8",
+    "https://playback.test.invalid:444/master.m3u8",
+    "https://playback.test.invalid/master.m3u8#fragment",
+  ]) {
+    testProvider.playbackUrlOverride = unsafeSource;
+    try {
+      const rejected = await fetch(`${root}/api/public/videos/${readyVideoId}`);
+      assert.equal(rejected.status, 503);
+      assert.equal(rejected.headers.get("cache-control"), "private, no-store");
+      assert.equal(rejected.headers.get("referrer-policy"), "no-referrer");
+    } finally {
+      testProvider.playbackUrlOverride = undefined;
+    }
+  }
+
+  for (const invalidExpiry of [
+    "not-a-date",
+    new Date(Date.now() + 10_000).toISOString(),
+    new Date(Date.now() - 1_000).toISOString(),
+  ]) {
+    testProvider.playbackExpiresAtOverride = invalidExpiry;
+    try {
+      const expiryRequests: Array<Promise<Response>> = [
+        fetch(`${root}/api/public/videos/${readyVideoId}`),
+        fetch(`${root}/api/public/videos/${readyVideoId}/source`, { redirect: "manual" }),
+        fetch(`${root}/api/videos/${privateVideoId}/playback`, { headers: { cookie } }),
+        fetch(`${root}/api/videos/${privateVideoId}/playback/source`, { headers: { cookie }, redirect: "manual" }),
+      ];
+      for (const pendingResponse of expiryRequests) {
+        const rejectedResponse: Response = await pendingResponse;
+        assert.equal(rejectedResponse.status, 503);
+        assert.equal(rejectedResponse.headers.get("cache-control"), "private, no-store");
+      }
+    } finally {
+      testProvider.playbackExpiresAtOverride = undefined;
+    }
+  }
+
+  testProvider.beforePlaybackSourcesReturn = async () => {
+    await db.update(videosTable).set({ visibility: "private" }).where(eq(videosTable.id, readyVideoId));
+  };
+  try {
+    const racedPublic = await fetch(`${root}/api/public/videos/${readyVideoId}/source`, { redirect: "manual" });
+    assert.equal(racedPublic.status, 404, "public source must recheck visibility after provider resolution");
+  } finally {
+    testProvider.beforePlaybackSourcesReturn = undefined;
+    await db.update(videosTable).set({ visibility: "public" }).where(eq(videosTable.id, readyVideoId));
+  }
+
+  testProvider.beforePlaybackSourcesReturn = async () => {
+    await db.update(videosTable).set({ status: "processing" }).where(eq(videosTable.id, privateVideoId));
+  };
+  try {
+    const racedAuthenticated = await fetch(`${root}/api/videos/${privateVideoId}/playback/source`, {
+      headers: { cookie }, redirect: "manual",
+    });
+    assert.equal(racedAuthenticated.status, 404, "authenticated source must recheck readiness after provider resolution");
+  } finally {
+    testProvider.beforePlaybackSourcesReturn = undefined;
+    await db.update(videosTable).set({ status: "ready" }).where(eq(videosTable.id, privateVideoId));
   }
 
   const crossTenantPlayback = await fetch(`${root}/api/videos/${foreignVideoId}/playback`, { headers: { cookie } });

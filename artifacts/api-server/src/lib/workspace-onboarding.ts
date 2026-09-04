@@ -8,6 +8,7 @@ import {
   permissionGroupsTable,
   permissionsTable,
   plansTable,
+  providerTenantSpacesTable,
 } from "@workspace/db";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { auditUser, writeAuditEvent } from "./audit";
@@ -128,9 +129,14 @@ async function findOwnedOnboarding(userId: string) {
       retryable: onboardingProvisioningIntentsTable.retryable,
       attempts: onboardingProvisioningIntentsTable.attempts,
       requestedByUserId: onboardingProvisioningIntentsTable.requestedByUserId,
+      providerSpaceId: providerTenantSpacesTable.providerSpaceId,
+      providerSpaceState: providerTenantSpacesTable.state,
+      providerExternalCallClaim: providerTenantSpacesTable.externalCallClaim,
+      providerReconciliationRequired: providerTenantSpacesTable.reconciliationRequired,
     }).from(membershipsTable)
       .innerJoin(organizationsTable, eq(organizationsTable.id, membershipsTable.organizationId))
       .leftJoin(onboardingProvisioningIntentsTable, eq(onboardingProvisioningIntentsTable.organizationId, organizationsTable.id))
+      .leftJoin(providerTenantSpacesTable, eq(providerTenantSpacesTable.organizationId, organizationsTable.id))
       .where(eq(membershipsTable.userId, userId))
       .orderBy(membershipsTable.createdAt)
       .limit(1);
@@ -150,24 +156,48 @@ export async function retryWorkspaceOnboarding(userId: string, workspaceId?: str
   if (owned.requestedByUserId !== userId) {
     throw new OnboardingForbiddenError("Only the workspace owner may retry provisioning");
   }
-  if (!owned.intentId || owned.status === "active" || owned.status === "suspended"
-    || owned.intentState === "completed" || owned.intentState === "reconciliation_required"
-    || owned.retryable === false || (owned.attempts ?? 0) >= 5) {
-    throw new OnboardingConflictError("Workspace provisioning cannot be retried in its current state");
-  }
-  if (owned.intentState === "failed" || owned.intentState === "unavailable") {
-    await withUserDb(userId, async (tx) => {
+  await withUserDb(userId, async (tx) => {
+    const [intent] = await tx.select({
+      id: onboardingProvisioningIntentsTable.id,
+      state: onboardingProvisioningIntentsTable.state,
+      retryable: onboardingProvisioningIntentsTable.retryable,
+      attempts: onboardingProvisioningIntentsTable.attempts,
+      requestedByUserId: onboardingProvisioningIntentsTable.requestedByUserId,
+    }).from(onboardingProvisioningIntentsTable)
+      .where(eq(onboardingProvisioningIntentsTable.organizationId, owned.id))
+      .for("update")
+      .limit(1);
+    const [organization] = await tx.select({ status: organizationsTable.status })
+      .from(organizationsTable)
+      .where(eq(organizationsTable.id, owned.id))
+      .for("update")
+      .limit(1);
+    if (!organization || !intent || intent.requestedByUserId !== userId
+      || organization.status === "active" || organization.status === "suspended"
+      || intent.state === "completed" || intent.state === "reconciliation_required"
+      || intent.retryable === false || intent.attempts >= 5) {
+      throw new OnboardingConflictError("Workspace provisioning cannot be retried in its current state");
+    }
+    if (intent.state === "failed" || intent.state === "unavailable") {
       await tx.update(onboardingProvisioningIntentsTable).set({
         state: "pending", dispatchClaim: null, claimedAt: null, diagnosticCode: null,
       }).where(and(
-        eq(onboardingProvisioningIntentsTable.id, owned.intentId!),
+        eq(onboardingProvisioningIntentsTable.id, intent.id),
         eq(onboardingProvisioningIntentsTable.requestedByUserId, userId),
         inArray(onboardingProvisioningIntentsTable.state, ["failed", "unavailable"]),
         eq(onboardingProvisioningIntentsTable.retryable, true),
       ));
-      await tx.update(organizationsTable).set({ status: "provisioning" }).where(eq(organizationsTable.id, owned.id));
-    }, owned.id);
-  }
+    }
+    const [eligible] = await tx.update(organizationsTable).set({ status: "provisioning" })
+      .where(and(
+        eq(organizationsTable.id, owned.id),
+        inArray(organizationsTable.status, ["failed", "provisioning"]),
+      ))
+      .returning({ id: organizationsTable.id });
+    if (!eligible) {
+      throw new OnboardingConflictError("Workspace provisioning cannot be retried in its current state");
+    }
+  }, owned.id);
   return getOnboardingState(userId);
 }
 
@@ -178,9 +208,22 @@ function toOnboardingResponse(row: OwnedOnboarding) {
     provisioning: { state: "pending" as const, retryable: false, message: "Create a workspace to continue." },
   };
   const workspace = { id: row.id, name: row.name, slug: row.slug, status: row.status };
-  if (row.status === "active") return {
+  const providerReady = row.intentState === "completed"
+    && row.providerSpaceState === "created"
+    && Boolean(row.providerSpaceId)
+    && !row.providerExternalCallClaim
+    && row.providerReconciliationRequired === false;
+  if (row.status === "active" && providerReady) return {
     state: "active" as const, workspace,
     provisioning: { state: "ready" as const, retryable: false, message: "Workspace is ready." },
+  };
+  if (row.status === "active") return {
+    state: "failed" as const, workspace,
+    provisioning: {
+      state: "reconciliation_required" as const,
+      retryable: false,
+      message: "Provisioning requires support review.",
+    },
   };
   if (row.status === "suspended") return {
     state: "suspended" as const, workspace,

@@ -168,6 +168,20 @@ try {
     eq(auditLogsTable.organizationId, organizationId), eq(auditLogsTable.action, "video.visibility_changed"),
   ));
   assert.equal(audits.filter(({ subjectId }) => updateIds.includes(subjectId ?? "")).length, 2);
+  await db.update(videosTable).set({ visibility: "private" }).where(eq(videosTable.id, updateIds[1]));
+  const mixedNoOp = await request(updater.cookie, "/videos/bulk", {
+    operation: "visibility", videoIds: updateIds, visibility: "public",
+  });
+  assert.deepEqual(mixedNoOp.json?.succeeded, updateIds, "changed and no-op items are both successful");
+  assert.deepEqual(mixedNoOp.json?.failed, []);
+  const auditsAfterMixedNoOp = await db.select().from(auditLogsTable).where(and(
+    eq(auditLogsTable.organizationId, organizationId), eq(auditLogsTable.action, "video.visibility_changed"),
+  ));
+  assert.equal(
+    auditsAfterMixedNoOp.filter(({ subjectId }) => updateIds.includes(subjectId ?? "")).length,
+    3,
+    "idempotent no-op items must not create duplicate audit events",
+  );
 
   const invalidDestination = await request(full.cookie, "/videos/bulk", {
     operation: "move", videoIds: updateIds, folderId: foreignFolderId,

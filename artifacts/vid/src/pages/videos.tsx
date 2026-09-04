@@ -33,10 +33,19 @@ export default function Videos() {
   const [allVideos, setAllVideos] = useState<Video[]>([])
 
   const [resetGeneration, setResetGeneration] = useState(0)
+  const activeGeneration = useRef(0)
 
   const prevFiltersStr = useRef(JSON.stringify(filters))
+  const resetPaginationState = useCallback(() => {
+    activeGeneration.current += 1
+    setAllVideos([])
+    setCurrentCursor(undefined)
+    setResetGeneration(activeGeneration.current)
+  }, [])
 
-  const { selectedIds, toggleSelection, selectAll, clearSelection, handlePartialSuccess } = useVideoSelection()
+  const selectionLimit = canUpdate ? 50 : 25
+  const { selectedIds, toggleSelection, selectAll, clearSelection, handlePartialSuccess } =
+    useVideoSelection(selectionLimit)
   const handleSearchInputChange = useCallback((value: string) => {
     clearSelection()
     setSearchInput(value)
@@ -89,13 +98,11 @@ export default function Videos() {
   useEffect(() => {
     const currStr = JSON.stringify(filters)
     if (prevFiltersStr.current !== currStr) {
-      setAllVideos([])
-      setCurrentCursor(undefined)
+      resetPaginationState()
       clearSelection()
-      setResetGeneration(g => g + 1)
       prevFiltersStr.current = currStr
     }
-  }, [filters, clearSelection])
+  }, [filters, clearSelection, resetPaginationState])
 
   const queryParams = useMemo(() => ({
     search: filters.search || undefined,
@@ -107,20 +114,28 @@ export default function Videos() {
     cursor: currentCursor
   }), [filters, currentCursor])
 
-  const { data, isLoading, error, isFetching } = useListVideos(queryParams)
+  const { data, isLoading, error, isFetching, isPlaceholderData } = useListVideos(queryParams)
 
   const queryClient = useQueryClient()
   const { toast } = useToast()
 
   const resetAndRefetch = useCallback(() => {
-    setCurrentCursor(undefined)
-    setResetGeneration(g => g + 1)
-    queryClient.invalidateQueries({ queryKey: getListVideosQueryKey() })
-    queryClient.invalidateQueries({ queryKey: getListFoldersQueryKey() })
-    if (filters.folder && filters.folder !== "root") {
-      queryClient.invalidateQueries({ queryKey: getGetFolderQueryKey(filters.folder) })
-    }
-  }, [queryClient, filters.folder])
+    void (async () => {
+      await queryClient.cancelQueries({ queryKey: getListVideosQueryKey() })
+      queryClient.removeQueries({ queryKey: getListVideosQueryKey() })
+      resetPaginationState()
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: getListVideosQueryKey() }),
+        queryClient.invalidateQueries({ queryKey: getListFoldersQueryKey() }),
+        queryClient.invalidateQueries({
+          predicate: ({ queryKey }) => (
+            typeof queryKey[0] === "string"
+            && queryKey[0].startsWith("/api/folders/")
+          )
+        }),
+      ])
+    })()
+  }, [queryClient, resetPaginationState])
 
   const handleBulkSuccess = useCallback((context: BulkResultContext) => {
     resetAndRefetch();
@@ -162,7 +177,7 @@ export default function Videos() {
 
   // Append items for pagination without duplicates
   useEffect(() => {
-    if (data?.items) {
+    if (data?.items && !isPlaceholderData && resetGeneration === activeGeneration.current) {
       setAllVideos(prev => {
         if (!currentCursor) return data.items
         const newItems = data.items.filter(item => !prev.some(p => p.id === item.id))
@@ -170,7 +185,7 @@ export default function Videos() {
         return prev
       })
     }
-  }, [data, currentCursor, resetGeneration])
+  }, [data, currentCursor, resetGeneration, isPlaceholderData])
 
   const handleLoadMore = () => {
     if (data?.nextCursor) {
@@ -250,7 +265,7 @@ export default function Videos() {
               </Button>
             )}
             {canCreate && !folderError && (
-              <UploadVideoDialog onSuccess={resetAndRefetch} folderId={isRoot ? null : filters.folder} />
+                <UploadVideoDialog onSuccess={resetAndRefetch} folderId={isRoot ? null : filters.folder} workspaceId={workspace?.id} />
             )}
           </div>
         </div>
@@ -342,6 +357,7 @@ export default function Videos() {
                   selectedIds={selectedIds}
                   onToggleSelection={toggleSelection}
                   onSelectAll={selectAll}
+                  maxSelection={selectionLimit}
                 />
 
                 {/* Load More */}
@@ -369,14 +385,20 @@ export default function Videos() {
         video={videoToDelete}
         open={!!videoToDelete}
         onOpenChange={(open) => !open && setVideoToDelete(null)}
-        onSuccess={resetAndRefetch}
+        onSuccess={() => {
+          if (videoToDelete) handlePartialSuccess([videoToDelete.id])
+          resetAndRefetch()
+        }}
       />
 
       <MoveVideoDialog
         video={videoToMove}
         open={!!videoToMove}
         onOpenChange={(open) => !open && setVideoToMove(null)}
-        onSuccess={resetAndRefetch}
+        onSuccess={() => {
+          if (videoToMove) handlePartialSuccess([videoToMove.id])
+          resetAndRefetch()
+        }}
       />
 
       <CreateFolderDialog

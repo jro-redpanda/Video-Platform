@@ -16,7 +16,7 @@ import {
   GetPublicVideoParams,
   GetPublicVideoResponse,
 } from "@workspace/api-zod";
-import { resolveProvisioningProvider, videoProviders } from "../lib/provider-registry";
+import { resolveProvisioningProvider } from "../lib/provider-registry";
 import { getThumbnailStorage, ThumbnailObjectNotFoundError } from "../lib/thumbnail-storage";
 import { streamThumbnail } from "./thumbnails";
 import {
@@ -25,6 +25,7 @@ import {
   ingestPlaybackEvents,
   issueAnalyticsGrant,
 } from "../lib/playback-analytics";
+import { setPlaybackResponsePolicy, validatePlaybackSource } from "../lib/playback-sources";
 
 const router: IRouter = Router();
 
@@ -34,6 +35,7 @@ router.get("/runtime-config", (_req, res) => {
 
 router.get("/videos/:videoId/source", async (req, res): Promise<void> => {
   const { videoId } = GetPublicVideoParams.parse(req.params);
+  setPlaybackResponsePolicy(res);
   const [linkage] = await db.select({
     status: videosTable.status,
     providerAssetId: videosTable.providerAssetId,
@@ -58,26 +60,30 @@ router.get("/videos/:videoId/source", async (req, res): Promise<void> => {
     return;
   }
   try {
-    const provider = process.env.NODE_ENV === "test"
-      ? videoProviders.resolve(linkage.account.providerKey)
-      : await resolveProvisioningProvider(linkage.account, linkage.space);
+    const provider = await resolveProvisioningProvider(linkage.account, linkage.space);
     const sources = await provider.getPlaybackSources(
       { id: linkage.providerTenantSpaceId },
       { id: linkage.providerAssetId },
     );
-    if (!sources.hlsUrl || new Date(sources.expiresAt).getTime() <= Date.now()) {
-      throw new Error("Provider returned no current maintained playback source");
-    }
-    const sourceUrl = new URL(sources.hlsUrl).toString();
-    if (!await provider.isPlaybackSourceTrusted(
+    const source = await validatePlaybackSource(
+      provider,
       { id: linkage.providerTenantSpaceId },
       { id: linkage.providerAssetId },
-      sourceUrl,
-    )) {
-      throw new Error("Provider returned an untrusted playback source");
+      sources,
+    );
+    const [stillEligible] = await db.select({ id: videosTable.id }).from(videosTable).where(and(
+      eq(videosTable.id, videoId),
+      eq(videosTable.status, "ready"),
+      ne(videosTable.visibility, "private"),
+      eq(videosTable.providerAccountId, linkage.account.id),
+      eq(videosTable.providerTenantSpaceId, linkage.providerTenantSpaceId),
+      eq(videosTable.providerAssetId, linkage.providerAssetId),
+    )).limit(1);
+    if (!stillEligible) {
+      res.status(404).json({ error: "Video not found" });
+      return;
     }
-    res.setHeader("Cache-Control", "private, no-store");
-    res.status(307).setHeader("Location", sourceUrl).end();
+    res.status(307).setHeader("Location", source.sourceUrl).end();
   } catch (error) {
     req.log.error({ err: error, videoId }, "Playback source redirect resolution failed");
     res.status(503).json({ error: "Playback source is unavailable" });
@@ -86,6 +92,8 @@ router.get("/videos/:videoId/source", async (req, res): Promise<void> => {
 
 router.get("/videos/:videoId/thumbnail", async (req, res): Promise<void> => {
   const { videoId } = GetPublicVideoParams.parse(req.params);
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("X-Content-Type-Options", "nosniff");
   const [thumbnail] = await db.select({
     objectKey: videosTable.thumbnailObjectKey,
     contentType: videosTable.thumbnailContentType,
@@ -117,8 +125,12 @@ router.get("/videos/:videoId/thumbnail", async (req, res): Promise<void> => {
       contentType: thumbnail.contentType,
       sizeBytes: thumbnail.sizeBytes,
       generation: thumbnail.generation ?? undefined,
-    }, true);
+    }, true, (error, headersSent) => {
+      req.log.error({ err: error, videoId, headersSent }, "Public thumbnail stream failed");
+    });
   } catch (error) {
+    res.removeHeader("Content-Length");
+    res.setHeader("Cache-Control", "private, no-store");
     if (error instanceof ThumbnailObjectNotFoundError) {
       res.status(404).json({ error: "Thumbnail not found" });
       return;
@@ -130,6 +142,7 @@ router.get("/videos/:videoId/thumbnail", async (req, res): Promise<void> => {
 
 router.get("/videos/:videoId", async (req, res): Promise<void> => {
   const { videoId } = GetPublicVideoParams.parse(req.params);
+  setPlaybackResponsePolicy(res);
   const [video] = await db.select({
     id: videosTable.id,
     organizationId: videosTable.organizationId,
@@ -183,7 +196,7 @@ router.get("/videos/:videoId", async (req, res): Promise<void> => {
     && (!thumbnailMutableUntil || thumbnailMutableUntil.getTime() <= Date.now())
     ? `/api/public/videos/${videoId}/thumbnail?v=${thumbnailVersion}` : null;
   let analytics: ReturnType<typeof issueAnalyticsGrant> | undefined;
-  if (embedId && embedGeneration && embedStatus === "generated") {
+  if (video.status === "ready" && embedId && embedGeneration && embedStatus === "generated") {
     try {
       await consumeGrantIssueLimit(organizationId, videoId, req.ip ?? "unknown");
       analytics = issueAnalyticsGrant({ organizationId, videoId, embedId, generation: embedGeneration });
@@ -206,7 +219,6 @@ router.get("/videos/:videoId", async (req, res): Promise<void> => {
     } : {}),
   };
   if (video.status !== "ready") {
-    res.setHeader("Cache-Control", "private, no-store");
     res.json(GetPublicVideoResponse.parse(metadata));
     return;
   }
@@ -216,30 +228,31 @@ router.get("/videos/:videoId", async (req, res): Promise<void> => {
     return;
   }
   try {
-    const provider = process.env.NODE_ENV === "test"
-      ? videoProviders.resolve(account.providerKey)
-      : await resolveProvisioningProvider(account, space);
+    const provider = await resolveProvisioningProvider(account, space);
     const sources = await provider.getPlaybackSources({ id: providerTenantSpaceId }, { id: providerAssetId });
-    const sourceUrl = sources.hlsUrl;
-    if (!sourceUrl) throw new Error("Provider returned no maintained playback source");
-    const expiry = new Date(sources.expiresAt);
-    if (!Number.isFinite(expiry.getTime()) || expiry.getTime() <= Date.now()) {
-      throw new Error("Provider returned an expired playback source");
-    }
-    const normalizedSourceUrl = new URL(sourceUrl).toString();
-    if (!await provider.isPlaybackSourceTrusted(
+    const source = await validatePlaybackSource(
+      provider,
       { id: providerTenantSpaceId },
       { id: providerAssetId },
-      normalizedSourceUrl,
-    )) {
-      throw new Error("Provider returned an untrusted playback source");
+      sources,
+    );
+    const [stillEligible] = await db.select({ id: videosTable.id }).from(videosTable).where(and(
+      eq(videosTable.id, videoId),
+      eq(videosTable.status, "ready"),
+      ne(videosTable.visibility, "private"),
+      eq(videosTable.providerAccountId, account.id),
+      eq(videosTable.providerTenantSpaceId, providerTenantSpaceId),
+      eq(videosTable.providerAssetId, providerAssetId),
+    )).limit(1);
+    if (!stillEligible) {
+      res.status(404).json({ error: "Video not found" });
+      return;
     }
-    res.setHeader("Cache-Control", "private, no-store");
     res.json(GetPublicVideoResponse.parse({
       ...metadata,
       sourceUrl: `/api/public/videos/${videoId}/source`,
       sourceType: "hls",
-      sourceExpiresAt: expiry.toISOString(),
+      sourceExpiresAt: source.expiresAt.toISOString(),
       posterUrl: metadata.thumbnailUrl,
     }));
   } catch (error) {

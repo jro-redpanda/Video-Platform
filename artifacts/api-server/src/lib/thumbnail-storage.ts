@@ -78,7 +78,12 @@ export class ReplitThumbnailStorage implements ThumbnailStorage {
     if (!response.ok) throw new Error(`App Storage signing failed (${response.status})`);
     const payload = await response.json() as { signed_url?: unknown };
     if (typeof payload.signed_url !== "string") throw new Error("App Storage signing returned no URL");
-    return { uploadUrl: payload.signed_url, requiredHeaders: { "Content-Type": contentType } };
+    const uploadUrl = new URL(payload.signed_url);
+    if (uploadUrl.protocol !== "https:" || uploadUrl.username || uploadUrl.password
+      || uploadUrl.port || uploadUrl.hash) {
+      throw new Error("App Storage signing returned an unsafe URL");
+    }
+    return { uploadUrl: uploadUrl.toString(), requiredHeaders: { "Content-Type": contentType } };
   }
 
   async getMetadata(objectKey: string, generation?: string) {

@@ -20,6 +20,8 @@ export class Step7SmokeVideoProvider implements VideoProvider {
   lastConfiguredCallbackUrl: string | undefined;
   /** Test hook for route-level playback-origin rejection coverage. */
   playbackUrlOverride: string | undefined;
+  playbackExpiresAtOverride: string | undefined;
+  beforePlaybackSourcesReturn: (() => void | Promise<void>) | undefined;
 
   async createTenantSpace(input: { name: string }): Promise<TenantSpace> {
     const idempotencyKey = input.name;
@@ -72,7 +74,8 @@ export class Step7SmokeVideoProvider implements VideoProvider {
     this.assetStatuses.delete(_asset.id);
   }
   async getPlaybackSources(_space: TenantSpace, asset: Asset): Promise<PlaybackSources> {
-    const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    const expiresAt = this.playbackExpiresAtOverride ?? new Date(Date.now() + 10 * 60_000).toISOString();
+    await this.beforePlaybackSourcesReturn?.();
     return {
       hlsUrl: this.playbackUrlOverride ?? `https://playback.test.invalid/${stable(asset.id)}/master.m3u8?expires=${encodeURIComponent(expiresAt)}`,
       posterUrl: `https://playback.test.invalid/${stable(asset.id)}/poster.jpg?expires=${encodeURIComponent(expiresAt)}`,

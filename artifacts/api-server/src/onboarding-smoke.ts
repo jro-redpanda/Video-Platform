@@ -17,7 +17,12 @@ const {
 const { ProvisioningUnavailableError } = await import("./lib/tenant-provisioning");
 
 const marker = randomUUID();
-const emails = [`onboarding-a-${marker}@example.test`, `onboarding-b-${marker}@example.test`];
+const emails = [
+  `onboarding-a-${marker}@example.test`,
+  `onboarding-b-${marker}@example.test`,
+  `onboarding-c-${marker}@example.test`,
+  `onboarding-d-${marker}@example.test`,
+];
 const userIds: string[] = [];
 const organizationIds: string[] = [];
 const accountIds: string[] = [];
@@ -46,6 +51,50 @@ const request = (path: string, init: RequestInit = {}, cookie?: string) => fetch
 });
 
 try {
+  const { decryptProviderCredentials, encryptProviderCredentials } = await import("./lib/credential-encryption");
+  const credentialEnvelope = encryptProviderCredentials({
+    accountApiKey: `account-${marker}`,
+    readOnlyApiKey: `read-${marker}`,
+  });
+  assert.deepEqual(decryptProviderCredentials(credentialEnvelope), {
+    accountApiKey: `account-${marker}`,
+    readOnlyApiKey: `read-${marker}`,
+  });
+  const envelopeParts = credentialEnvelope.split(".");
+  const ciphertext = envelopeParts[3]!;
+  const tamperIndex = Math.floor(ciphertext.length / 2);
+  envelopeParts[3] = `${ciphertext.slice(0, tamperIndex)}${ciphertext[tamperIndex] === "A" ? "B" : "A"}${ciphertext.slice(tamperIndex + 1)}`;
+  assert.throws(
+    () => decryptProviderCredentials(envelopeParts.join(".")),
+    /authentication/,
+  );
+  assert.throws(() => decryptProviderCredentials("v1.A.A.A"), /Malformed/);
+  assert.throws(() => encryptProviderCredentials({}), /Invalid provider credential payload/);
+  assert.throws(() => encryptProviderCredentials({ empty: "" }), /Invalid provider credential payload/);
+  const nearLimitCredentials = {
+    a: "a".repeat(12_000),
+    b: "b".repeat(12_000),
+    c: "c".repeat(12_000),
+    d: "d".repeat(12_000),
+  };
+  assert.deepEqual(
+    decryptProviderCredentials(encryptProviderCredentials(nearLimitCredentials)),
+    nearLimitCredentials,
+  );
+  assert.throws(() => encryptProviderCredentials({
+    a: "a".repeat(12_250),
+    b: "b".repeat(12_250),
+    c: "c".repeat(12_250),
+    d: "d".repeat(12_250),
+  }), /too large/);
+  const originalSessionSecret = process.env.SESSION_SECRET!;
+  try {
+    process.env.SESSION_SECRET = `${originalSessionSecret}-rotation-check`;
+    assert.throws(() => decryptProviderCredentials(credentialEnvelope), /authentication/);
+  } finally {
+    process.env.SESSION_SECRET = originalSessionSecret;
+  }
+
   assert.equal((await request("/api/onboarding")).status, 401);
   assert.equal((await request("/api/onboarding/workspaces", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status, 401);
   assert.equal((await request("/api/onboarding/retry", { method: "POST" })).status, 401);
@@ -85,6 +134,14 @@ try {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ workspaceId: organization!.id }),
   }, second.cookie)).status, 403);
+  assert.equal((await request("/api/onboarding/retry", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workspaceId: organization!.id, unexpected: true }),
+  }, first.cookie)).status, 400);
+  assert.equal((await request("/api/onboarding/retry", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: "[]",
+  }, first.cookie)).status, 400);
   assert.equal((await request("/api/onboarding/retry", { method: "POST" }, first.cookie)).status, 202);
 
   const sent: Array<{ name: string; data: unknown; options: unknown }> = [];
@@ -99,6 +156,8 @@ try {
   let [queuedIntent] = await db.select().from(onboardingProvisioningIntentsTable)
     .where(eq(onboardingProvisioningIntentsTable.organizationId, organization!.id));
   assert.equal(queuedIntent?.attempts, 0, "publishing does not consume a provider attempt");
+  const firstDeliveryId = (sent[0]!.options as { id: string }).id;
+  assert.match(firstDeliveryId, new RegExp(`^${queuedIntent!.id}:`));
 
   await db.update(onboardingProvisioningIntentsTable).set({ state: "pending" })
     .where(eq(onboardingProvisioningIntentsTable.organizationId, organization!.id));
@@ -112,6 +171,8 @@ try {
   assert.equal(queuedIntent?.attempts, 0, "enqueue outages cannot exhaust provider attempts");
   assert.equal(sent.length, 1, "enqueue failures do not produce a retry storm");
   assert.equal((await dispatchPendingOnboardingIntents(fakeQueue as never)).dispatched, 1);
+  const secondDeliveryId = (sent[1]!.options as { id: string }).id;
+  assert.notEqual(secondDeliveryId, firstDeliveryId, "a later durable delivery uses a fresh queue identity");
 
   await db.update(onboardingProvisioningIntentsTable).set({
     state: "processing",
@@ -123,10 +184,30 @@ try {
     "a processing claim older than the queue execution horizon is redispatched",
   );
 
+  await db.update(onboardingProvisioningIntentsTable).set({
+    state: "pending",
+    attempts: 5,
+    retryable: true,
+    claimedAt: null,
+  }).where(eq(onboardingProvisioningIntentsTable.organizationId, organization!.id));
+  assert.equal((await dispatchPendingOnboardingIntents(fakeQueue as never)).dispatched, 0);
+  [queuedIntent] = await db.select().from(onboardingProvisioningIntentsTable)
+    .where(eq(onboardingProvisioningIntentsTable.organizationId, organization!.id));
+  assert.equal(queuedIntent?.state, "failed");
+  assert.equal(queuedIntent?.retryable, false, "exhausted durable work becomes terminal instead of remaining hidden");
+  await db.update(organizationsTable).set({ status: "provisioning" })
+    .where(eq(organizationsTable.id, organization!.id));
+  await db.update(onboardingProvisioningIntentsTable).set({
+    state: "queued",
+    attempts: 0,
+    retryable: true,
+    diagnosticCode: null,
+  }).where(eq(onboardingProvisioningIntentsTable.organizationId, organization!.id));
+
   const [account] = await db.insert(providerAccountsTable).values({
     providerKey: "step7-smoke", label: `Onboarding ${marker}`,
     encryptedCredentials: "test-only-not-a-production-credential",
-    maxZones: 4, zoneCountCached: 0, acceptingNewTenants: true,
+    maxZones: 8, zoneCountCached: 0, acceptingNewTenants: true,
   }).returning();
   accountIds.push(account!.id);
   const fakeProvider = new Step7SmokeVideoProvider();
@@ -144,6 +225,21 @@ try {
   assert.equal(activeBody.state, "active");
   assert.equal(activeBody.provisioning.state, "ready");
   assert.deepEqual(Object.keys(activeBody.workspace).sort(), ["id", "name", "slug", "status"]);
+  await db.update(providerTenantSpacesTable).set({ reconciliationRequired: true })
+    .where(eq(providerTenantSpacesTable.organizationId, organization!.id));
+  const inconsistentActive = await request("/api/onboarding", {}, first.cookie);
+  const inconsistentActiveBody = await inconsistentActive.json() as {
+    state: string;
+    provisioning: { state: string; retryable: boolean; message: string };
+  };
+  assert.equal(inconsistentActiveBody.state, "failed", "active status alone cannot produce a ready UI");
+  assert.deepEqual(inconsistentActiveBody.provisioning, {
+    state: "reconciliation_required",
+    retryable: false,
+    message: "Provisioning requires support review.",
+  });
+  await db.update(providerTenantSpacesTable).set({ reconciliationRequired: false })
+    .where(eq(providerTenantSpacesTable.organizationId, organization!.id));
   assert.equal((await request("/api/onboarding/retry", { method: "POST" }, first.cookie)).status, 409);
 
   const conflict = await request("/api/onboarding/workspaces", {
@@ -176,6 +272,43 @@ try {
   assert.equal(reconciliationIntent?.state, "reconciliation_required");
   assert.equal(reconciliationIntent?.retryable, false);
 
+  // A stale external-call claim is quarantined without dispatching another
+  // provider attempt. A fresh external claim remains active even if the outer
+  // processing timestamp is older.
+  await db.update(organizationsTable).set({ status: "provisioning" })
+    .where(eq(organizationsTable.id, organization!.id));
+  await db.update(onboardingProvisioningIntentsTable).set({
+    state: "processing",
+    attempts: 1,
+    retryable: true,
+    claimedAt: new Date(Date.now() - 26 * 60_000),
+  }).where(eq(onboardingProvisioningIntentsTable.organizationId, organization!.id));
+  const freshExternalClaim = randomUUID();
+  await db.update(providerTenantSpacesTable).set({
+    providerSpaceId: null,
+    state: "creating",
+    reconciliationRequired: false,
+    externalCallClaim: freshExternalClaim,
+    externalCallClaimedAt: new Date(),
+  }).where(eq(providerTenantSpacesTable.organizationId, organization!.id));
+  assert.equal((await dispatchPendingOnboardingIntents(fakeQueue as never)).dispatched, 0);
+  let [activeClaimIntent] = await db.select().from(onboardingProvisioningIntentsTable)
+    .where(eq(onboardingProvisioningIntentsTable.organizationId, organization!.id));
+  assert.equal(activeClaimIntent?.state, "processing");
+  await db.update(onboardingProvisioningIntentsTable).set({
+    claimedAt: new Date(Date.now() - 26 * 60_000),
+  }).where(eq(onboardingProvisioningIntentsTable.organizationId, organization!.id));
+  await db.update(providerTenantSpacesTable).set({
+    externalCallClaimedAt: new Date(Date.now() - 26 * 60_000),
+  }).where(eq(providerTenantSpacesTable.organizationId, organization!.id));
+  assert.equal((await dispatchPendingOnboardingIntents(fakeQueue as never)).dispatched, 0);
+  [activeClaimIntent] = await db.select().from(onboardingProvisioningIntentsTable)
+    .where(eq(onboardingProvisioningIntentsTable.organizationId, organization!.id));
+  assert.equal(activeClaimIntent?.state, "reconciliation_required");
+  const [ambiguousSpace] = await db.select().from(providerTenantSpacesTable)
+    .where(eq(providerTenantSpacesTable.organizationId, organization!.id));
+  assert.equal(ambiguousSpace?.reconciliationRequired, true);
+
   // A resolver failure occurs before an external call and is safely retryable.
   await db.update(organizationsTable).set({ status: "provisioning" }).where(eq(organizationsTable.id, organization!.id));
   await db.update(onboardingProvisioningIntentsTable).set({ state: "queued", retryable: true })
@@ -189,6 +322,94 @@ try {
     .where(eq(onboardingProvisioningIntentsTable.organizationId, organization!.id));
   assert.equal(failedIntent?.state, "unavailable");
   assert.equal(failedIntent?.retryable, true);
+
+  // Provisioning may not overwrite a concurrent suspension during the provider
+  // call, and the failure handler must preserve that administrative state.
+  const third = await signUp(2);
+  const thirdCreate = await request("/api/onboarding/workspaces", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "Suspension race", slug: `suspension-${marker}` }),
+  }, third.cookie);
+  assert.equal(thirdCreate.status, 202);
+  const [thirdMembership] = await db.select().from(membershipsTable)
+    .where(eq(membershipsTable.userId, third.user.id));
+  assert(thirdMembership);
+  organizationIds.push(thirdMembership.organizationId);
+  await db.update(onboardingProvisioningIntentsTable).set({ state: "queued" })
+    .where(eq(onboardingProvisioningIntentsTable.organizationId, thirdMembership.organizationId));
+  const suspensionProvider = new Step7SmokeVideoProvider();
+  const originalConfigureCallback = suspensionProvider.setEncodeCompletionCallback.bind(suspensionProvider);
+  suspensionProvider.setEncodeCompletionCallback = async (space, callbackUrl) => {
+    await originalConfigureCallback(space, callbackUrl);
+    await db.update(organizationsTable).set({ status: "suspended" })
+      .where(eq(organizationsTable.id, thirdMembership.organizationId));
+  };
+  await processOnboardingProvisioningJob(
+    thirdMembership.organizationId,
+    async () => suspensionProvider,
+  ).then(() => assert.fail("concurrent suspension was overwritten"), () => undefined);
+  const [suspendedOrganization] = await db.select().from(organizationsTable)
+    .where(eq(organizationsTable.id, thirdMembership.organizationId));
+  assert.equal(suspendedOrganization?.status, "suspended");
+  assert.equal((await request("/api/onboarding/retry", { method: "POST" }, third.cookie)).status, 409);
+
+  await db.delete(providerTenantSpacesTable)
+    .where(eq(providerTenantSpacesTable.organizationId, thirdMembership.organizationId));
+  await db.update(organizationsTable).set({ status: "provisioning" })
+    .where(eq(organizationsTable.id, thirdMembership.organizationId));
+  await db.update(onboardingProvisioningIntentsTable).set({
+    state: "queued",
+    attempts: 0,
+    retryable: true,
+    diagnosticCode: null,
+  }).where(eq(onboardingProvisioningIntentsTable.organizationId, thirdMembership.organizationId));
+  const ambiguousSuspensionProvider = new Step7SmokeVideoProvider();
+  ambiguousSuspensionProvider.setEncodeCompletionCallback = async () => {
+    await db.update(organizationsTable).set({ status: "suspended" })
+      .where(eq(organizationsTable.id, thirdMembership.organizationId));
+    throw new Error("test-only ambiguous callback outcome after suspension");
+  };
+  await processOnboardingProvisioningJob(
+    thirdMembership.organizationId,
+    async () => ambiguousSuspensionProvider,
+  ).then(() => assert.fail("ambiguous callback outcome succeeded"), () => undefined);
+  const [suspendedDuringReconciliation] = await db.select().from(organizationsTable)
+    .where(eq(organizationsTable.id, thirdMembership.organizationId));
+  assert.equal(suspendedDuringReconciliation?.status, "suspended");
+  const [reconciliationAfterSuspension] = await db.select().from(onboardingProvisioningIntentsTable)
+    .where(eq(onboardingProvisioningIntentsTable.organizationId, thirdMembership.organizationId));
+  assert.equal(reconciliationAfterSuspension?.state, "reconciliation_required");
+
+  // Owner retry and worker failure both acquire intent before organization, so
+  // this overlap completes without a database deadlock or a 500 response.
+  const fourth = await signUp(3);
+  const fourthCreate = await request("/api/onboarding/workspaces", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "Retry race", slug: `retry-race-${marker}` }),
+  }, fourth.cookie);
+  assert.equal(fourthCreate.status, 202);
+  const [fourthMembership] = await db.select().from(membershipsTable)
+    .where(eq(membershipsTable.userId, fourth.user.id));
+  assert(fourthMembership);
+  organizationIds.push(fourthMembership.organizationId);
+  await db.update(organizationsTable).set({ status: "failed" })
+    .where(eq(organizationsTable.id, fourthMembership.organizationId));
+  await db.update(onboardingProvisioningIntentsTable).set({
+    state: "failed",
+    attempts: 0,
+    retryable: true,
+  }).where(eq(onboardingProvisioningIntentsTable.organizationId, fourthMembership.organizationId));
+  const retryRequest = request("/api/onboarding/retry", { method: "POST" }, fourth.cookie);
+  const overlappingFailure = processOnboardingProvisioningJob(
+    fourthMembership.organizationId,
+    async () => {
+      throw new ProvisioningUnavailableError("test-only concurrent provider failure");
+    },
+  ).catch(() => undefined);
+  const [retryResponse] = await Promise.all([retryRequest, overlappingFailure]);
+  assert.equal(retryResponse.status, 202);
 } finally {
   server.close();
   if (organizationIds.length) {

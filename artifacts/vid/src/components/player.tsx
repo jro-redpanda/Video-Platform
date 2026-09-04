@@ -23,6 +23,9 @@ export interface PlayerProps {
   onEnded?: (event: any) => void;
   onTimeUpdate?: (event: any) => void;
   onError?: (event: any) => void;
+  actionLabel?: string;
+  onAction?: () => void;
+  actionDisabled?: boolean;
 }
 
 export function Player({
@@ -44,6 +47,9 @@ export function Player({
   onEnded,
   onTimeUpdate,
   onError,
+  actionLabel,
+  onAction,
+  actionDisabled,
 }: PlayerProps) {
   const playerRef = useRef<MediaPlayerElement>(null);
   const id = useId().replace(/:/g, '');
@@ -91,8 +97,18 @@ export function Player({
               <span className="text-xl font-bold">{logoInitials}</span>
             </div>
           )}
-          <h2 className="text-xl font-semibold mb-2">{title}</h2>
+          <h1 className="text-xl font-semibold mb-2">{title}</h1>
           <p className="text-sm opacity-80">{message || `Video is ${status}`}</p>
+          {actionLabel && onAction && (
+            <button
+              type="button"
+              onClick={onAction}
+              disabled={actionDisabled}
+              className="mt-4 rounded-md bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-60"
+            >
+              {actionLabel}
+            </button>
+          )}
         </div>
         {poster && (
           <div className="absolute inset-0 z-0 opacity-20">

@@ -9,7 +9,13 @@ import { cleanupThumbnailObjects } from "./thumbnail-cleanup";
 import { reconcileActiveBilling } from "./billing-reconciliation";
 import type { ThumbnailStorage } from "./thumbnail-storage";
 import { and, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
-import { embedGenerationOutboxTable, onboardingProvisioningIntentsTable, organizationsTable, videosTable } from "@workspace/db";
+import {
+  embedGenerationOutboxTable,
+  onboardingProvisioningIntentsTable,
+  organizationsTable,
+  providerTenantSpacesTable,
+  videosTable,
+} from "@workspace/db";
 import { auditJob, writeAuditEvent } from "./audit";
 import { randomUUID } from "node:crypto";
 import { processAnalyticsDirtyDays, purgeAnalyticsData } from "./analytics-rollup";
@@ -50,6 +56,7 @@ type CustomDomainVerificationJob = { domainId: string; dispatchClaim: string };
 let boss: PgBoss | undefined;
 let bossStart: Promise<PgBoss> | undefined;
 let customDomainVerificationEnqueuer: ((domainId: string) => Promise<string | undefined>) | undefined;
+let embedDispatchWakeupForTest: (() => Promise<void>) | undefined;
 
 /** Test seam for route lifecycle smokes; production always uses the durable queue. */
 export function setCustomDomainVerificationEnqueuerForTest(
@@ -57,6 +64,11 @@ export function setCustomDomainVerificationEnqueuerForTest(
 ) {
   if (process.env.NODE_ENV !== "test") throw new Error("Custom-domain queue seam is test-only");
   customDomainVerificationEnqueuer = enqueuer;
+}
+
+export function setEmbedDispatchWakeupForTest(wakeup?: () => Promise<void>) {
+  if (process.env.NODE_ENV !== "test") throw new Error("Embed dispatch wake-up seam is test-only");
+  embedDispatchWakeupForTest = wakeup;
 }
 
 export async function startJobs(options: {
@@ -401,9 +413,10 @@ export async function enqueueOnboardingDispatchWakeup() {
   await instance.send(ONBOARDING_DISPATCH_QUEUE, {}, { singletonKey: "onboarding-outbox-wakeup" });
 }
 
-/** Claims and publishes persisted onboarding intents with deterministic job IDs. */
+/** Claims and publishes persisted onboarding intents with one durable ID per delivery claim. */
 export async function dispatchPendingOnboardingIntents(instance?: PgBoss) {
   const queue = instance ?? boss ?? await startJobs();
+  await repairStaleOnboardingIntents();
   let dispatched = 0;
   for (let index = 0; index < 100; index++) {
     const candidate = await withWorkerDb("onboarding", async (tx) => {
@@ -418,10 +431,6 @@ export async function dispatchPendingOnboardingIntents(instance?: PgBoss) {
         and(
           eq(onboardingProvisioningIntentsTable.state, "queued"),
           lt(onboardingProvisioningIntentsTable.dispatchedAt, staleWorkerBefore),
-        ),
-        and(
-          eq(onboardingProvisioningIntentsTable.state, "processing"),
-          lt(onboardingProvisioningIntentsTable.claimedAt, staleWorkerBefore),
         ),
       );
       const [row] = await tx.select({
@@ -440,7 +449,12 @@ export async function dispatchPendingOnboardingIntents(instance?: PgBoss) {
     });
     if (!candidate) break;
     try {
-      await sendOnboardingProvisioningJob(queue, candidate.organizationId, candidate.id);
+      await sendOnboardingProvisioningJob(
+        queue,
+        candidate.organizationId,
+        candidate.id,
+        candidate.claim,
+      );
       await withWorkerDb("onboarding", async (tx) => {
         await tx.update(onboardingProvisioningIntentsTable).set({
           state: "queued", dispatchedAt: new Date(), dispatchClaim: null,
@@ -468,8 +482,13 @@ export async function dispatchPendingOnboardingIntents(instance?: PgBoss) {
   return { dispatched };
 }
 
-async function sendOnboardingProvisioningJob(queue: PgBoss, organizationId: string, intentId: string) {
-  const jobId = `${intentId}:${randomUUID()}`;
+async function sendOnboardingProvisioningJob(
+  queue: PgBoss,
+  organizationId: string,
+  intentId: string,
+  deliveryClaim: string,
+) {
+  const jobId = `${intentId}:${deliveryClaim}`;
   const id = await queue.send(
     TENANT_PROVISION_QUEUE,
     { organizationId },
@@ -477,6 +496,154 @@ async function sendOnboardingProvisioningJob(queue: PgBoss, organizationId: stri
   );
   if (!id) throw new Error("Job queue rejected onboarding provisioning");
   return id;
+}
+
+async function repairStaleOnboardingIntents() {
+  for (let index = 0; index < 100; index++) {
+    const repaired = await withWorkerDb("onboarding", async (tx) => {
+      const staleBefore = new Date(Date.now() - 25 * 60_000);
+      const [row] = await tx.select({
+        id: onboardingProvisioningIntentsTable.id,
+        organizationId: onboardingProvisioningIntentsTable.organizationId,
+        state: onboardingProvisioningIntentsTable.state,
+        attempts: onboardingProvisioningIntentsTable.attempts,
+        claimedAt: onboardingProvisioningIntentsTable.claimedAt,
+        spaceId: providerTenantSpacesTable.id,
+        externalCallClaim: providerTenantSpacesTable.externalCallClaim,
+        externalCallClaimedAt: providerTenantSpacesTable.externalCallClaimedAt,
+      }).from(onboardingProvisioningIntentsTable)
+        .leftJoin(
+          providerTenantSpacesTable,
+          eq(
+            providerTenantSpacesTable.organizationId,
+            onboardingProvisioningIntentsTable.organizationId,
+          ),
+        )
+        .where(or(
+          and(
+            eq(onboardingProvisioningIntentsTable.state, "processing"),
+            lt(onboardingProvisioningIntentsTable.claimedAt, staleBefore),
+          ),
+          and(
+            inArray(onboardingProvisioningIntentsTable.state, [
+              "pending", "dispatching", "queued", "unavailable", "failed",
+            ]),
+            gte(onboardingProvisioningIntentsTable.attempts, 5),
+            eq(onboardingProvisioningIntentsTable.retryable, true),
+          ),
+        ))
+        .orderBy(onboardingProvisioningIntentsTable.createdAt)
+        .limit(1);
+      if (!row) return false;
+
+      if (
+        row.state === "processing"
+        && row.externalCallClaim
+        && row.externalCallClaimedAt
+        && row.externalCallClaimedAt > staleBefore
+      ) {
+        await tx.update(onboardingProvisioningIntentsTable).set({
+          claimedAt: row.externalCallClaimedAt,
+        }).where(and(
+          eq(onboardingProvisioningIntentsTable.id, row.id),
+          eq(onboardingProvisioningIntentsTable.state, "processing"),
+          lt(onboardingProvisioningIntentsTable.claimedAt, staleBefore),
+        ));
+        return true;
+      }
+
+      if (row.state === "processing" && row.externalCallClaim) {
+        const [changed] = await tx.update(onboardingProvisioningIntentsTable).set({
+          state: "reconciliation_required",
+          retryable: false,
+          diagnosticCode: "interrupted_external_call_claim",
+        }).where(and(
+          eq(onboardingProvisioningIntentsTable.id, row.id),
+          eq(onboardingProvisioningIntentsTable.state, "processing"),
+        )).returning({ id: onboardingProvisioningIntentsTable.id });
+        if (!changed) return true;
+        await tx.update(organizationsTable).set({ status: "failed" }).where(and(
+          eq(organizationsTable.id, row.organizationId),
+          eq(organizationsTable.status, "provisioning"),
+        ));
+        if (row.spaceId) {
+          await tx.update(providerTenantSpacesTable).set({
+            reconciliationRequired: true,
+          }).where(and(
+            eq(providerTenantSpacesTable.id, row.spaceId),
+            eq(providerTenantSpacesTable.externalCallClaim, row.externalCallClaim),
+          ));
+        }
+        await writeAuditEvent(tx, {
+          organizationId: row.organizationId,
+          actor: auditJob(),
+          action: "provider.account_provisioning.reconciliation_required",
+          category: "provider",
+          subject: {
+            type: "provider_tenant_space",
+            id: row.spaceId ?? row.id,
+            label: "reconciliation_required",
+          },
+          beforeState: { state: "processing" },
+          afterState: { state: "reconciliation_required" },
+          metadata: { code: "interrupted_external_call_claim" },
+        });
+        return true;
+      }
+
+      if (row.attempts >= 5) {
+        const [changed] = await tx.update(onboardingProvisioningIntentsTable).set({
+          state: "failed",
+          retryable: false,
+          dispatchClaim: null,
+          diagnosticCode: "provisioning_attempts_exhausted",
+        }).where(and(
+          eq(onboardingProvisioningIntentsTable.id, row.id),
+          inArray(onboardingProvisioningIntentsTable.state, [
+            "pending", "dispatching", "queued", "processing", "unavailable", "failed",
+          ]),
+          eq(onboardingProvisioningIntentsTable.retryable, true),
+        )).returning({ id: onboardingProvisioningIntentsTable.id });
+        if (!changed) return true;
+        const [failedOrganization] = await tx.update(organizationsTable)
+          .set({ status: "failed" })
+          .where(and(
+            eq(organizationsTable.id, row.organizationId),
+            eq(organizationsTable.status, "provisioning"),
+          ))
+          .returning({ name: organizationsTable.name });
+        if (failedOrganization) {
+          await writeAuditEvent(tx, {
+            organizationId: row.organizationId,
+            actor: auditJob(),
+            action: "workspace.onboarding_failed",
+            category: "workspace",
+            subject: {
+              type: "organization",
+              id: row.organizationId,
+              label: failedOrganization.name,
+            },
+            beforeState: { status: "provisioning" },
+            afterState: { status: "failed", retryable: false },
+            metadata: { code: "provisioning_attempts_exhausted" },
+          });
+        }
+        return true;
+      }
+
+      await tx.update(onboardingProvisioningIntentsTable).set({
+        state: "pending",
+        dispatchClaim: null,
+        claimedAt: null,
+        diagnosticCode: "interrupted_before_external_call",
+      }).where(and(
+        eq(onboardingProvisioningIntentsTable.id, row.id),
+        eq(onboardingProvisioningIntentsTable.state, "processing"),
+      ));
+      return true;
+    });
+    if (!repaired) break;
+  }
 }
 
 export async function processOnboardingProvisioningJob(
@@ -518,10 +685,12 @@ export async function processOnboardingProvisioningJob(
         retryable,
         diagnosticCode: unavailable ? "provider_unavailable" : "provisioning_failed",
       }).where(eq(onboardingProvisioningIntentsTable.id, intent.id));
-      await tx.update(organizationsTable).set({ status: "failed" })
-        .where(eq(organizationsTable.id, organizationId));
-      const [organization] = await tx.select({ name: organizationsTable.name }).from(organizationsTable)
-        .where(eq(organizationsTable.id, organizationId)).limit(1);
+      const [organization] = await tx.update(organizationsTable).set({ status: "failed" })
+        .where(and(
+          eq(organizationsTable.id, organizationId),
+          eq(organizationsTable.status, "provisioning"),
+        ))
+        .returning({ name: organizationsTable.name });
       if (organization) await writeAuditEvent(tx, {
         organizationId, actor: auditJob(), action: "workspace.onboarding_failed", category: "workspace",
         subject: { type: "organization", id: organizationId, label: organization.name },
@@ -542,6 +711,7 @@ export async function enqueueEmbedGeneration(videoId: string, outboxId: string) 
 
 /** Wakes the dispatcher after commit. Correctness comes from its scheduled scan. */
 export async function enqueueEmbedDispatchWakeup() {
+  if (embedDispatchWakeupForTest) return embedDispatchWakeupForTest();
   const instance = boss ?? await startJobs();
   await instance.send(EMBED_DISPATCH_QUEUE, {}, { singletonKey: "outbox-wakeup" });
 }

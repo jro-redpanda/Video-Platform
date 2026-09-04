@@ -34,6 +34,7 @@ class FakeStorage implements ThumbnailStorage {
   releaseMetadata: (() => void) | undefined;
   mutateAfterRead = false;
   failAfterCopy = false;
+  failNextRead = false;
   async createSignedPutUrl(objectKey: string, contentType: string) {
     this.signedKey = objectKey;
     return {
@@ -86,6 +87,10 @@ class FakeStorage implements ThumbnailStorage {
     return { contentType, size: promoted.bytes.length, generation: promoted.generation };
   }
   createReadStream(objectKey: string, generation?: string) {
+    if (this.failNextRead) {
+      this.failNextRead = false;
+      return Readable.from((async function* () { throw new Error("fake stream failure"); })());
+    }
     const object = this.objects.get(objectKey);
     if (!object) return Readable.from([]);
     if (generation && generation !== (object.generation ?? "1")) {
@@ -289,6 +294,10 @@ for (const [contentType, bytes] of Object.entries(signatures)) {
   const [candidateCleanup] = await db.select().from(objectCleanupOutboxTable)
     .where(eq(objectCleanupOutboxTable.objectKey, created.key)).limit(1);
   assert(candidateCleanup, "promoted candidate is durably enqueued");
+    assert(
+      candidateCleanup.nextAttemptAt.getTime() >= new Date(created.json.expiresAt).getTime(),
+      "candidate cleanup cannot run while its signed upload capability is valid",
+    );
   if (previousFinalKey) {
     const [cleanup] = await db.select().from(objectCleanupOutboxTable)
       .where(eq(objectCleanupOutboxTable.objectKey, previousFinalKey)).limit(1);
@@ -357,14 +366,34 @@ await expectWorkerDenied(`update videos set title=title where id='${videoId}'`);
 let served = await api(latestUrl.replace(/^\/api/, ""));
 assert.equal(served.status, 200);
 assert.equal(served.headers.get("x-content-type-options"), "nosniff");
-assert.match(served.headers.get("cache-control") ?? "", /max-age=31536000, immutable/);
+assert.equal(served.headers.get("cache-control"), "private, no-store");
 assert.equal(await served.text(), signatures["image/webp"].toString());
+const [activeThumbnail] = await db.select({ objectKey: videosTable.thumbnailObjectKey })
+  .from(videosTable).where(eq(videosTable.id, videoId)).limit(1);
+assert(activeThumbnail?.objectKey);
+await db.insert(objectCleanupOutboxTable).values({
+  organizationId,
+  objectKey: activeThumbnail.objectKey,
+  nextAttemptAt: new Date(0),
+});
+const activeCleanupRun = await cleanupThumbnailObjects(storage);
+assert.equal(activeCleanupRun.completed >= 0, true);
+assert.equal(storage.objects.has(activeThumbnail.objectKey), true, "cleanup never deletes a currently referenced thumbnail");
+const [deferredActiveCleanup] = await db.select().from(objectCleanupOutboxTable)
+  .where(eq(objectCleanupOutboxTable.objectKey, activeThumbnail.objectKey)).limit(1);
+assert.equal(deferredActiveCleanup?.attempts, 0, "reference deferrals do not consume cleanup retry budget");
+assert.equal(deferredActiveCleanup?.completedAt, null);
+assert.match(deferredActiveCleanup?.lastError ?? "", /still referenced/);
 assert.equal((await api(`/videos/${videoId}/thumbnail?v=${randomUUID()}`)).status, 404);
 const versionQuery = new URL(latestUrl, root).search;
 const publicServed = await fetch(`${root}/api/public/videos/${videoId}/thumbnail${versionQuery}`);
 assert.equal(publicServed.status, 200);
-assert.match(publicServed.headers.get("cache-control") ?? "", /public, max-age=31536000, immutable/);
+assert.equal(publicServed.headers.get("cache-control"), "public, max-age=0, must-revalidate");
 assert.equal((await fetch(`${root}/api/public/videos/${privateVideoId}/thumbnail?v=${randomUUID()}`)).status, 404);
+storage.failNextRead = true;
+const failedStream = await api(latestUrl.replace(/^\/api/, ""));
+assert.equal(failedStream.status, 503, "a stream failure before bytes are sent is an explicit service error");
+assert.equal(failedStream.headers.get("cache-control"), "private, no-store");
 assert.equal((await intent(foreignVideoId)).response.status, 404);
 assert.equal((await api(`/videos/${videoId}/thumbnail-upload-intent`, "POST", {
   contentType: "image/jpeg", sizeBytes: 5,
@@ -514,6 +543,20 @@ const [stillTerminal] = await db.select().from(objectCleanupOutboxTable)
   .where(eq(objectCleanupOutboxTable.objectKey, terminalKey)).limit(1);
 assert.equal(stillTerminal?.attempts, MAX_THUMBNAIL_CLEANUP_ATTEMPTS);
 assert.equal(storage.deleteAttempts.get(terminalKey), callsAtQuarantine, "quarantined cleanup is never claimed again");
+
+const unsafeKey = `thumbnail-finals/${foreignOrganizationId}/${videoId}/${randomUUID()}`;
+storage.objects.set(unsafeKey, { bytes: signatures["image/jpeg"], contentType: "image/jpeg" });
+await db.insert(objectCleanupOutboxTable).values({
+  organizationId,
+  objectKey: unsafeKey,
+  nextAttemptAt: new Date(0),
+});
+const unsafeRun = await cleanupThumbnailObjects(storage);
+assert.equal(unsafeRun.quarantined, 1);
+const [unsafeCleanup] = await db.select().from(objectCleanupOutboxTable)
+  .where(eq(objectCleanupOutboxTable.objectKey, unsafeKey)).limit(1);
+assert(unsafeCleanup?.quarantinedAt, "cross-tenant cleanup keys are quarantined");
+assert.equal(storage.objects.has(unsafeKey), true, "unsafe cleanup keys never reach object storage");
 
 console.log("Step 15 thumbnail smoke passed");
 await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

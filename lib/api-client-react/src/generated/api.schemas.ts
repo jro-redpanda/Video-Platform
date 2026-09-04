@@ -564,6 +564,14 @@ export interface VideoUploadInput {
   folderId?: string | null;
 }
 
+export interface UploadSessionReference {
+  /**
+     * @minLength 16
+     * @maxLength 128
+     */
+  idempotencyKey: string;
+}
+
 export type ThumbnailUploadIntentInputContentType = typeof ThumbnailUploadIntentInputContentType[keyof typeof ThumbnailUploadIntentInputContentType];
 
 

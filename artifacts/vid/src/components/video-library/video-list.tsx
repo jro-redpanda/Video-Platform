@@ -9,7 +9,6 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Play, MoreHorizontal, Trash2, Video as VideoIcon, FolderInput } from "lucide-react"
 import { formatDate, formatDuration } from "@/lib/utils"
 import type { Video } from "@workspace/api-client-react"
-import { UploadVideoDialog } from "./upload-video-dialog"
 
 function getStatusVariant(status: string) {
   if (status === 'ready') return 'default'
@@ -31,6 +30,7 @@ interface VideoListProps {
   selectedIds?: Set<string>;
   onToggleSelection?: (id: string) => void;
   onSelectAll?: (ids: string[]) => void;
+  maxSelection?: number;
 }
 
 export function VideoList({
@@ -46,17 +46,19 @@ export function VideoList({
   folderId,
   selectedIds = new Set(),
   onToggleSelection,
-  onSelectAll
+  onSelectAll,
+  maxSelection = 50,
 }: VideoListProps) {
   const isSelectable = canUpdate || canDelete;
   const allLoadedIds = allVideos.map(v => v.id);
-  const allSelected = allLoadedIds.length > 0 && allLoadedIds.every(id => selectedIds.has(id));
-  const someSelected = allLoadedIds.some(id => selectedIds.has(id));
+  const selectableLoadedIds = allLoadedIds.slice(0, maxSelection);
+  const allSelected = selectableLoadedIds.length > 0 && selectableLoadedIds.every(id => selectedIds.has(id));
+  const someSelected = selectableLoadedIds.some(id => selectedIds.has(id));
 
   const handleSelectAll = (checked: boolean) => {
     if (!onSelectAll) return;
     if (checked) {
-      onSelectAll(allLoadedIds);
+      onSelectAll(selectableLoadedIds);
     } else {
       onSelectAll([]);
     }
@@ -74,7 +76,7 @@ export function VideoList({
                   <Checkbox
                     checked={allSelected ? true : someSelected ? "indeterminate" : false}
                     onCheckedChange={handleSelectAll}
-                    aria-label="Select all videos"
+                    aria-label={`Select up to ${maxSelection} loaded videos`}
                   />
                 </TableHead>
               )}
@@ -119,6 +121,7 @@ export function VideoList({
                       <Checkbox
                         checked={isSelected}
                         onCheckedChange={() => onToggleSelection?.(video.id)}
+                        disabled={!isSelected && selectedIds.size >= maxSelection}
                         aria-label={`Select ${video.title}`}
                       />
                     </TableCell>
@@ -206,9 +209,10 @@ export function VideoList({
               id="select-all-mobile"
               checked={allSelected ? true : someSelected ? "indeterminate" : false}
               onCheckedChange={handleSelectAll}
+              aria-label={`Select up to ${maxSelection} loaded videos`}
             />
             <label htmlFor="select-all-mobile" className="text-sm font-medium cursor-pointer">
-              Select All
+              Select up to {maxSelection}
             </label>
           </div>
         )}
@@ -239,6 +243,7 @@ export function VideoList({
                     <Checkbox
                       checked={isSelected}
                       onCheckedChange={() => onToggleSelection?.(video.id)}
+                      disabled={!isSelected && selectedIds.size >= maxSelection}
                       aria-label={`Select ${video.title}`}
                     />
                   </div>
@@ -310,11 +315,6 @@ export function VideoList({
             <p className="text-muted-foreground mt-2 max-w-sm mx-auto px-4">
               {hasActiveFilters ? "Try adjusting your filters or search terms to find what you're looking for." : "Upload your first video to get started with your library."}
             </p>
-            {!hasActiveFilters && canCreate && (
-              <div className="mt-8 flex justify-center">
-                <UploadVideoDialog onSuccess={onUploadSuccess} folderId={folderId} />
-              </div>
-            )}
           </div>
       )}
     </>

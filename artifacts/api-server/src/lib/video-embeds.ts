@@ -75,7 +75,16 @@ export function trustedRequestOrigin(req: Request) {
   if (configured) {
     const url = new URL(configured);
     if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("PUBLIC_APP_ORIGIN must use HTTP or HTTPS");
+    if (url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+      throw new Error("PUBLIC_APP_ORIGIN must be an origin without credentials, path, query, or fragment");
+    }
+    if (process.env.NODE_ENV === "production" && url.protocol !== "https:") {
+      throw new Error("PUBLIC_APP_ORIGIN must use HTTPS in production");
+    }
     return url.origin;
+  }
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("PUBLIC_APP_ORIGIN is required in production");
   }
   const host = req.get("host");
   if (!host || !/^[a-z0-9.[\]:-]+$/i.test(host)) throw new Error("A valid request host is required");
@@ -88,7 +97,6 @@ export function trustedRequestOrigin(req: Request) {
     return `${req.protocol}://${host}`;
   }
   if (allowedHosts.length && !allowedHosts.includes(normalizedHost)) throw new Error("Request host is not allowlisted");
-  if (process.env.NODE_ENV === "production" && !allowedHosts.length) throw new Error("A trusted public origin is not configured");
   return `${req.protocol}://${host}`;
 }
 
@@ -99,7 +107,7 @@ export function serializeEmbed(
 ) {
   const embedUrl = new URL(embed.embedPath, origin).toString();
   const title = `${currentMetadata.title} video player`;
-  const embedCode = `<div style="position:relative;padding-top:56.25%;overflow:hidden"><iframe src="${escapeAttribute(embedUrl)}" title="${escapeAttribute(title)}" loading="lazy" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen style="position:absolute;inset:0;width:100%;height:100%;border:0"></iframe></div>`;
+  const embedCode = `<div style="position:relative;padding-top:56.25%;overflow:hidden"><iframe src="${escapeAttribute(embedUrl)}" title="${escapeAttribute(title)}" loading="lazy" referrerpolicy="no-referrer" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen style="position:absolute;inset:0;width:100%;height:100%;border:0"></iframe></div>`;
   return {
     embedUrl,
     embedPath: embed.embedPath,

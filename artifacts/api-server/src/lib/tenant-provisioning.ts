@@ -8,7 +8,7 @@ import {
   TenantSpaceCreationRejectedError,
   type VideoProvider,
 } from "@workspace/providers";
-import { and, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import {
   resolveProviderEncodeCallbackUrl,
   type ProviderEncodeCallbackUrlResolver,
@@ -198,24 +198,66 @@ export async function provisionTenantOrganization(
   if (!space || space.state !== "created" || !space.providerSpaceId) throw new Error("Provider tenant space was not created");
 
   await withWorkerDb("onboarding", async (tx) => {
+    const [eligibleIntent] = await tx.select({ id: onboardingProvisioningIntentsTable.id })
+      .from(onboardingProvisioningIntentsTable)
+      .where(and(
+        eq(onboardingProvisioningIntentsTable.organizationId, organizationId),
+        eq(onboardingProvisioningIntentsTable.state, "processing"),
+      ))
+      .for("update")
+      .limit(1);
+    if (!eligibleIntent) throw new Error("Provisioning intent is no longer eligible for completion");
+    const [eligibleOrganization] = await tx.select({ id: organizationsTable.id })
+      .from(organizationsTable)
+      .where(and(
+        eq(organizationsTable.id, organizationId),
+        eq(organizationsTable.status, "provisioning"),
+      ))
+      .for("update")
+      .limit(1);
+    if (!eligibleOrganization) throw new Error("Workspace is no longer eligible for activation");
+    const [readySpace] = await tx.select({ id: providerTenantSpacesTable.id })
+      .from(providerTenantSpacesTable)
+      .where(and(
+        eq(providerTenantSpacesTable.id, space.id),
+        eq(providerTenantSpacesTable.organizationId, organizationId),
+        eq(providerTenantSpacesTable.state, "created"),
+        isNotNull(providerTenantSpacesTable.providerSpaceId),
+        isNull(providerTenantSpacesTable.externalCallClaim),
+        eq(providerTenantSpacesTable.reconciliationRequired, false),
+      ))
+      .for("update")
+      .limit(1);
+    if (!readySpace) throw new Error("Provider tenant space is not ready for activation");
     await seedWorkspaceDefaults(tx, organizationId, organization.name);
-    await tx.update(organizationsTable).set({ status: "active" }).where(eq(organizationsTable.id, organizationId));
-    await tx.update(onboardingProvisioningIntentsTable).set({
+    const [activated] = await tx.update(organizationsTable).set({ status: "active" }).where(and(
+      eq(organizationsTable.id, organizationId),
+      eq(organizationsTable.status, "provisioning"),
+    )).returning({ id: organizationsTable.id });
+    if (!activated) throw new Error("Workspace activation changed concurrently");
+    const [completed] = await tx.update(onboardingProvisioningIntentsTable).set({
       state: "completed", retryable: false, completedAt: new Date(), diagnosticCode: null,
-    }).where(eq(onboardingProvisioningIntentsTable.organizationId, organizationId));
+    }).where(and(
+      eq(onboardingProvisioningIntentsTable.organizationId, organizationId),
+      eq(onboardingProvisioningIntentsTable.state, "processing"),
+    )).returning({ id: onboardingProvisioningIntentsTable.id });
+    if (!completed) throw new Error("Provisioning intent completion changed concurrently");
   });
   return { organizationId, status: "active" as const, providerSpaceId: space.providerSpaceId };
 }
 
 async function markReconciliationRequired(organizationId: string, tenantSpaceId: string, code: string) {
   await withWorkerDb("onboarding", async (tx) => {
-    await tx.update(providerTenantSpacesTable).set({ reconciliationRequired: true })
-      .where(eq(providerTenantSpacesTable.id, tenantSpaceId));
-    await tx.update(organizationsTable).set({ status: "failed" })
-      .where(eq(organizationsTable.id, organizationId));
     await tx.update(onboardingProvisioningIntentsTable).set({
       state: "reconciliation_required", retryable: false, diagnosticCode: code,
     }).where(eq(onboardingProvisioningIntentsTable.organizationId, organizationId));
+    await tx.update(organizationsTable).set({ status: "failed" })
+      .where(and(
+        eq(organizationsTable.id, organizationId),
+        eq(organizationsTable.status, "provisioning"),
+      ));
+    await tx.update(providerTenantSpacesTable).set({ reconciliationRequired: true })
+      .where(eq(providerTenantSpacesTable.id, tenantSpaceId));
     await writeAuditEvent(tx, {
       organizationId, actor: auditJob(), action: "provider.account_provisioning.reconciliation_required", category: "provider",
       subject: { type: "provider_tenant_space", id: tenantSpaceId, label: "reconciliation_required" },

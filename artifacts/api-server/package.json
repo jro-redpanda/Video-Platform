@@ -13,6 +13,7 @@
     "upload:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/upload-step9-smoke.mjs",
     "webhook:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/webhook-step10-smoke.mjs",
     "embed:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/embed-step11-smoke.mjs",
+    "playback-security:smoke": "NODE_ENV=test node --experimental-strip-types ./src/playback-source-security-smoke.ts",
     "library:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/video-library-step12-smoke.mjs",
     "folders:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/folders-step13-smoke.mjs",
     "bulk-video:smoke": "NODE_ENV=test pnpm run build && NODE_ENV=test node ./dist/bulk-video-step14-smoke.mjs",

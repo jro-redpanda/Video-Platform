@@ -6,7 +6,7 @@ import {
 } from "@workspace/db";
 import type { VideoProvider } from "@workspace/providers";
 import { randomUUID } from "node:crypto";
-import { and, eq, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { resolveProvisioningProvider, type ProvisioningProviderResolver } from "./provider-registry";
 import { withWorkerDb } from "./worker-db";
 
@@ -24,6 +24,19 @@ export async function cleanupExpiredUploads(
   resolveProvider: ProvisioningProviderResolver = resolveProvisioningProvider,
   now = new Date(),
 ): Promise<UploadCleanupResult> {
+  const staleAssetClaims = await withWorkerDb("upload_expiry", (tx) =>
+    tx.update(videosTable).set({
+      status: "error",
+      reconciliationRequired: "provider asset creation outcome unknown",
+      initializationRetryable: false,
+      uploadFailureDetail: "Upload initialization requires provider reconciliation.",
+    }).where(and(
+      inArray(videosTable.status, ["created", "error"]),
+      isNotNull(videosTable.assetCreationClaim),
+      lt(videosTable.assetCreationClaimedAt, new Date(now.getTime() - 15 * 60_000)),
+      isNull(videosTable.quotaReleasedAt),
+      isNull(videosTable.reconciliationRequired),
+    )).returning({ id: videosTable.id }));
   await withWorkerDb("upload_expiry", (tx) =>
     tx.update(videosTable).set({
       status: "error",
@@ -47,7 +60,11 @@ export async function cleanupExpiredUploads(
       isNull(videosTable.assetCreationClaim),
       isNull(videosTable.deletionClaim),
     )));
-  const result: UploadCleanupResult = { examined: expired.length, released: 0, reconciliationRequired: 0 };
+  const result: UploadCleanupResult = {
+    examined: expired.length + staleAssetClaims.length,
+    released: 0,
+    reconciliationRequired: staleAssetClaims.length,
+  };
 
   for (const video of expired) {
     // Claim before the provider side effect. Upload completion requires the

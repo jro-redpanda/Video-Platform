@@ -121,6 +121,39 @@ export const videosTable = pgTable("videos", {
   )`),
 ]);
 
+/** Short-lived frozen list projections backing mutation-stable library cursors. */
+export const videoLibrarySnapshotsTable = pgTable("video_library_snapshots", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  organizationId: uuid("organization_id").notNull()
+    .references(() => organizationsTable.id, { onDelete: "cascade" }),
+  scopeHash: text("scope_hash").notNull(),
+  total: integer("total").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("video_library_snapshots_id_org_idx").on(table.id, table.organizationId),
+  index("video_library_snapshots_org_expiry_idx").on(table.organizationId, table.expiresAt),
+  check("video_library_snapshots_total_check", sql`${table.total} >= 0`),
+  check("video_library_snapshots_expiry_check", sql`${table.expiresAt} > ${table.createdAt}`),
+]);
+
+export const videoLibrarySnapshotItemsTable = pgTable("video_library_snapshot_items", {
+  snapshotId: uuid("snapshot_id").notNull(),
+  organizationId: uuid("organization_id").notNull(),
+  position: integer("position").notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+}, (table) => [
+  primaryKey({ name: "video_library_snapshot_items_pk", columns: [table.snapshotId, table.position] }),
+  foreignKey({
+    name: "video_library_snapshot_items_snapshot_org_fk",
+    columns: [table.snapshotId, table.organizationId],
+    foreignColumns: [videoLibrarySnapshotsTable.id, videoLibrarySnapshotsTable.organizationId],
+  }).onDelete("cascade"),
+  index("video_library_snapshot_items_org_snapshot_idx")
+    .on(table.organizationId, table.snapshotId, table.position),
+  check("video_library_snapshot_items_position_check", sql`${table.position} >= 0`),
+]);
+
 /** Private durable ledger for master archive/restore work. Never project snapshots or storage keys. */
 export const masterStorageOperationStateEnum = pgEnum("master_storage_operation_state", [
   "pending", "dispatching", "queued", "processing", "completed", "failed", "reconciliation_required", "cancelled",

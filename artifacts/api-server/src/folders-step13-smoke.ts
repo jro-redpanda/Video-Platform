@@ -117,6 +117,22 @@ try {
   const children = await request(owner.cookie, `/folders?parentId=${rootFolder.id}`);
   assert.equal(children.response.status, 200);
   assert.equal((children.json as unknown as Array<{ id: string }>)[0]?.id, child.id);
+  const scaleFolderIds = Array.from({ length: 120 }, () => randomUUID());
+  await db.insert(foldersTable).values(scaleFolderIds.map((id, index) => ({
+    id, organizationId, parentId: rootFolder.id, name: `Scale ${String(index).padStart(3, "0")}`,
+  })));
+  await db.insert(videosTable).values(scaleFolderIds.map((folderId, index) => ({
+    organizationId, folderId, title: `Scale video ${index}`,
+  })));
+  const scaledChildren = await request(owner.cookie, `/folders?parentId=${rootFolder.id}`);
+  assert.equal(scaledChildren.response.status, 200);
+  const scaledRows = scaledChildren.json as unknown as Array<{
+    id: string; childFolderCount: number; videoCount: number;
+  }>;
+  const scaleFolderIdSet = new Set<string>(scaleFolderIds);
+  assert.equal(scaledRows.length, 121);
+  assert(scaledRows.filter(({ id }) => scaleFolderIdSet.has(id))
+    .every(({ childFolderCount, videoCount }) => childFolderCount === 0 && videoCount === 1));
   const detail = await request(owner.cookie, `/folders/${child.id}`);
   assert.equal(detail.response.status, 200);
   assert.deepEqual((detail.json as { ancestors: unknown }).ancestors, [{ id: rootFolder.id, name: "Projects" }]);

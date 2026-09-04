@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
   foldersTable,
@@ -73,16 +73,26 @@ function subtreeHeight(folderId: string, folders: FolderRow[]) {
 }
 
 async function serializeFolders(tx: TenantTransaction, organizationId: string, rows: FolderRow[]) {
-  const folders = await loadFolders(tx, organizationId);
-  const childCounts = new Map<string, number>();
-  for (const folder of folders) {
-    if (folder.parentId) childCounts.set(folder.parentId, (childCounts.get(folder.parentId) ?? 0) + 1);
-  }
+  if (rows.length === 0) return [];
+  const folderIds = rows.map(({ id }) => id);
+  const childCountRows = await tx.select({
+    parentId: foldersTable.parentId,
+    count: sql<number>`count(*)::int`,
+  }).from(foldersTable)
+    .where(and(
+      eq(foldersTable.organizationId, organizationId),
+      inArray(foldersTable.parentId, folderIds),
+    ))
+    .groupBy(foldersTable.parentId);
+  const childCounts = new Map(childCountRows.map(({ parentId, count }) => [parentId, count]));
   const videoCounts = await tx.select({
     folderId: videosTable.folderId,
     count: sql<number>`count(*)::int`,
   }).from(videosTable)
-    .where(eq(videosTable.organizationId, organizationId))
+    .where(and(
+      eq(videosTable.organizationId, organizationId),
+      inArray(videosTable.folderId, folderIds),
+    ))
     .groupBy(videosTable.folderId);
   const videosByFolder = new Map(videoCounts.map(({ folderId, count }) => [folderId, count]));
   return rows.map((folder) => ({

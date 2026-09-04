@@ -8,9 +8,9 @@ const {
   db, pool, embedGenerationOutboxTable, groupPermissionsTable, membershipsTable,
   organizationCustomizationTable, organizationsTable, permissionGroupsTable, permissionsTable,
   plansTable, providerAccountsTable, providerTenantSpacesTable, videoAnalyticsRollupsTable,
-  videoEmbedsTable, videosTable, webhookEventsTable, usersTable,
+  videoEmbedsTable, videoLibrarySnapshotsTable, videosTable, webhookEventsTable, usersTable,
 } = await import("@workspace/db");
-const { and, eq } = await import("drizzle-orm");
+const { and, eq, sql } = await import("drizzle-orm");
 const { default: app } = await import("./app");
 const { videoProviders } = await import("./lib/provider-registry");
 const { registerStep7SmokeProvider } = await import("./lib/test-only-provider-registry");
@@ -233,6 +233,77 @@ try {
     }
   }
 
+  const snapshotMarker = `snapshot-${marker}`;
+  const snapshotIds = Array.from({ length: 5 }, () => randomUUID());
+  await db.insert(videosTable).values(snapshotIds.map((id, index) => ({
+    id,
+    organizationId,
+    title: `${snapshotMarker} ${String.fromCharCode(65 + index)}`,
+    description: snapshotMarker,
+    status: "ready" as const,
+    visibility: "private" as const,
+  })));
+  const snapshotQuery = `search=${encodeURIComponent(snapshotMarker)}&visibility=private&sort=title_asc&limit=1`;
+  const snapshotFirst = await requestList(snapshotQuery);
+  assert.equal(snapshotFirst.response.status, 200);
+  const snapshotFirstPage = JSON.parse(snapshotFirst.text) as ListEnvelope;
+  assert.deepEqual(snapshotFirstPage.items.map(({ id }) => id), [snapshotIds[0]]);
+  assert.equal(snapshotFirstPage.total, 5);
+  assert(snapshotFirstPage.nextCursor);
+
+  await db.update(videosTable).set({ title: `${snapshotMarker} Z` }).where(eq(videosTable.id, snapshotIds[1]));
+  await db.update(videosTable).set({ title: "No longer in snapshot search", description: "" })
+    .where(eq(videosTable.id, snapshotIds[2]));
+  await db.update(videosTable).set({ visibility: "public" }).where(eq(videosTable.id, snapshotIds[3]));
+  await db.delete(videosTable).where(eq(videosTable.id, snapshotIds[4]));
+
+  const frozenSnapshotIds = [snapshotFirstPage.items[0]!.id];
+  let snapshotCursor: string | null = snapshotFirstPage.nextCursor;
+  while (snapshotCursor) {
+    const pageResult = await requestList(`${snapshotQuery}&cursor=${encodeURIComponent(snapshotCursor)}`);
+    assert.equal(pageResult.response.status, 200);
+    const page = JSON.parse(pageResult.text) as ListEnvelope;
+    assert.equal(page.total, 5);
+    frozenSnapshotIds.push(...page.items.map(({ id }) => id));
+    snapshotCursor = page.nextCursor;
+  }
+  assert.deepEqual(frozenSnapshotIds, snapshotIds, "metadata, filter, and delete mutations must not alter an active snapshot");
+  const freshSnapshot = await requestList(snapshotQuery);
+  const freshSnapshotPage = JSON.parse(freshSnapshot.text) as ListEnvelope;
+  assert.equal(freshSnapshotPage.total, 2);
+  assert.deepEqual(freshSnapshotPage.items.map(({ id }) => id), [snapshotIds[0], snapshotIds[1]]);
+
+  const playsMarker = `plays-snapshot-${marker}`;
+  const playsSnapshotIds = Array.from({ length: 3 }, () => randomUUID());
+  await db.insert(videosTable).values(playsSnapshotIds.map((id, index) => ({
+    id, organizationId, title: `${playsMarker}-${index}`, status: "ready" as const,
+  })));
+  await db.insert(videoAnalyticsRollupsTable).values(playsSnapshotIds.map((videoId, index) => ({
+    organizationId, videoId, day: "2027-02-02", plays: 30 - index * 10,
+  })));
+  const playsQuery = `search=${encodeURIComponent(playsMarker)}&sort=plays_desc&limit=1`;
+  const playsFirst = JSON.parse((await requestList(playsQuery)).text) as ListEnvelope;
+  assert.deepEqual(playsFirst.items.map(({ id }) => id), [playsSnapshotIds[0]]);
+  assert(playsFirst.nextCursor);
+  await db.update(videoAnalyticsRollupsTable).set({ plays: 5 })
+    .where(eq(videoAnalyticsRollupsTable.videoId, playsSnapshotIds[1]));
+  await db.update(videoAnalyticsRollupsTable).set({ plays: 40 })
+    .where(eq(videoAnalyticsRollupsTable.videoId, playsSnapshotIds[2]));
+  await db.delete(videosTable).where(eq(videosTable.id, playsSnapshotIds[0]));
+  const frozenPlaysIds = [playsFirst.items[0]!.id];
+  let playsCursor: string | null = playsFirst.nextCursor;
+  while (playsCursor) {
+    const page = JSON.parse((await requestList(
+      `${playsQuery}&cursor=${encodeURIComponent(playsCursor)}`,
+    )).text) as ListEnvelope;
+    frozenPlaysIds.push(...page.items.map(({ id }) => id));
+    playsCursor = page.nextCursor;
+  }
+  assert.deepEqual(frozenPlaysIds, playsSnapshotIds, "analytics and delete mutations must not reorder an active snapshot");
+  const freshPlays = JSON.parse((await requestList(playsQuery)).text) as ListEnvelope;
+  assert.deepEqual(freshPlays.items.map(({ id }) => id), [playsSnapshotIds[2]]);
+  assert.equal(freshPlays.total, 2);
+
   for (const status of ["created", "uploading", "processing", "ready", "error"]) {
     const { response, text } = await requestList(`status=${status}&limit=100`);
     assert.equal(response.status, 200);
@@ -298,6 +369,31 @@ try {
     method: "DELETE", headers: { cookie: owner.cookie },
   })).status, 409);
   assert.equal(provider.deleteAssetCalls, callsAfterAmbiguity, "ambiguous provider deletion must not be retried");
+
+  await db.delete(videoLibrarySnapshotsTable)
+    .where(eq(videoLibrarySnapshotsTable.organizationId, organizationId));
+  const capExpiry = new Date(Date.now() + 10 * 60 * 1000);
+  await db.insert(videoLibrarySnapshotsTable).values(Array.from({ length: 63 }, () => ({
+    id: randomUUID(),
+    organizationId,
+    scopeHash: "near-cap-smoke",
+    total: 0,
+    expiresAt: capExpiry,
+  })));
+  const capRequests = await Promise.all([
+    requestList(`search=${encodeURIComponent(marker)}&sort=newest&limit=1`),
+    requestList(`search=${encodeURIComponent(marker)}&sort=newest&limit=1`),
+  ]);
+  assert.deepEqual(
+    capRequests.map(({ response }) => response.status).sort(),
+    [200, 429],
+    "snapshot admission must serialize concurrent requests at the tenant cap",
+  );
+  const [activeSnapshotCount] = await db.select({
+    count: sql<number>`count(*)::int`,
+  }).from(videoLibrarySnapshotsTable)
+    .where(eq(videoLibrarySnapshotsTable.organizationId, organizationId));
+  assert.equal(activeSnapshotCount?.count, 64);
 
   process.stdout.write("Step 12 video library smoke passed\n");
 } finally {

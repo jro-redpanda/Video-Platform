@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import express, { Router, type IRouter, type Request } from "express";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import {
   db,
   providerAccountsTable,
@@ -49,11 +49,13 @@ router.post("/webhooks/bunny/encode", express.raw({ type: "application/json", li
     space: typeof providerTenantSpacesTable.$inferSelect;
     event: EncodeCompletionEvent;
   }> = [];
+  let providerResolutionFailed = false;
   for (const candidate of candidates) {
     let provider: VideoProvider;
     try {
       provider = await resolveBunnyWebhookProvider(candidate.account, candidate.space);
     } catch {
+      providerResolutionFailed = true;
       continue;
     }
     const event = provider.verifyEncodeCompletionCallback(rawBody, req.headers);
@@ -61,6 +63,9 @@ router.post("/webhooks/bunny/encode", express.raw({ type: "application/json", li
   }
 
   if (verified.length !== 1) {
+    if (verified.length === 0 && providerResolutionFailed) {
+      return void res.status(503).json({ error: "Webhook verification is temporarily unavailable" });
+    }
     if (candidates.length === 1) {
       await recordRejectedReceipt(candidates[0]!.account.id, tenantSpaceId, rawBody, req);
     }
@@ -155,6 +160,8 @@ async function processVerifiedEvent(
     const changed = await tx.update(videosTable).set(update).where(and(
       eq(videosTable.id, video.id),
       inArray(videosTable.status, ["uploading", "processing"]),
+      isNull(videosTable.deletionClaim),
+      isNull(videosTable.reconciliationRequired),
     )).returning({ id: videosTable.id });
 
     await tx.update(webhookEventsTable).set({

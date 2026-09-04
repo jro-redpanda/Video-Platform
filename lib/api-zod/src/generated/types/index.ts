@@ -113,6 +113,7 @@ export * from './trendPoint';
 export * from './tusUploadCredentials';
 export * from './tusUploadCredentialsHeaders';
 export * from './tusUploadCredentialsKind';
+export * from './uploadSessionReference';
 export * from './video';
 export * from './videoList';
 export * from './videoObject';

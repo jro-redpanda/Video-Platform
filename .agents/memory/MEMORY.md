@@ -1,8 +1,8 @@
 - [Build checkpoints and portability](build-checkpoints-portability.md) — stop for review after RBAC, provider adapter, and player/embed milestones; R2 storage is not portability.
 - [Better Auth Drizzle compatibility](better-auth-drizzle-compatibility.md) — current auth schema and pnpm peer contexts need version-aware handling.
 - [Bunny account-key validation](bunny-account-key-validation.md) — validate the global account key against the core library API before retrying the Step 6 round trip.
-- [Provider side-effect idempotency](provider-side-effect-idempotency.md) — persist claims before non-idempotent provider creates; bound queue repair by durable dedupe retention.
-- [Video library pagination](video-library-pagination.md) — sign and scope cursors, bind traversals to an initial snapshot, and explicitly rehydrate client pagination after mutations.
+- [Provider side-effect idempotency](provider-side-effect-idempotency.md) — serialize create/delete ownership at every boundary; bound queue repair by durable dedupe retention.
+- [Video library pagination](video-library-pagination.md) — freeze mutable list projections behind signed cursors, bound snapshot admission, and purge stale client pages after mutations.
 - [Folder hierarchy concurrency](folder-hierarchy-concurrency.md) — serialize every mutation that changes folder membership with hierarchy create/move/delete checks.
 - [Strict union request validation](strict-union-request-validation.md) — keep raw-key boundary guards for mutually exclusive OpenAPI bodies generated through Orval/Zod.
 - [App Storage thumbnail promotion](app-storage-thumbnail-promotion.md) — copied objects may lose Content-Type; patch metadata conditionally and pin the final generation.
@@ -10,3 +10,5 @@
 - [Analytics telemetry integrity](analytics-telemetry-integrity.md) — attest public playback server-side; bound metrics by receipt time, and persist queued events independently per video/event.
 - [Audit trail integrity](audit-trail-integrity.md) — keep tenant audit rows append-only, snapshot cursors scope-bound, and state transitions atomic with outcome events.
 - [Cold-master operation integrity](cold-master-operation-integrity.md) — generation-scope jobs, verify bytes/identity, and keep legacy unverified archives non-restorable.
+- [Onboarding transition integrity](onboarding-transition-integrity.md) — lock intent before organization/provider space, and never let async provisioning overwrite suspension.
+- [Playback source trust](playback-source-trust.md) — validate fresh provider redirects generically, then recheck video eligibility after provider I/O.

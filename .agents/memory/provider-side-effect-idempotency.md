@@ -1,6 +1,6 @@
 ---
 name: Provider side-effect idempotency
-description: Rules for safely retrying provider creates and Postgres-backed outbox dispatch.
+description: Rules for provider create/delete ownership, safe retries, and Postgres-backed outbox dispatch.
 ---
 
 Persist an exclusive claim before any provider create call that has no upstream idempotency key. If the process loses the outcome and no provider ID was durably stored, require reconciliation instead of automatically issuing another create.
@@ -8,6 +8,12 @@ Persist an exclusive claim before any provider create call that has no upstream 
 **Why:** A retry after an ambiguous external outcome can create duplicate libraries or assets even when the local database operation is idempotent.
 
 **How to apply:** Separate definitive rejection, safe pre-call failure, and ambiguous post-call failure. Only the first two may release or retry automatically.
+
+Provider creation and deletion ownership must be mutually exclusive at every asynchronous boundary: before acquiring a create claim, after the provider returns, and before activating the local resource.
+
+**Why:** Guarding only the provider call or final write leaves race windows where deletion can finish but a delayed initializer still creates an orphan or resurrects terminal state.
+
+**How to apply:** Revalidate session identity, eligible lifecycle state, and absence of deletion/reconciliation ownership on each pre-side-effect and post-side-effect transition. A lost claim must not call the provider or overwrite terminal state.
 
 Outbox dispatch must use a deterministic queue job ID. Automatic repair is allowed only while the queue guarantees that identity is still retained; older send-before-mark ambiguity must be quarantined rather than re-enqueued.
 

@@ -20,8 +20,9 @@ repairs a crash between commit and publication.
 
 ## State and recovery
 
-- `pending`, `dispatching`, and `queued` are repaired automatically using the
-  intent UUID as the queue job UUID.
+- `pending`, `dispatching`, and `queued` are repaired automatically. Each queue
+  delivery uses `intent UUID:durable dispatch claim` as its unique job identity;
+  the database intent remains the source of truth.
 - Dispatch and user retries are bounded to five attempts.
 - Provider resolution or capacity failure before a remote call becomes
   `unavailable` and may be retried by the creating owner.

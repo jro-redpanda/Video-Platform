@@ -18,14 +18,15 @@ const {
   embedGenerationOutboxTable,
 } = await import("@workspace/db");
 const { and, eq } = await import("drizzle-orm");
+const { PgBoss } = await import("pg-boss");
 const { createStep10BunnyCallback } = await import("@workspace/providers/test-only");
 const { encryptProviderCredentials } = await import("./lib/credential-encryption");
+const { resolveBunnyWebhookProvider } = await import("./lib/provider-registry");
 const { default: app } = await import("./app");
 const {
   EMBED_GENERATION_QUEUE,
-  startJobs,
-  stopJobs,
   dispatchPendingEmbedOutbox,
+  setEmbedDispatchWakeupForTest,
 } = await import("./lib/jobs");
 
 const marker = randomUUID();
@@ -51,6 +52,7 @@ const ids = {
   terminalReady: randomUUID(),
   terminalError: randomUUID(),
   mismatch: randomUUID(),
+  deletionClaimed: randomUUID(),
 };
 const assets = Object.fromEntries(Object.keys(ids).map((key) => [key, `${marker}-${key}`])) as Record<keyof typeof ids, string>;
 
@@ -80,14 +82,14 @@ await db.transaction(async (tx) => {
     {
       organizationId, providerAccountId: accountId, providerSpaceId: String(libraryId),
       idempotencyKey: `step10-${marker}`, encryptedCredentials: libraryEnvelope,
-      metadata: { pullZoneId: "1", pullZoneHostname: "step10.invalid", zoneSecurityEnabled: true },
+      metadata: { pullZoneId: "1", pullZoneHostname: "step10-smoke.b-cdn.net", zoneSecurityEnabled: true },
       state: "created",
     },
     {
       organizationId: otherOrganizationId, providerAccountId: otherAccountId,
       providerSpaceId: String(otherLibraryId), idempotencyKey: `step10-other-${marker}`,
       encryptedCredentials: libraryEnvelope,
-      metadata: { pullZoneId: "2", pullZoneHostname: "step10-other.invalid", zoneSecurityEnabled: true },
+      metadata: { pullZoneId: "2", pullZoneHostname: "step10-other.b-cdn.net", zoneSecurityEnabled: true },
       state: "created",
     },
   ]);
@@ -100,8 +102,22 @@ await db.transaction(async (tx) => {
     video(ids.terminalError, assets.terminalError, "error", accountId, String(libraryId), organizationId),
     // Deliberately combines another account with the callback's tenant-space string.
     video(ids.mismatch, assets.mismatch, "processing", otherAccountId, String(libraryId), otherOrganizationId),
+    {
+      ...video(ids.deletionClaimed, assets.deletionClaimed, "processing", accountId, String(libraryId), organizationId),
+      deletionClaim: randomUUID(),
+      deletionClaimedAt: new Date(),
+    },
   ]);
 });
+const [providerCandidate] = await db.select({
+  account: providerAccountsTable,
+  space: providerTenantSpacesTable,
+}).from(providerTenantSpacesTable)
+  .innerJoin(providerAccountsTable, eq(providerAccountsTable.id, providerTenantSpacesTable.providerAccountId))
+  .where(eq(providerTenantSpacesTable.providerAccountId, accountId))
+  .limit(1);
+assert(providerCandidate);
+await resolveBunnyWebhookProvider(providerCandidate.account, providerCandidate.space);
 
 const server = await new Promise<ReturnType<typeof app.listen>>((resolve) => {
   const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
@@ -109,10 +125,25 @@ const server = await new Promise<ReturnType<typeof app.listen>>((resolve) => {
 const address = server.address();
 assert(address && typeof address === "object");
 const root = `http://127.0.0.1:${address.port}`;
-let boss: Awaited<ReturnType<typeof startJobs>> | undefined;
+const connectionString = process.env.DATABASE_URL;
+assert(connectionString);
+const boss = new PgBoss({
+  connectionString,
+  schema: "vid_jobs",
+  migrate: false,
+  application_name: "vid-step10-smoke",
+});
 
 try {
-  boss = await startJobs();
+  await boss.start();
+  await boss.createQueue(EMBED_GENERATION_QUEUE, {
+    retryLimit: 5,
+    retryDelay: 5,
+    retryBackoff: true,
+    expireInSeconds: 600,
+    retentionSeconds: 86400,
+  });
+  setEmbedDispatchWakeupForTest(async () => undefined);
   assert.equal((await deliver("ready", 3, { durationSeconds: 42 })).status, 202);
   assert.deepEqual(await state(ids.ready), { status: "ready", durationSeconds: 42 });
 
@@ -159,6 +190,13 @@ try {
   assert.equal((await deliver("mismatch", 3)).status, 202);
   assert.equal((await state(ids.mismatch)).status, "processing");
 
+  assert.equal((await deliver("deletionClaimed", 3)).status, 202);
+  assert.equal(
+    (await state(ids.deletionClaimed)).status,
+    "processing",
+    "verified webhook must not mutate a video claimed for deletion",
+  );
+
   const publicResponse = await fetch(`${root}/api/public/videos/${ids.ready}`);
   assert.equal(publicResponse.status, 200);
   const publicText = await publicResponse.text();
@@ -166,6 +204,7 @@ try {
   assert.equal(publicText.includes(assets.ready), false);
   assert.equal(publicText.includes(accountId), false);
 
+  await dispatchPendingEmbedOutbox(boss);
   const embedJobs = await boss.findJobs<{ videoId: string }>(EMBED_GENERATION_QUEUE, {});
   assert.equal(embedJobs.filter((job) => job.data.videoId === ids.duplicate).length <= 1, true);
   assert.equal(embedJobs.every((job) => Object.keys(job.data).length === 1 && typeof job.data.videoId === "string"), true);
@@ -178,7 +217,7 @@ try {
     .where(eq(webhookEventsTable.providerAssetId, assets.ready));
   assert(readyOutbox);
   const processed = new Promise<void>((resolve) => {
-    void boss!.work<{ videoId: string }>(
+    void boss.work<{ videoId: string }>(
       EMBED_GENERATION_QUEUE,
       { batchSize: 1 },
       async ([job]) => {
@@ -258,38 +297,11 @@ try {
   console.log("Step 10 webhook smoke passed");
 } finally {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  if (boss) {
-    const suffix = process.env.JOB_QUEUE_NAMESPACE;
-    const queues = [
-      `vid.system.health.${suffix}`,
-      `vid.provider.bunny-roundtrip.${suffix}`,
-      `vid.tenant.provision.${suffix}`,
-      `vid.upload.expiry-cleanup.${suffix}`,
-      `vid.video.embed-generation.${suffix}`,
-      `vid.video.embed-dispatch.${suffix}`,
-      `vid.thumbnail.cleanup.${suffix}`,
-      `vid.billing.reconcile.${suffix}`,
-      `vid.analytics.rollup.${suffix}`,
-      `vid.analytics.retention.${suffix}`,
-      `vid.system.dead-letter.${suffix}`,
-    ];
-    for (const scheduledQueue of [
-      `vid.upload.expiry-cleanup.${suffix}`,
-      `vid.video.embed-dispatch.${suffix}`,
-      `vid.thumbnail.cleanup.${suffix}`,
-      `vid.billing.reconcile.${suffix}`,
-      `vid.analytics.rollup.${suffix}`,
-      `vid.analytics.retention.${suffix}`,
-    ]) {
-      await boss.unschedule(scheduledQueue);
-    }
-    for (const queue of queues) {
-      await boss.offWork(queue);
-      await boss.deleteQueuedJobs(queue);
-    }
-    for (const queue of queues) await boss.deleteQueue(queue);
-    await stopJobs();
-  }
+  setEmbedDispatchWakeupForTest(undefined);
+  await boss.offWork(EMBED_GENERATION_QUEUE).catch(() => undefined);
+  await boss.deleteQueuedJobs(EMBED_GENERATION_QUEUE).catch(() => undefined);
+  await boss.deleteQueue(EMBED_GENERATION_QUEUE).catch(() => undefined);
+  await boss.stop({ graceful: true, timeout: 10_000 });
   await db.delete(webhookEventsTable).where(eq(webhookEventsTable.providerAccountId, accountId));
   await db.delete(videosTable).where(and(
     eq(videosTable.organizationId, otherOrganizationId),

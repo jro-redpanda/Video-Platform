@@ -29,6 +29,8 @@ import {
 const router: IRouter = Router();
 const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const maxBytes = 10 * 1024 * 1024;
+const signedUploadExpiryMarginMs = 60_000;
+const thumbnailRetirementGraceMs = 5 * 60_000;
 
 router.post(
   "/videos/:videoId/thumbnail-upload-intent",
@@ -36,6 +38,7 @@ router.post(
   requireCreateAccess,
   async (req, res): Promise<void> => {
     const { videoId } = CreateThumbnailUploadIntentParams.parse(req.params);
+    res.setHeader("Cache-Control", "private, no-store");
     const parsed = CreateThumbnailUploadIntentBody.safeParse(req.body);
     if (!parsed.success || !isExactObject(req.body, ["contentType", "sizeBytes"])) {
       res.status(400).json({ error: "Invalid thumbnail upload metadata." });
@@ -204,7 +207,12 @@ router.post(
           eq(objectCleanupOutboxTable.organizationId, req.tenant.organizationId),
           eq(objectCleanupOutboxTable.objectKey, finalObjectKey),
         ));
-        await enqueueCleanup(tx, req.tenant.organizationId, intent.objectKey);
+        await enqueueCleanup(
+          tx,
+          req.tenant.organizationId,
+          intent.objectKey,
+          new Date(intent.expiresAt.getTime() + signedUploadExpiryMarginMs),
+        );
         if (video.thumbnailObjectKey && video.thumbnailObjectKey !== intent.objectKey) {
           await enqueueCleanup(tx, req.tenant.organizationId, video.thumbnailObjectKey);
         }
@@ -283,6 +291,8 @@ router.get(
   requirePermission("videos.read"),
   async (req, res): Promise<void> => {
     const { videoId } = GetVideoThumbnailParams.parse(req.params);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
     const [video] = await withTenantDb(req.tenant, (tx) => tx.select({
       objectKey: videosTable.thumbnailObjectKey,
       contentType: videosTable.thumbnailContentType,
@@ -314,8 +324,12 @@ router.get(
         contentType: video.contentType,
         sizeBytes: video.sizeBytes,
         generation: video.generation ?? undefined,
+      }, false, (error, headersSent) => {
+        req.log.error({ err: error, videoId, headersSent }, "Thumbnail stream failed");
       });
     } catch (error) {
+      res.removeHeader("Content-Length");
+      res.setHeader("Cache-Control", "private, no-store");
       if (error instanceof ThumbnailObjectNotFoundError) {
         res.status(404).json({ error: "Thumbnail not found" });
         return;
@@ -335,6 +349,7 @@ export function streamThumbnail(
   objectStorage: ThumbnailStorage,
   thumbnail: { objectKey: string; contentType: string; sizeBytes: number; generation?: string },
   publiclyCacheable = false,
+  onError?: (error: Error, headersSent: boolean) => void,
 ) {
   if (!allowedTypes.has(thumbnail.contentType) || thumbnail.sizeBytes < 1 || thumbnail.sizeBytes > maxBytes) {
     res.status(404).json({ error: "Thumbnail not found" });
@@ -343,9 +358,25 @@ export function streamThumbnail(
   res.setHeader("Content-Type", thumbnail.contentType);
   res.setHeader("Content-Length", String(thumbnail.sizeBytes));
   res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Cache-Control", `${publiclyCacheable ? "public" : "private"}, max-age=31536000, immutable`);
+  res.setHeader(
+    "Cache-Control",
+    publiclyCacheable ? "public, max-age=0, must-revalidate" : "private, no-store",
+  );
   const source = objectStorage.createReadStream(thumbnail.objectKey, thumbnail.generation);
-  source.on("error", () => res.destroy());
+  source.once("error", (error: Error) => {
+    const headersSent = res.headersSent;
+    onError?.(error, headersSent);
+    source.unpipe(res);
+    if (headersSent) {
+      res.destroy(error);
+      return;
+    }
+    res.removeHeader("Content-Length");
+    res.status(503)
+      .setHeader("Content-Type", "application/json; charset=utf-8")
+      .setHeader("Cache-Control", "private, no-store")
+      .json({ error: "Thumbnail storage is unavailable" });
+  });
   source.pipe(res);
 }
 
@@ -365,14 +396,17 @@ async function enqueueCleanup(
   tx: Parameters<Parameters<typeof withTenantDb>[1]>[0],
   organizationId: string,
   objectKey: string,
+  nextAttemptAt = new Date(Date.now() + thumbnailRetirementGraceMs),
 ) {
-  await tx.insert(objectCleanupOutboxTable).values({ organizationId, objectKey }).onConflictDoNothing({
+  await tx.insert(objectCleanupOutboxTable).values({ organizationId, objectKey, nextAttemptAt }).onConflictDoNothing({
     target: objectCleanupOutboxTable.objectKey,
   });
 }
 
 function isExactObject(value: unknown, keys: string[]) {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return (prototype === Object.prototype || prototype === null)
     && Object.keys(value).every((key) => keys.includes(key));
 }
 

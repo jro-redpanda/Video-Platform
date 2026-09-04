@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useCallback } from "react"
+import { useEffect, useMemo, useRef, useCallback, useState } from "react"
 import { useParams } from "wouter"
 import { LoaderCircle, AlertCircle } from "lucide-react"
 import { useGetPublicVideo, getGetPublicVideoQueryKey } from "@workspace/api-client-react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Player } from "@/components/player"
 import { usePlaybackAnalytics } from "@/hooks/use-playback-analytics"
+import { serializeJsonForHtmlScript } from "@/lib/safe-json-script"
+import { createPlaybackSessionId } from "@/lib/playback-session"
 
 export default function EmbedPlayer() {
   const { id } = useParams<{ id: string }>()
@@ -16,20 +18,23 @@ export default function EmbedPlayer() {
       retry: (failureCount, error: any) => {
         if (error?.status === 404 || error?.status === 503) return false;
         return failureCount < 3;
-      }
+      },
+      staleTime: 0,
+      refetchOnMount: "always",
+      refetchInterval: (query: any) => {
+        const current = query.state.data
+        if (!current) return false
+        if (current.status !== "ready") return 5_000
+        const expiresAt = current.sourceExpiresAt
+          ? new Date(current.sourceExpiresAt).getTime()
+          : Number.NaN
+        if (!Number.isFinite(expiresAt)) return false
+        return Math.max(5_000, Math.min(5 * 60_000, expiresAt - Date.now() - 30_000))
+      },
     }
   })
 
-  const sessionId = useMemo(() => {
-    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-      return crypto.randomUUID()
-    }
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-      const r = (Math.random() * 16) | 0;
-      const v = c === 'x' ? r : (r & 0x3) | 0x8;
-      return v.toString(16);
-    });
-  }, [])
+  const sessionId = useMemo(createPlaybackSessionId, [id])
 
   const refetchVideo = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: getGetPublicVideoQueryKey(id) })
@@ -43,6 +48,16 @@ export default function EmbedPlayer() {
 
   const hasEmittedLoadRef = useRef(false)
   const lastHeartbeatTimeRef = useRef(0)
+  const [playbackFailed, setPlaybackFailed] = useState(false)
+  const [sourceAttempt, setSourceAttempt] = useState(0)
+  const [isRetrying, setIsRetrying] = useState(false)
+
+  useEffect(() => {
+    hasEmittedLoadRef.current = false
+    lastHeartbeatTimeRef.current = 0
+    setPlaybackFailed(false)
+    setSourceAttempt(0)
+  }, [id])
 
   useEffect(() => {
     if (!video.data || hasEmittedLoadRef.current) return
@@ -95,7 +110,21 @@ export default function EmbedPlayer() {
     else if (e?.detail?.message?.includes('media')) errorCategory = 'media'
 
     emitEvent('error', { ...getPlayerState(e), errorCategory })
+    setPlaybackFailed(true)
   }, [emitEvent, getPlayerState])
+
+  const retryPlayback = useCallback(async () => {
+    setIsRetrying(true)
+    try {
+      const result = await video.refetch()
+      if (result.data?.status === "ready" && result.data.sourceUrl) {
+        setSourceAttempt((attempt) => attempt + 1)
+        setPlaybackFailed(false)
+      }
+    } finally {
+      setIsRetrying(false)
+    }
+  }, [video])
 
   // Periodic flush
   useEffect(() => {
@@ -108,17 +137,33 @@ export default function EmbedPlayer() {
   if (video.isLoading) {
     return (
       <main className="w-full h-[100dvh] bg-black flex items-center justify-center m-0 p-0 overflow-hidden" role="status" aria-live="polite">
-        <LoaderCircle className="h-8 w-8 animate-spin motion-reduce:animate-none text-white/70" aria-label="Loading video" />
+        <div className="flex flex-col items-center gap-3 text-white/80">
+          <LoaderCircle className="h-8 w-8 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+          <p>Loading video…</p>
+        </div>
       </main>
     )
   }
 
   if (!video.data || video.isError) {
+    const temporarilyUnavailable = (video.error as any)?.status === 503
     return (
       <main className="w-full h-[100dvh] bg-black flex items-center justify-center m-0 p-0 overflow-hidden text-white" role="alert" aria-live="assertive">
         <div className="text-center p-6">
-          <AlertCircle className="h-8 w-8 mx-auto mb-3 text-white/60" />
-          <p>Video unavailable</p>
+          <AlertCircle className="h-8 w-8 mx-auto mb-3 text-white/60" aria-hidden="true" />
+          <h1 className="text-lg font-semibold">
+            {temporarilyUnavailable ? "Playback temporarily unavailable" : "Video unavailable"}
+          </h1>
+          {temporarilyUnavailable && (
+            <button
+              type="button"
+              onClick={() => void retryPlayback()}
+              disabled={isRetrying}
+              className="mt-4 rounded-md bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-60"
+            >
+              {isRetrying ? "Retrying…" : "Try again"}
+            </button>
+          )}
         </div>
       </main>
     )
@@ -140,14 +185,17 @@ export default function EmbedPlayer() {
     videoObjectJsonLd.contentUrl = item.sourceUrl
   }
 
-  const src = item.sourceUrl
+  const sourceUrl = item.sourceUrl
+    ? `${item.sourceUrl}${item.sourceUrl.includes("?") ? "&" : "?"}attempt=${sourceAttempt}`
+    : null
+  const src = sourceUrl
     ? {
-        src: item.sourceUrl,
+        src: sourceUrl,
         type: item.sourceType === 'hls' ? 'application/x-mpegurl' : 'video/mp4'
       }
     : null;
 
-  const isPlayable = item.status === 'ready' && !!src;
+  const isPlayable = item.status === 'ready' && !!src && !playbackFailed;
 
   return (
     <main
@@ -160,7 +208,7 @@ export default function EmbedPlayer() {
     >
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(videoObjectJsonLd) }}
+        dangerouslySetInnerHTML={{ __html: serializeJsonForHtmlScript(videoObjectJsonLd) }}
       />
       <Player
         title={item.title}
@@ -171,8 +219,13 @@ export default function EmbedPlayer() {
         controlBackgroundColor={item.playerControlBackground}
         posterTreatment={item.posterTreatment}
         logoInitials={item.logoUrl ? undefined : '?'}
-        status={!isPlayable ? item.status : undefined}
-        message={item.status === 'ready' && !src ? "Playback source is not connected." : undefined}
+        status={playbackFailed ? "error" : !isPlayable ? item.status : undefined}
+        message={playbackFailed
+          ? "Playback could not be started."
+          : item.status === 'ready' && !src ? "Playback source is not connected." : undefined}
+        actionLabel={playbackFailed ? (isRetrying ? "Retrying…" : "Try again") : undefined}
+        onAction={playbackFailed ? () => void retryPlayback() : undefined}
+        actionDisabled={isRetrying}
         load="visible"
         className="w-full h-full rounded-none border-none ring-0"
         onPlay={onPlay}

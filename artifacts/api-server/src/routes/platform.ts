@@ -18,6 +18,8 @@ import {
   usersTable,
   videoAnalyticsRollupsTable,
   videoEmbedsTable,
+  videoLibrarySnapshotItemsTable,
+  videoLibrarySnapshotsTable,
   videosTable,
   webhookEventsTable,
 } from "@workspace/db";
@@ -42,16 +44,29 @@ import {
   InitializeVideoUploadBody,
   InitializeVideoUploadHeader,
   InitializeVideoUploadResponse,
+  CompleteVideoUploadBody,
+  CancelVideoUploadBody,
 } from "@workspace/api-zod";
 import { withTenantDb, type TenantTransaction } from "../lib/tenant-db";
 import { requirePermission } from "../lib/permissions";
 import { hasEntitlement, requireCreateAccess, resolveBillingAccess, resolveEntitlements, type EntitlementKey } from "../lib/entitlements";
-import { resolveProvisioningProvider, videoProviders } from "../lib/provider-registry";
+import { resolveProvisioningProvider } from "../lib/provider-registry";
+import { setPlaybackResponsePolicy, validatePlaybackSource } from "../lib/playback-sources";
 import { AssetCreationRejectedError } from "@workspace/providers";
 import { serializeEmbed, trustedRequestOrigin } from "../lib/video-embeds";
 import { AuditExportRateLimitError, auditDiff, auditUser, consumeAuditExportLimit, writeAuditEvent } from "../lib/audit";
 
 const router: IRouter = Router();
+let beforeAssetCreationClaimForTest:
+  ((videoId: string, idempotencyKey: string) => Promise<void>) | undefined;
+
+export function setBeforeAssetCreationClaimForTest(
+  hook?: (videoId: string, idempotencyKey: string) => Promise<void>,
+) {
+  if (process.env.NODE_ENV !== "test") throw new Error("Asset-creation claim seam is test-only");
+  beforeAssetCreationClaimForTest = hook;
+}
+
 const videoStatuses = ["created", "uploading", "processing", "ready", "error"] as const;
 const videoVisibilities = ["private", "unlisted", "public"] as const;
 const videoSorts = ["newest", "oldest", "title_asc", "title_desc", "plays_desc"] as const;
@@ -59,7 +74,7 @@ type VideoSort = (typeof videoSorts)[number];
 const sessionSecret = process.env.SESSION_SECRET;
 if (!sessionSecret) throw new Error("SESSION_SECRET is required");
 const cursorSigningKey = createHmac("sha256", sessionSecret)
-  .update("video-library-cursor:v1")
+  .update("video-library-cursor:v2")
   .digest();
 const cursorLifetimeMs = 15 * 60 * 1000;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -338,56 +353,147 @@ router.get("/videos", requirePermission("videos.read"), async (req, res) => {
     else conditions.push(eq(videosTable.folderId, folderId));
   }
 
+  const scope: CursorScope = {
+    sort, search: search ?? null, status: query.status ?? null, visibility: query.visibility ?? null,
+    folderId: folderId ?? (folderId === null ? "root" : null),
+  };
+  const scopeHash = hashCursorScope(scope, req.tenant.organizationId);
   let cursor: VideoCursor | undefined;
   if (query.cursor) {
     try {
-      cursor = decodeVideoCursor(query.cursor, {
-        sort, search: search ?? null, status: query.status ?? null, visibility: query.visibility ?? null,
-        folderId: folderId ?? (folderId === null ? "root" : null),
-      }, req.tenant.organizationId);
+      cursor = decodeVideoCursor(query.cursor, scope, req.tenant.organizationId);
     } catch {
       res.status(400).json({ error: "Malformed or incompatible video cursor." });
       return;
     }
   }
-  const cursorCondition = cursor ? videoCursorCondition(cursor) : undefined;
+
+  if (cursor) {
+    const page = await withTenantDb(req.tenant, async (tx) => {
+      const [snapshot] = await tx.select({
+        id: videoLibrarySnapshotsTable.id,
+        total: videoLibrarySnapshotsTable.total,
+        expiresAt: videoLibrarySnapshotsTable.expiresAt,
+      }).from(videoLibrarySnapshotsTable).where(and(
+        eq(videoLibrarySnapshotsTable.id, cursor.snapshotId),
+        eq(videoLibrarySnapshotsTable.organizationId, req.tenant.organizationId),
+        eq(videoLibrarySnapshotsTable.scopeHash, scopeHash),
+        gt(videoLibrarySnapshotsTable.expiresAt, new Date()),
+      )).limit(1);
+      if (!snapshot || snapshot.expiresAt.getTime() !== cursor.expiresAt) return undefined;
+      const items = await tx.select({
+        position: videoLibrarySnapshotItemsTable.position,
+        payload: videoLibrarySnapshotItemsTable.payload,
+      }).from(videoLibrarySnapshotItemsTable).where(and(
+        eq(videoLibrarySnapshotItemsTable.organizationId, req.tenant.organizationId),
+        eq(videoLibrarySnapshotItemsTable.snapshotId, snapshot.id),
+        gt(videoLibrarySnapshotItemsTable.position, cursor.position),
+      )).orderBy(asc(videoLibrarySnapshotItemsTable.position)).limit(limit + 1);
+      return { snapshot, items };
+    });
+    if (!page) {
+      res.status(400).json({ error: "Malformed, expired, or unavailable video cursor." });
+      return;
+    }
+    const hasNext = page.items.length > limit;
+    const pageItems = hasNext ? page.items.slice(0, limit) : page.items;
+    const tail = pageItems[pageItems.length - 1];
+    const nextCursor = hasNext && tail
+      ? encodeVideoCursor(
+        page.snapshot.id,
+        tail.position,
+        scope,
+        page.snapshot.expiresAt,
+        req.tenant.organizationId,
+      )
+      : null;
+    res.json(ListVideosResponse.parse({
+      items: pageItems.map(({ payload }) => payload),
+      nextCursor,
+      total: page.snapshot.total,
+    }));
+    return;
+  }
+
   const ordering = videoOrdering(sort);
-  const { missingFolder, rows, total, snapshotAt } = await withTenantDb(req.tenant, async (tx) => {
+  const result = await withTenantDb(req.tenant, async (tx) => {
     if (folderId) {
       const [folder] = await tx.select({ id: foldersTable.id }).from(foldersTable).where(and(
         eq(foldersTable.organizationId, req.tenant.organizationId), eq(foldersTable.id, folderId),
       )).limit(1);
-      if (!folder) return { missingFolder: true as const, rows: [], total: 0, snapshotAt: new Date() };
+      if (!folder) return { kind: "missing_folder" as const };
     }
-    const snapshotValue = cursor?.snapshotAt ?? (await tx.select({
-      snapshotAt: sql<Date>`transaction_timestamp()`,
-    }).from(organizationsTable).where(eq(organizationsTable.id, req.tenant.organizationId)).limit(1))[0]!.snapshotAt;
-    const snapshotAt = snapshotValue instanceof Date ? snapshotValue : new Date(snapshotValue);
-    const snapshotConditions = [...conditions, lte(videosTable.createdAt, snapshotAt)];
-    const rows = await tx.select(videoProjection).from(videosTable)
+    const probeRows = await tx.select(videoProjection).from(videosTable)
       .leftJoin(videoAnalyticsRollupsTable, eq(videoAnalyticsRollupsTable.videoId, videosTable.id))
-      .where(and(...snapshotConditions))
+      .where(and(...conditions))
       .groupBy(videosTable.id)
-      .having(cursorCondition)
       .orderBy(...ordering)
       .limit(limit + 1);
-    const total = cursor?.total ?? (await tx.select({ total: sql<number>`count(*)::int` }).from(videosTable)
-      .where(and(...snapshotConditions)))[0]!.total;
-    return { missingFolder: false as const, rows, total, snapshotAt };
-  }, cursor ? undefined : { isolationLevel: "repeatable read" });
-  if (missingFolder) {
+    if (probeRows.length <= limit) {
+      const items = probeRows.map(freezeVideoListItem);
+      return { kind: "page" as const, items, total: items.length, nextCursor: null };
+    }
+
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${req.tenant.organizationId}:video-library-snapshots`}))`);
+    const now = new Date();
+    await tx.delete(videoLibrarySnapshotsTable).where(and(
+      eq(videoLibrarySnapshotsTable.organizationId, req.tenant.organizationId),
+      lt(videoLibrarySnapshotsTable.expiresAt, now),
+    ));
+    const [active] = await tx.select({
+      count: sql<number>`count(*)::int`,
+    }).from(videoLibrarySnapshotsTable).where(and(
+      eq(videoLibrarySnapshotsTable.organizationId, req.tenant.organizationId),
+      gt(videoLibrarySnapshotsTable.expiresAt, now),
+    ));
+    if ((active?.count ?? 0) >= 64) return { kind: "snapshot_limit" as const };
+
+    const rows = await tx.select(videoProjection).from(videosTable)
+      .leftJoin(videoAnalyticsRollupsTable, eq(videoAnalyticsRollupsTable.videoId, videosTable.id))
+      .where(and(...conditions))
+      .groupBy(videosTable.id)
+      .orderBy(...ordering);
+    const frozenRows = rows.map(freezeVideoListItem);
+    if (frozenRows.length <= limit) {
+      return { kind: "page" as const, items: frozenRows, total: frozenRows.length, nextCursor: null };
+    }
+
+    const snapshotId = randomUUID();
+    const expiresAt = new Date(now.getTime() + cursorLifetimeMs);
+    await tx.insert(videoLibrarySnapshotsTable).values({
+      id: snapshotId,
+      organizationId: req.tenant.organizationId,
+      scopeHash,
+      total: frozenRows.length,
+      expiresAt,
+    });
+    for (let start = 0; start < frozenRows.length; start += 250) {
+      await tx.insert(videoLibrarySnapshotItemsTable).values(
+        frozenRows.slice(start, start + 250).map((payload, offset) => ({
+          snapshotId,
+          organizationId: req.tenant.organizationId,
+          position: start + offset,
+          payload,
+        })),
+      );
+    }
+    return {
+      kind: "page" as const,
+      items: frozenRows.slice(0, limit),
+      total: frozenRows.length,
+      nextCursor: encodeVideoCursor(snapshotId, limit - 1, scope, expiresAt, req.tenant.organizationId),
+    };
+  });
+  if (result.kind === "missing_folder") {
     res.status(404).json({ error: "Folder not found" });
     return;
   }
-  const hasNext = rows.length > limit;
-  const items = hasNext ? rows.slice(0, limit) : rows;
-  const nextCursor = hasNext && items.length
-    ? encodeVideoCursor(items[items.length - 1]!, {
-      sort, search: search ?? null, status: query.status ?? null, visibility: query.visibility ?? null,
-      folderId: folderId ?? (folderId === null ? "root" : null),
-    }, snapshotAt, total, req.tenant.organizationId)
-    : null;
-  res.json(ListVideosResponse.parse({ items, nextCursor, total }));
+  if (result.kind === "snapshot_limit") {
+    res.setHeader("Retry-After", "60");
+    res.status(429).json({ error: "Too many active video library snapshots. Please retry shortly." });
+    return;
+  }
+  res.json(ListVideosResponse.parse(result));
 });
 
 type CursorScope = {
@@ -398,13 +504,10 @@ type CursorScope = {
   folderId: string | null;
 };
 type VideoCursor = {
-  v: 1;
-  sort: VideoSort;
+  v: 2;
   scopeHash: string;
-  snapshotAt: Date;
-  total: number;
-  key: string | number;
-  id: string;
+  snapshotId: string;
+  position: number;
   expiresAt: number;
 };
 
@@ -418,33 +521,20 @@ function videoOrdering(sort: VideoSort): SQL[] {
   return [desc(videosTable.createdAt), desc(videosTable.id)];
 }
 
-function videoCursorCondition(cursor: VideoCursor): SQL {
-  if (cursor.sort === "plays_desc") {
-    const plays = sql`coalesce(sum(${videoAnalyticsRollupsTable.plays}), 0)`;
-    return or(lt(plays, cursor.key as number), and(eq(plays, cursor.key as number), lt(videosTable.id, cursor.id)))!;
-  }
-  const column = cursor.sort.startsWith("title") ? videosTable.title : videosTable.createdAt;
-  const key = cursor.sort.startsWith("title") ? cursor.key as string : new Date(cursor.key as string);
-  const ascending = cursor.sort === "oldest" || cursor.sort === "title_asc";
-  return or(
-    ascending ? gt(column, key) : lt(column, key),
-    and(eq(column, key), ascending ? gt(videosTable.id, cursor.id) : lt(videosTable.id, cursor.id)),
-  )!;
+function freezeVideoListItem<T extends { createdAt: Date }>(row: T) {
+  return { ...row, createdAt: row.createdAt.toISOString() };
 }
 
 function encodeVideoCursor(
-  row: { id: string; title: string; createdAt: Date; plays: number },
+  snapshotId: string,
+  position: number,
   scope: CursorScope,
-  snapshotAt: Date,
-  total: number,
+  expiresAt: Date,
   organizationId: string,
 ) {
-  const key = scope.sort === "plays_desc"
-    ? row.plays
-    : scope.sort.startsWith("title") ? row.title : row.createdAt.toISOString();
   const payload = Buffer.from(JSON.stringify({
-    v: 1, scopeHash: hashCursorScope(scope, organizationId), snapshotAt: snapshotAt.toISOString(),
-    total, key, id: row.id, expiresAt: Date.now() + cursorLifetimeMs,
+    v: 2, scopeHash: hashCursorScope(scope, organizationId),
+    snapshotId, position, expiresAt: expiresAt.getTime(),
   }), "utf8").toString("base64url");
   const signature = createHmac("sha256", cursorSigningKey).update(payload).digest("base64url");
   return `${payload}.${signature}`;
@@ -465,23 +555,12 @@ function decodeVideoCursor(value: string, scope: CursorScope, organizationId: st
   if (decoded.toString("base64url") !== encodedPayload) throw new Error("Non-canonical cursor encoding");
   const parsed = JSON.parse(decoded.toString("utf8")) as Partial<VideoCursor>;
   if (
-    parsed.v !== 1 || parsed.scopeHash !== hashCursorScope(scope, organizationId) ||
-    typeof parsed.snapshotAt !== "string" || !Number.isFinite(new Date(parsed.snapshotAt).getTime()) ||
-    typeof parsed.total !== "number" || !Number.isSafeInteger(parsed.total) || parsed.total < 0 ||
+    parsed.v !== 2 || parsed.scopeHash !== hashCursorScope(scope, organizationId) ||
     typeof parsed.expiresAt !== "number" || !Number.isSafeInteger(parsed.expiresAt) || parsed.expiresAt < Date.now() ||
-    typeof parsed.id !== "string" ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(parsed.id)
+    typeof parsed.snapshotId !== "string" || !uuidPattern.test(parsed.snapshotId) ||
+    typeof parsed.position !== "number" || !Number.isSafeInteger(parsed.position) || parsed.position < 0
   ) throw new Error("Invalid cursor payload");
-  if (scope.sort === "plays_desc") {
-    if (typeof parsed.key !== "number" || !Number.isSafeInteger(parsed.key) || parsed.key < 0) {
-      throw new Error("Invalid plays cursor");
-    }
-  } else if (typeof parsed.key !== "string" || (
-    !scope.sort.startsWith("title") && !Number.isFinite(new Date(parsed.key).getTime())
-  )) {
-    throw new Error("Invalid cursor key");
-  }
-  return { ...parsed, sort: scope.sort, snapshotAt: new Date(parsed.snapshotAt) } as VideoCursor;
+  return parsed as VideoCursor;
 }
 
 function hashCursorScope(scope: CursorScope, organizationId: string) {
@@ -625,12 +704,22 @@ router.post("/videos/upload-init", requirePermission("videos.create"), requireCr
   }
   const claim = providerAssetId ? undefined : randomUUID();
   if (claim) {
+    if (beforeAssetCreationClaimForTest) {
+      await beforeAssetCreationClaimForTest(reservation.video.id, idempotencyKey);
+    }
     const [claimed] = await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
       assetCreationClaim: claim, assetCreationClaimedAt: new Date(),
     }).where(and(
       scopedVideoWhere(req.tenant.organizationId, reservation.video.id),
+      eq(videosTable.uploadIdempotencyKey, idempotencyKey),
       sql`${videosTable.providerAssetId} is null`,
       sql`${videosTable.assetCreationClaim} is null`,
+      sql`${videosTable.deletionClaim} is null`,
+      sql`${videosTable.reconciliationRequired} is null`,
+      or(
+        eq(videosTable.status, "created"),
+        and(eq(videosTable.status, "error"), eq(videosTable.initializationRetryable, true)),
+      ),
     )).returning({ id: videosTable.id }));
     if (!claimed) {
       res.status(409).json({ error: "Upload initialization is in progress; retry with the same idempotency key." });
@@ -640,9 +729,7 @@ router.post("/videos/upload-init", requirePermission("videos.create"), requireCr
   try {
     // The deterministic adapter is only selected in NODE_ENV=test. Production
     // always constructs the configured account-backed Bunny adapter.
-    const provider = process.env.NODE_ENV === "test"
-      ? videoProviders.resolve("step7-smoke")
-      : await resolveProvisioningProvider(spaceData.account, spaceData.space);
+    const provider = await resolveProvisioningProvider(spaceData.account, spaceData.space);
     if (!providerAssetId) {
       assetCreationAttempted = true;
       const asset = await provider.createAsset({ id: spaceData.space.providerSpaceId }, { title: input.title });
@@ -650,7 +737,16 @@ router.post("/videos/upload-init", requirePermission("videos.create"), requireCr
       const [linked] = await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
         providerAccountId: spaceData.account.id, providerTenantSpaceId: spaceData.space.providerSpaceId!,
         providerAssetId: asset.id, assetCreationClaim: null, assetCreationClaimedAt: null,
-      }).where(and(scopedVideoWhere(req.tenant.organizationId, reservation.video.id), eq(videosTable.assetCreationClaim, claim!)))
+      }).where(and(
+        scopedVideoWhere(req.tenant.organizationId, reservation.video.id),
+        eq(videosTable.assetCreationClaim, claim!),
+        sql`${videosTable.deletionClaim} is null`,
+        sql`${videosTable.reconciliationRequired} is null`,
+        or(
+          eq(videosTable.status, "created"),
+          and(eq(videosTable.status, "error"), eq(videosTable.initializationRetryable, true)),
+        ),
+      ))
         .returning({ id: videosTable.id }));
       if (!linked) throw new Error("Provider asset was created but its local linkage could not be confirmed");
       assetPersisted = true;
@@ -659,24 +755,41 @@ router.post("/videos/upload-init", requirePermission("videos.create"), requireCr
       { id: spaceData.space.providerSpaceId }, { id: providerAssetId },
       { fileName: input.fileName, contentType: input.contentType, contentLength: input.contentLength },
     );
-    await withTenantDb(req.tenant, async (tx) => {
-      await tx.update(videosTable).set({
-      status: "uploading", uploadFailureDetail: null, initializationRetryable: false,
-    })
-      .where(scopedVideoWhere(req.tenant.organizationId, reservation.video.id));
+    const activated = await withTenantDb(req.tenant, async (tx) => {
+      const [changed] = await tx.update(videosTable).set({
+        status: "uploading", uploadFailureDetail: null, initializationRetryable: false,
+      }).where(and(
+        scopedVideoWhere(req.tenant.organizationId, reservation.video.id),
+        eq(videosTable.uploadIdempotencyKey, idempotencyKey),
+        eq(videosTable.providerAssetId, providerAssetId!),
+        sql`${videosTable.deletionClaim} is null`,
+        sql`${videosTable.reconciliationRequired} is null`,
+        or(
+          eq(videosTable.status, "created"),
+          eq(videosTable.status, "uploading"),
+          and(eq(videosTable.status, "error"), eq(videosTable.initializationRetryable, true)),
+        ),
+      )).returning({ id: videosTable.id });
+      if (!changed) return false;
       await writeAuditEvent(tx, {
         organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
         action: "upload.initialized", category: "content",
         subject: { type: "video", id: reservation.video.id, label: reservation.video.title },
         beforeState: { status: reservation.video.status }, afterState: { status: "uploading" }, requestId: String(req.id),
       });
+      return true;
     });
+    if (!activated) throw new UploadInitializationOwnershipLostError();
     // Do not expose the stored provider linkage; only transient upload headers
     // and the owned video UUID leave this endpoint.
     res.status(reservation.newlyReserved ? 201 : 200).json(InitializeVideoUploadResponse.parse({
       videoId: reservation.video.id, upload: credentials,
     }));
   } catch (error) {
+    if (error instanceof UploadInitializationOwnershipLostError) {
+      res.status(409).json({ error: "This upload initialization no longer owns the active upload session." });
+      return;
+    }
     if (error instanceof AssetCreationRejectedError && assetCreationAttempted) {
       await withTenantDb(req.tenant, async (tx) => {
         await releaseReservationInTransaction(tx, req.tenant.organizationId, reservation.video.id);
@@ -693,7 +806,12 @@ router.post("/videos/upload-init", requirePermission("videos.create"), requireCr
             ? "Upload credentials are temporarily unavailable; retry with the same idempotency key."
             : "Provider setup is temporarily unavailable; retry with the same idempotency key.",
           assetCreationClaim: null, assetCreationClaimedAt: null, initializationRetryable: true,
-        }).where(and(scopedVideoWhere(req.tenant.organizationId, reservation.video.id), sql`${videosTable.status} <> 'error'`))
+        }).where(and(
+          scopedVideoWhere(req.tenant.organizationId, reservation.video.id),
+          sql`${videosTable.status} <> 'error'`,
+          sql`${videosTable.deletionClaim} is null`,
+          sql`${videosTable.reconciliationRequired} is null`,
+        ))
           .returning({ id: videosTable.id });
         if (changed) await writeAuditEvent(tx, {
           organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId), action: "upload.failed", category: "content",
@@ -725,14 +843,31 @@ router.post("/videos/upload-init", requirePermission("videos.create"), requireCr
 
 router.post("/videos/:videoId/upload-complete", requirePermission("videos.create"), async (req, res) => {
   const { videoId } = GetVideoParams.parse(req.params);
+  const input = CompleteVideoUploadBody.parse(req.body);
   const video = await withTenantDb(req.tenant, async (tx) => {
+    const [current] = await tx.select({
+      id: videosTable.id,
+      title: videosTable.title,
+      status: videosTable.status,
+      reconciliationRequired: videosTable.reconciliationRequired,
+      deletionClaim: videosTable.deletionClaim,
+    }).from(videosTable).where(and(
+      scopedVideoWhere(req.tenant.organizationId, videoId),
+      eq(videosTable.uploadIdempotencyKey, input.idempotencyKey),
+    )).for("update").limit(1);
+    if (!current || current.reconciliationRequired || current.deletionClaim) return undefined;
+    if (current.status === "processing" || current.status === "ready") {
+      return readVideo(tx, req.tenant.organizationId, videoId);
+    }
+    if (current.status !== "uploading") return undefined;
     const [updated] = await tx.update(videosTable).set({
       status: "processing", reservationExpiresAt: null, reservedBytes: 0, quotaReleasedAt: new Date(),
       initializationRetryable: false,
     })
       .where(and(
         scopedVideoWhere(req.tenant.organizationId, videoId),
-        eq(videosTable.status, "uploading"),
+        eq(videosTable.uploadIdempotencyKey, input.idempotencyKey),
+        eq(videosTable.status, current.status),
         sql`${videosTable.reconciliationRequired} is null`,
         sql`${videosTable.deletionClaim} is null`,
       ))
@@ -756,33 +891,154 @@ router.post("/videos/:videoId/upload-complete", requirePermission("videos.create
 
 router.post("/videos/:videoId/upload-cancel", requirePermission("videos.create"), async (req, res) => {
   const { videoId } = GetVideoParams.parse(req.params);
-  const video = await withTenantDb(req.tenant, async (tx) => {
-    const [row] = await tx.select().from(videosTable).where(scopedVideoWhere(req.tenant.organizationId, videoId)).limit(1);
-    return row;
+  const input = CancelVideoUploadBody.parse(req.body);
+  const cancellation = await withTenantDb(req.tenant, async (tx) => {
+    const [video] = await tx.select().from(videosTable)
+      .where(scopedVideoWhere(req.tenant.organizationId, videoId)).for("update").limit(1);
+    if (!video) return { kind: "missing" as const };
+    if (video.uploadIdempotencyKey !== input.idempotencyKey) return { kind: "invalid" as const };
+    if (
+      video.status === "error"
+      && video.uploadFailureDetail === "Upload cancelled"
+      && !video.reconciliationRequired
+      && !video.deletionClaim
+    ) {
+      return {
+        kind: "already_cancelled" as const,
+        video: await readVideo(tx, req.tenant.organizationId, videoId),
+      };
+    }
+    if (video.reconciliationRequired) return { kind: "reconciliation" as const };
+    if (video.assetCreationClaim) {
+      const claimIsFresh = video.assetCreationClaimedAt
+        && video.assetCreationClaimedAt.getTime() >= Date.now() - 15 * 60_000;
+      if (claimIsFresh) return { kind: "initializing" as const };
+      await tx.update(videosTable).set({
+        status: "error",
+        reconciliationRequired: "provider asset creation outcome unknown",
+        uploadFailureDetail: "Upload initialization requires provider reconciliation.",
+        initializationRetryable: false,
+      }).where(and(
+        scopedVideoWhere(req.tenant.organizationId, videoId),
+        eq(videosTable.assetCreationClaim, video.assetCreationClaim),
+      ));
+      return { kind: "reconciliation" as const };
+    }
+    if (video.deletionClaim) {
+      const claimIsFresh = video.deletionClaimedAt
+        && video.deletionClaimedAt.getTime() >= Date.now() - 15 * 60_000;
+      if (claimIsFresh) return { kind: "in_progress" as const };
+      await tx.update(videosTable).set({
+        status: "error",
+        reconciliationRequired: "upload cancellation provider deletion outcome unknown",
+        uploadFailureDetail: "Cancellation requires provider reconciliation.",
+        initializationRetryable: false,
+      }).where(and(
+        scopedVideoWhere(req.tenant.organizationId, videoId),
+        eq(videosTable.deletionClaim, video.deletionClaim),
+      ));
+      return { kind: "reconciliation" as const };
+    }
+    if (
+      video.status !== "created"
+      && video.status !== "uploading"
+      && !(video.status === "error" && video.initializationRetryable)
+    ) {
+      return { kind: "invalid" as const };
+    }
+    const claim = randomUUID();
+    const [claimed] = await tx.update(videosTable).set({
+      deletionClaim: claim,
+      deletionClaimedAt: new Date(),
+    }).where(and(
+      scopedVideoWhere(req.tenant.organizationId, videoId),
+      eq(videosTable.uploadIdempotencyKey, input.idempotencyKey),
+      sql`${videosTable.deletionClaim} is null`,
+      sql`${videosTable.reconciliationRequired} is null`,
+    )).returning({ id: videosTable.id });
+    return claimed
+      ? { kind: "claimed" as const, video, claim }
+      : { kind: "in_progress" as const };
   });
-  if (!video) {
+  if (cancellation.kind === "missing") {
     res.status(404).json({ error: "Video not found" });
     return;
   }
+  if (cancellation.kind === "already_cancelled") {
+    res.json(cancellation.video);
+    return;
+  }
+  if (cancellation.kind === "invalid") {
+    res.status(409).json({ error: "This upload cannot be cancelled with this session in its current state." });
+    return;
+  }
+  if (cancellation.kind === "in_progress") {
+    res.status(409).json({ error: "Upload cancellation is already in progress." });
+    return;
+  }
+  if (cancellation.kind === "initializing") {
+    res.status(409).json({ error: "Upload initialization is still in progress." });
+    return;
+  }
+  if (cancellation.kind === "reconciliation") {
+    res.status(409).json({ error: "Upload cancellation requires provider reconciliation." });
+    return;
+  }
+  const { video, claim } = cancellation;
+  let providerDeletionAttempted = false;
   try {
-    if (video.providerAssetId && video.providerTenantSpaceId && video.providerAccountId) {
+    if (video.providerAssetId) {
+      if (!video.providerTenantSpaceId || !video.providerAccountId) {
+        await markCancellationReconciliation(
+          req,
+          video,
+          claim,
+          "incomplete provider linkage prevents safe upload cancellation",
+        );
+        res.status(409).json({ error: "Upload cancellation requires provider reconciliation." });
+        return;
+      }
+      const providerAccountId = video.providerAccountId;
+      const providerTenantSpaceId = video.providerTenantSpaceId;
       const spaceData = await withTenantDb(req.tenant, async (tx) => {
         const [row] = await tx.select({ space: providerTenantSpacesTable, account: providerAccountsTable })
           .from(providerTenantSpacesTable).innerJoin(providerAccountsTable, eq(providerAccountsTable.id, providerTenantSpacesTable.providerAccountId))
-          .where(and(eq(providerTenantSpacesTable.organizationId, req.tenant.organizationId), eq(providerTenantSpacesTable.providerAccountId, video.providerAccountId!))).limit(1);
+          .where(and(
+            eq(providerTenantSpacesTable.organizationId, req.tenant.organizationId),
+            eq(providerTenantSpacesTable.providerAccountId, providerAccountId),
+            eq(providerTenantSpacesTable.providerSpaceId, providerTenantSpaceId),
+          )).limit(1);
         return row;
       });
-      if (!spaceData?.space.providerSpaceId) throw new Error("Provider space is unavailable");
-      const provider = process.env.NODE_ENV === "test" ? videoProviders.resolve("step7-smoke")
-        : await resolveProvisioningProvider(spaceData.account, spaceData.space);
-      await provider.deleteAsset({ id: video.providerTenantSpaceId }, { id: video.providerAssetId });
+      if (!spaceData?.space.providerSpaceId) {
+        await releaseDeletionClaim(req, videoId, claim);
+        res.status(503).json({ error: "Video provider is unavailable." });
+        return;
+      }
+      let provider;
+      try {
+        provider = await resolveProvisioningProvider(spaceData.account, spaceData.space);
+      } catch (error) {
+        await releaseDeletionClaim(req, videoId, claim);
+        req.log.error({ err: error, videoId }, "Upload cancellation provider resolution failed");
+        res.status(503).json({ error: "Video provider is unavailable." });
+        return;
+      }
+      providerDeletionAttempted = true;
+      await provider.deleteAsset({ id: providerTenantSpaceId }, { id: video.providerAssetId });
     }
     const cancelled = await withTenantDb(req.tenant, async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${req.tenant.organizationId}))`);
       await releaseReservationInTransaction(tx, req.tenant.organizationId, videoId);
-      await tx.update(videosTable).set({
+      const [changed] = await tx.update(videosTable).set({
         status: "error", uploadFailureDetail: "Upload cancelled", initializationRetryable: false,
-      })
-        .where(scopedVideoWhere(req.tenant.organizationId, videoId));
+        deletionClaim: null, deletionClaimedAt: null,
+      }).where(and(
+        scopedVideoWhere(req.tenant.organizationId, videoId),
+        eq(videosTable.deletionClaim, claim),
+        sql`${videosTable.reconciliationRequired} is null`,
+      )).returning({ id: videosTable.id });
+      if (!changed) throw new Error("Upload cancellation claim changed before completion");
       await writeAuditEvent(tx, {
         organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
         action: "upload.cancelled", category: "content",
@@ -793,19 +1049,18 @@ router.post("/videos/:videoId/upload-cancel", requirePermission("videos.create")
     });
     res.json(cancelled);
   } catch (error) {
-    await withTenantDb(req.tenant, async (tx) => {
-      await tx.update(videosTable).set({
-      status: "error", reconciliationRequired: "provider deletion outcome unknown",
-      uploadFailureDetail: "Cancellation requires provider reconciliation.",
-      initializationRetryable: false,
-      }).where(scopedVideoWhere(req.tenant.organizationId, videoId));
-      await writeAuditEvent(tx, {
-        organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),
-        action: "upload.cancelled_ambiguous", category: "content",
-        subject: { type: "video", id: videoId, label: video.title },
-        beforeState: { status: video.status }, afterState: { status: "error", reconciliationRequired: true }, requestId: String(req.id),
-      });
-    });
+    if (!providerDeletionAttempted) {
+      await releaseDeletionClaim(req, videoId, claim).catch(() => undefined);
+      req.log.error({ err: error, videoId }, "Upload cancellation local completion failed");
+      res.status(503).json({ error: "Cancellation is temporarily unavailable. Please retry." });
+      return;
+    }
+    await markCancellationReconciliation(
+      req,
+      video,
+      claim,
+      "upload cancellation provider deletion outcome unknown",
+    );
     req.log.error({ err: error, videoId }, "Upload cancellation outcome is ambiguous");
     res.status(503).json({ error: "Cancellation could not be confirmed and requires reconciliation." });
   }
@@ -819,6 +1074,7 @@ class UploadLimitError extends UploadInputError {
 }
 class UploadReplayBlockedError extends Error {}
 class UploadFolderNotFoundError extends Error {}
+class UploadInitializationOwnershipLostError extends Error {}
 
 function isRetryableInitializationRecord(status: (typeof videoStatuses)[number], initializationRetryable: boolean) {
   return status === "created" || status === "uploading" || initializationRetryable;
@@ -849,6 +1105,45 @@ async function releaseReservationInTransaction(tx: TenantTransaction, organizati
   return true;
 }
 
+async function releaseDeletionClaim(req: Request, videoId: string, claim: string) {
+  await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
+    deletionClaim: null,
+    deletionClaimedAt: null,
+  }).where(and(
+    scopedVideoWhere(req.tenant.organizationId, videoId),
+    eq(videosTable.deletionClaim, claim),
+  )));
+}
+
+async function markCancellationReconciliation(
+  req: Request,
+  video: typeof videosTable.$inferSelect,
+  claim: string,
+  reason: string,
+) {
+  await withTenantDb(req.tenant, async (tx) => {
+    const [changed] = await tx.update(videosTable).set({
+      status: "error",
+      reconciliationRequired: reason,
+      uploadFailureDetail: "Cancellation requires provider reconciliation.",
+      initializationRetryable: false,
+    }).where(and(
+      scopedVideoWhere(req.tenant.organizationId, video.id),
+      eq(videosTable.deletionClaim, claim),
+    )).returning({ id: videosTable.id });
+    if (changed) await writeAuditEvent(tx, {
+      organizationId: req.tenant.organizationId,
+      actor: auditUser(req.tenant.userId),
+      action: "upload.cancelled_ambiguous",
+      category: "content",
+      subject: { type: "video", id: video.id, label: video.title },
+      beforeState: { status: video.status },
+      afterState: { status: "error", reconciliationRequired: true },
+      requestId: String(req.id),
+    });
+  });
+}
+
 router.get("/videos/:videoId", requirePermission("videos.read"), async (req, res) => {
   const { videoId } = GetVideoParams.parse(req.params);
   const video = await withTenantDb(req.tenant, (tx) => readVideo(tx, req.tenant.organizationId, videoId));
@@ -867,6 +1162,7 @@ router.get("/videos/:videoId", requirePermission("videos.read"), async (req, res
 
 router.get("/videos/:videoId/playback", requirePermission("videos.read"), async (req, res): Promise<void> => {
   const { videoId } = GetVideoParams.parse(req.params);
+  setPlaybackResponsePolicy(res);
   const video = await withTenantDb(req.tenant, async (tx) => {
     const [row] = await tx.select({
       id: videosTable.id, title: videosTable.title, description: videosTable.description,
@@ -905,7 +1201,6 @@ router.get("/videos/:videoId/playback", requirePermission("videos.read"), async 
     ? `/api/videos/${videoId}/thumbnail?v=${thumbnailVersion}` : null;
   const metadata = { ...baseMetadata, thumbnailUrl, posterUrl: thumbnailUrl };
   if (video.status !== "ready") {
-    res.setHeader("Cache-Control", "private, no-store");
     res.json(GetAuthenticatedVideoPlaybackResponse.parse(metadata));
     return;
   }
@@ -914,23 +1209,31 @@ router.get("/videos/:videoId/playback", requirePermission("videos.read"), async 
     return;
   }
   try {
-    const provider = process.env.NODE_ENV === "test"
-      ? videoProviders.resolve(account.providerKey)
-      : await resolveProvisioningProvider(account, space);
+    const provider = await resolveProvisioningProvider(account, space);
     const sources = await provider.getPlaybackSources({ id: providerTenantSpaceId }, { id: providerAssetId });
-    if (!sources.hlsUrl || new Date(sources.expiresAt).getTime() <= Date.now()) throw new Error("No current playback source");
-    const sourceUrl = new URL(sources.hlsUrl).toString();
-    if (!await provider.isPlaybackSourceTrusted(
+    const source = await validatePlaybackSource(
+      provider,
       { id: providerTenantSpaceId },
       { id: providerAssetId },
-      sourceUrl,
-    )) {
-      throw new Error("Provider returned an untrusted playback source");
+      sources,
+    );
+    const stillEligible = await withTenantDb(req.tenant, async (tx) => {
+      const [row] = await tx.select({ id: videosTable.id }).from(videosTable).where(and(
+        scopedVideoWhere(req.tenant.organizationId, videoId),
+        eq(videosTable.status, "ready"),
+        eq(videosTable.providerAccountId, account.id),
+        eq(videosTable.providerTenantSpaceId, providerTenantSpaceId),
+        eq(videosTable.providerAssetId, providerAssetId),
+      )).limit(1);
+      return row;
+    });
+    if (!stillEligible) {
+      res.status(404).json({ error: "Video not found" });
+      return;
     }
-    res.setHeader("Cache-Control", "private, no-store");
     res.json(GetAuthenticatedVideoPlaybackResponse.parse({
       ...metadata, sourceUrl: `/api/videos/${videoId}/playback/source`, sourceType: "hls",
-      sourceExpiresAt: new Date(sources.expiresAt).toISOString(),
+      sourceExpiresAt: source.expiresAt.toISOString(),
       posterUrl: thumbnailUrl,
     }));
   } catch (error) {
@@ -941,6 +1244,7 @@ router.get("/videos/:videoId/playback", requirePermission("videos.read"), async 
 
 router.get("/videos/:videoId/playback/source", requirePermission("videos.read"), async (req, res): Promise<void> => {
   const { videoId } = GetVideoParams.parse(req.params);
+  setPlaybackResponsePolicy(res);
   const linkage = await withTenantDb(req.tenant, async (tx) => {
     const [row] = await tx.select({
       providerAssetId: videosTable.providerAssetId, providerTenantSpaceId: videosTable.providerTenantSpaceId,
@@ -959,22 +1263,32 @@ router.get("/videos/:videoId/playback/source", requirePermission("videos.read"),
     res.status(404).json({ error: "Video not found" });
     return;
   }
+  const providerAssetId = linkage.providerAssetId;
+  const providerTenantSpaceId = linkage.providerTenantSpaceId;
   try {
-    const provider = process.env.NODE_ENV === "test"
-      ? videoProviders.resolve(linkage.account.providerKey)
-      : await resolveProvisioningProvider(linkage.account, linkage.space);
-    const sources = await provider.getPlaybackSources({ id: linkage.providerTenantSpaceId }, { id: linkage.providerAssetId });
-    if (!sources.hlsUrl || new Date(sources.expiresAt).getTime() <= Date.now()) throw new Error("No current playback source");
-    const sourceUrl = new URL(sources.hlsUrl).toString();
-    if (!await provider.isPlaybackSourceTrusted(
-      { id: linkage.providerTenantSpaceId },
-      { id: linkage.providerAssetId },
-      sourceUrl,
-    )) {
-      throw new Error("Provider returned an untrusted playback source");
+    const provider = await resolveProvisioningProvider(linkage.account, linkage.space);
+    const sources = await provider.getPlaybackSources({ id: providerTenantSpaceId }, { id: providerAssetId });
+    const source = await validatePlaybackSource(
+      provider,
+      { id: providerTenantSpaceId },
+      { id: providerAssetId },
+      sources,
+    );
+    const stillEligible = await withTenantDb(req.tenant, async (tx) => {
+      const [row] = await tx.select({ id: videosTable.id }).from(videosTable).where(and(
+        scopedVideoWhere(req.tenant.organizationId, videoId),
+        eq(videosTable.status, "ready"),
+        eq(videosTable.providerAccountId, linkage.account.id),
+        eq(videosTable.providerTenantSpaceId, providerTenantSpaceId),
+        eq(videosTable.providerAssetId, providerAssetId),
+      )).limit(1);
+      return row;
+    });
+    if (!stillEligible) {
+      res.status(404).json({ error: "Video not found" });
+      return;
     }
-    res.setHeader("Cache-Control", "private, no-store");
-    res.status(307).setHeader("Location", sourceUrl).end();
+    res.status(307).setHeader("Location", source.sourceUrl).end();
   } catch (error) {
     req.log.error({ err: error, videoId }, "Authenticated playback redirect resolution failed");
     res.status(503).json({ error: "Playback source is unavailable" });
@@ -1084,7 +1398,10 @@ async function bulkUpdateVideos(req: Request, res: import("express").Response): 
       }
       const before = folderOperation ? { folderId: current.folderId } : { visibility: current.visibility };
       const after = folderOperation ? { folderId } : { visibility };
-      if (before.folderId === after.folderId && before.visibility === after.visibility) continue;
+      if (before.folderId === after.folderId && before.visibility === after.visibility) {
+        succeeded.push(videoId);
+        continue;
+      }
       const [updated] = await tx.update(videosTable).set(
         folderOperation ? { folderId } : { visibility: visibility! },
       ).where(scopedVideoWhere(req.tenant.organizationId, videoId)).returning({ id: videosTable.id });
@@ -1154,12 +1471,20 @@ async function deleteVideoDurably(
   }
   if (video.reconciliationRequired || video.deletionClaim) {
     if (!video.reconciliationRequired && video.deletionClaim) {
+      const claimIsFresh = video.deletionClaimedAt
+        && video.deletionClaimedAt.getTime() >= Date.now() - 15 * 60_000;
+      if (claimIsFresh) {
+        return { status: 409, error: "Video deletion is already in progress." };
+      }
       await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
         status: "error",
         reconciliationRequired: "provider asset deletion outcome unknown",
         uploadFailureDetail: "Deletion requires provider reconciliation.",
         initializationRetryable: false,
-      }).where(scopedVideoWhere(organizationId, videoId)));
+      }).where(and(
+        scopedVideoWhere(organizationId, videoId),
+        eq(videosTable.deletionClaim, video.deletionClaim!),
+      )));
     }
     return { status: 409, error: "Video deletion requires provider reconciliation." };
   }
@@ -1205,9 +1530,7 @@ async function deleteVideoDurably(
 
   let provider;
   try {
-    provider = process.env.NODE_ENV === "test"
-      ? videoProviders.resolve(linkage.account.providerKey)
-      : await resolveProvisioningProvider(linkage.account, linkage.space);
+    provider = await resolveProvisioningProvider(linkage.account, linkage.space);
   } catch (error) {
     await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
       deletionClaim: null, deletionClaimedAt: null,
@@ -1257,9 +1580,28 @@ async function claimVideoForDeletion(req: Request, organizationId: string, video
     const [locked] = await tx.select({
       deletionClaim: videosTable.deletionClaim,
       reconciliationRequired: videosTable.reconciliationRequired,
+      assetCreationClaim: videosTable.assetCreationClaim,
+      assetCreationClaimedAt: videosTable.assetCreationClaimedAt,
       title: videosTable.title,
+      status: videosTable.status,
     }).from(videosTable).where(scopedVideoWhere(organizationId, videoId)).for("update").limit(1);
     if (!locked || locked.deletionClaim || locked.reconciliationRequired) return undefined;
+    if (locked.assetCreationClaim) {
+      const claimIsFresh = locked.assetCreationClaimedAt
+        && locked.assetCreationClaimedAt.getTime() >= Date.now() - 15 * 60_000;
+      if (!claimIsFresh) {
+        await tx.update(videosTable).set({
+          status: "error",
+          reconciliationRequired: "provider asset creation outcome unknown",
+          uploadFailureDetail: "Deletion requires provider reconciliation.",
+          initializationRetryable: false,
+        }).where(and(
+          scopedVideoWhere(organizationId, videoId),
+          eq(videosTable.assetCreationClaim, locked.assetCreationClaim),
+        ));
+      }
+      return undefined;
+    }
     const claim = randomUUID();
     const [claimed] = await tx.update(videosTable).set({
       deletionClaim: claim,
@@ -1272,7 +1614,9 @@ async function claimVideoForDeletion(req: Request, organizationId: string, video
     if (claimed) await writeAuditEvent(tx, {
       organizationId, actor: auditUser(req.tenant.userId), action: "video.deletion_requested", category: "content",
       subject: { type: "video", id: videoId, label: locked.title },
-      beforeState: { status: "deleting" }, requestId: String(req.id),
+      beforeState: { status: locked.status },
+      afterState: { deletionInProgress: true },
+      requestId: String(req.id),
     });
     return claimed ? claim : undefined;
   });
@@ -1310,17 +1654,26 @@ async function deleteOwnedVideoMetadata(
   const [thumbnail] = await tx.select({ objectKey: videosTable.thumbnailObjectKey })
     .from(videosTable).where(scopedVideoWhere(organizationId, videoId)).limit(1);
   if (thumbnail?.objectKey) {
-    await tx.insert(objectCleanupOutboxTable).values({ organizationId, objectKey: thumbnail.objectKey })
+    await tx.insert(objectCleanupOutboxTable).values({
+      organizationId,
+      objectKey: thumbnail.objectKey,
+      nextAttemptAt: new Date(Date.now() + 5 * 60_000),
+    })
       .onConflictDoNothing({ target: objectCleanupOutboxTable.objectKey });
   }
-  const candidateThumbnails = await tx.select({ objectKey: thumbnailUploadIntentsTable.objectKey })
+  const candidateThumbnails = await tx.select({
+    objectKey: thumbnailUploadIntentsTable.objectKey,
+    expiresAt: thumbnailUploadIntentsTable.expiresAt,
+  })
     .from(thumbnailUploadIntentsTable).where(and(
       eq(thumbnailUploadIntentsTable.organizationId, organizationId),
       eq(thumbnailUploadIntentsTable.videoId, videoId),
     ));
   if (candidateThumbnails.length) {
-    await tx.insert(objectCleanupOutboxTable).values(candidateThumbnails.map(({ objectKey }) => ({
-      organizationId, objectKey,
+    await tx.insert(objectCleanupOutboxTable).values(candidateThumbnails.map(({ objectKey, expiresAt }) => ({
+      organizationId,
+      objectKey,
+      nextAttemptAt: new Date(Math.max(Date.now() + 5 * 60_000, expiresAt.getTime() + 60_000)),
     })))
       .onConflictDoNothing({ target: objectCleanupOutboxTable.objectKey });
   }
