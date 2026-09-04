@@ -76,8 +76,17 @@ export async function provisionTenantOrganization(
         isNull(providerTenantSpacesTable.externalCallClaim),
       )).returning());
     if (!claimed) {
-      // A surviving claim represents an interrupted external call. Repeating
-      // it could create a second remote library, so reconciliation is required.
+      const [current] = await withWorkerDb("onboarding", (tx) =>
+        tx.select().from(providerTenantSpacesTable)
+          .where(eq(providerTenantSpacesTable.id, space.id)).limit(1));
+      // A fresh claim belongs to a currently executing worker. Duplicate
+      // delivery must not quarantine it or repeat the provider side effect.
+      // The provisioning queue expires after 20 minutes, so only an older
+      // unresolved claim is evidence of an interrupted ambiguous call.
+      if (current?.externalCallClaimedAt
+        && current.externalCallClaimedAt > new Date(Date.now() - 25 * 60_000)) {
+        return { organizationId, status: "processing" as const };
+      }
       await markReconciliationRequired(organizationId, space.id, "interrupted_external_call_claim");
       throw new Error(`Provider tenant-space creation requires reconciliation for ${organizationId}`);
     }

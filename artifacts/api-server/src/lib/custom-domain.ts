@@ -120,11 +120,18 @@ export async function processCustomDomainVerification(
   domainId: string,
   resolver: DomainDnsResolver,
   auditWriter: typeof writeAuditEvent = writeAuditEvent,
+  dispatchClaim?: string,
 ) {
   const claim = randomUUID();
   const row = await withWorkerDb("custom_domain", async (tx) => {
+    const ownsDispatch = dispatchClaim
+      ? and(
+        eq(customDomainsTable.lifecycleState, "verifying"),
+        eq(customDomainsTable.claimToken, dispatchClaim),
+      )
+      : inArray(customDomainsTable.lifecycleState, ["pending_verification", "failed"]);
     const [claimed] = await tx.update(customDomainsTable).set({ lifecycleState: "verifying", claimToken: claim, claimedAt: new Date() })
-      .where(and(eq(customDomainsTable.id, domainId), inArray(customDomainsTable.lifecycleState, ["pending_verification", "failed"]))).returning();
+      .where(and(eq(customDomainsTable.id, domainId), ownsDispatch)).returning();
     return claimed;
   });
   if (!row) return { skipped: true };

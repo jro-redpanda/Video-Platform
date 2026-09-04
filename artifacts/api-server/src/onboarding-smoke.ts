@@ -96,6 +96,32 @@ try {
   };
   assert.equal((await dispatchPendingOnboardingIntents(fakeQueue as never)).dispatched, 1);
   assert.equal(sent.length, 1, "durable intent was enqueued exactly once");
+  let [queuedIntent] = await db.select().from(onboardingProvisioningIntentsTable)
+    .where(eq(onboardingProvisioningIntentsTable.organizationId, organization!.id));
+  assert.equal(queuedIntent?.attempts, 0, "publishing does not consume a provider attempt");
+
+  await db.update(onboardingProvisioningIntentsTable).set({ state: "pending" })
+    .where(eq(onboardingProvisioningIntentsTable.organizationId, organization!.id));
+  const rejectedQueue = { send: async () => { throw new Error("queue unavailable"); }, findJobs: async () => [] };
+  for (let index = 0; index < 6; index++) {
+    assert.equal((await dispatchPendingOnboardingIntents(rejectedQueue as never)).dispatched, 0);
+  }
+  [queuedIntent] = await db.select().from(onboardingProvisioningIntentsTable)
+    .where(eq(onboardingProvisioningIntentsTable.organizationId, organization!.id));
+  assert.equal(queuedIntent?.state, "pending");
+  assert.equal(queuedIntent?.attempts, 0, "enqueue outages cannot exhaust provider attempts");
+  assert.equal(sent.length, 1, "enqueue failures do not produce a retry storm");
+  assert.equal((await dispatchPendingOnboardingIntents(fakeQueue as never)).dispatched, 1);
+
+  await db.update(onboardingProvisioningIntentsTable).set({
+    state: "processing",
+    claimedAt: new Date(Date.now() - 26 * 60_000),
+  }).where(eq(onboardingProvisioningIntentsTable.organizationId, organization!.id));
+  assert.equal(
+    (await dispatchPendingOnboardingIntents(fakeQueue as never)).dispatched,
+    1,
+    "a processing claim older than the queue execution horizon is redispatched",
+  );
 
   const [account] = await db.insert(providerAccountsTable).values({
     providerKey: "step7-smoke", label: `Onboarding ${marker}`,
@@ -104,7 +130,10 @@ try {
   }).returning();
   accountIds.push(account!.id);
   const fakeProvider = new Step7SmokeVideoProvider();
-  await processOnboardingProvisioningJob(organization!.id, async () => fakeProvider);
+  const provisioning = processOnboardingProvisioningJob(organization!.id, async () => fakeProvider);
+  const duplicate = processOnboardingProvisioningJob(organization!.id, async () => fakeProvider);
+  const provisioningResults = await Promise.all([provisioning, duplicate]);
+  assert.equal(provisioningResults.filter((result) => "skipped" in result).length, 1);
   assert.equal(fakeProvider.callbackConfigurationCalls, 1);
   assert.equal(
     fakeProvider.lastConfiguredCallbackUrl,

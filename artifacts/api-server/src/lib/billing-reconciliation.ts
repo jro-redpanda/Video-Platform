@@ -127,6 +127,7 @@ export async function reconcileActiveBilling(limit = 100) {
         eq(organizationBillingTable.status, "past_due"),
         eq(organizationBillingTable.status, "unpaid"),
         eq(organizationBillingTable.status, "canceled"),
+        eq(organizationBillingTable.status, "restricted"),
       ))).limit(limit));
   let reconciled = 0;
   for (const row of rows) {

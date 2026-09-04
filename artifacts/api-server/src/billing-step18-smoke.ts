@@ -6,7 +6,7 @@ import {
   organizationsTable, plansTable, usersTable, videosTable,
 } from "@workspace/db";
 import { injectBillingProviderForTest } from "./lib/billing-provider";
-import { reconcileOrganizationBilling } from "./lib/billing-reconciliation";
+import { reconcileActiveBilling, reconcileOrganizationBilling } from "./lib/billing-reconciliation";
 import { resolveBillingAccess, resolveEntitlements } from "./lib/entitlements";
 import { FakeBillingProvider } from "./lib/test-only-fake-billing-provider";
 import { checkoutSubscriptionConflict, withBillingLifecycleLock } from "./lib/billing-lifecycle-lock";
@@ -77,6 +77,13 @@ try {
   fake.subscriptions.set(`sub_fake_${suffix}`, subscription("canceled", "price_test_growth_month"));
   assert.equal((await reconcileOrganizationBilling(organizationId, userId))?.status, "restricted");
   assert.equal((await db.select({ count: videosTable.id }).from(videosTable).where(eq(videosTable.organizationId, organizationId))).length, 0, "restriction never deletes data");
+  fake.subscriptions.set(`sub_fake_${suffix}`, subscription("active", "price_test_growth_month"));
+  assert.equal((await reconcileActiveBilling()).reconciled >= 1, true);
+  assert.equal(
+    (await db.select().from(organizationBillingTable).where(eq(organizationBillingTable.organizationId, organizationId)))[0]!.status,
+    "active",
+    "periodic reconciliation repairs restricted tenants after payment recovery",
+  );
 
   // Repeated and logically older delivery hints never win: reconciliation always retrieves the current fake object.
   fake.subscriptions.set(`sub_fake_${suffix}`, subscription("active", "price_test_scale_year"));

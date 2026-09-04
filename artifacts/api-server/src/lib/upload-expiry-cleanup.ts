@@ -5,7 +5,8 @@ import {
   videosTable,
 } from "@workspace/db";
 import type { VideoProvider } from "@workspace/providers";
-import { and, eq, isNull, lt, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { and, eq, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { resolveProvisioningProvider, type ProvisioningProviderResolver } from "./provider-registry";
 import { withWorkerDb } from "./worker-db";
 
@@ -23,16 +24,53 @@ export async function cleanupExpiredUploads(
   resolveProvider: ProvisioningProviderResolver = resolveProvisioningProvider,
   now = new Date(),
 ): Promise<UploadCleanupResult> {
+  await withWorkerDb("upload_expiry", (tx) =>
+    tx.update(videosTable).set({
+      status: "error",
+      reconciliationRequired: "expired upload provider deletion outcome unknown",
+      initializationRetryable: false,
+      uploadFailureDetail: "Expired upload requires provider reconciliation.",
+    }).where(and(
+      eq(videosTable.status, "uploading"),
+      lt(videosTable.reservationExpiresAt, now),
+      isNull(videosTable.quotaReleasedAt),
+      isNull(videosTable.reconciliationRequired),
+      isNotNull(videosTable.deletionClaim),
+      lt(videosTable.deletionClaimedAt, new Date(now.getTime() - 15 * 60_000)),
+    )));
   const expired = await withWorkerDb("upload_expiry", (tx) =>
     tx.select().from(videosTable).where(and(
+      eq(videosTable.status, "uploading"),
       lt(videosTable.reservationExpiresAt, now),
       isNull(videosTable.quotaReleasedAt),
       isNull(videosTable.reconciliationRequired),
       isNull(videosTable.assetCreationClaim),
+      isNull(videosTable.deletionClaim),
     )));
   const result: UploadCleanupResult = { examined: expired.length, released: 0, reconciliationRequired: 0 };
 
   for (const video of expired) {
+    // Claim before the provider side effect. Upload completion requires the
+    // same row to remain uploading without a reconciliation marker, so either
+    // completion wins first or cleanup does; cleanup can never delete an asset
+    // that was acknowledged while this worker was waiting.
+    const claim = randomUUID();
+    const [claimed] = await withWorkerDb("upload_expiry", (tx) =>
+      tx.update(videosTable).set({
+        deletionClaim: claim,
+        deletionClaimedAt: now,
+      }).where(and(
+        eq(videosTable.id, video.id),
+        eq(videosTable.organizationId, video.organizationId),
+        eq(videosTable.status, "uploading"),
+        lt(videosTable.reservationExpiresAt, now),
+        isNull(videosTable.quotaReleasedAt),
+        isNull(videosTable.reconciliationRequired),
+        isNull(videosTable.assetCreationClaim),
+        isNull(videosTable.deletionClaim),
+      )).returning());
+    if (!claimed) continue;
+
     try {
       if (video.providerAssetId && video.providerAccountId && video.providerTenantSpaceId) {
         const providerAccountId = video.providerAccountId;
@@ -57,7 +95,11 @@ export async function cleanupExpiredUploads(
           reconciliationRequired: "expired upload provider deletion outcome unknown",
           initializationRetryable: false,
           uploadFailureDetail: "Expired upload requires provider reconciliation.",
-        }).where(and(eq(videosTable.id, video.id), isNull(videosTable.quotaReleasedAt))));
+        }).where(and(
+          eq(videosTable.id, video.id),
+          isNull(videosTable.quotaReleasedAt),
+          eq(videosTable.deletionClaim, claim),
+        )));
       result.reconciliationRequired += 1;
       continue;
     }
@@ -69,11 +111,15 @@ export async function cleanupExpiredUploads(
         uploadFailureDetail: "Upload reservation expired",
         quotaReleasedAt: now,
         initializationRetryable: false,
+        deletionClaim: null,
+        deletionClaimedAt: null,
       }).where(and(
         eq(videosTable.id, video.id),
         eq(videosTable.organizationId, video.organizationId),
+        eq(videosTable.status, "uploading"),
         isNull(videosTable.quotaReleasedAt),
         isNull(videosTable.reconciliationRequired),
+        eq(videosTable.deletionClaim, claim),
         isNull(videosTable.assetCreationClaim),
       )).returning({ reservedBytes: videosTable.reservedBytes });
       if (!claimed) return false;

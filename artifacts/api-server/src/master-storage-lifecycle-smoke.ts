@@ -225,9 +225,15 @@ try {
   }).where(eq(masterStorageOperationsTable.id, restore.id));
   await dispatchMasterStorageOperations(async () => undefined);
   let [staleProcessing] = await db.select().from(masterStorageOperationsTable).where(eq(masterStorageOperationsTable.id, restore.id));
+  assert.equal(staleProcessing?.state, "processing", "an active claim inside the queue expiry cannot be redispatched");
+  await db.update(masterStorageOperationsTable).set({
+    claimedAt: new Date(Date.now() - 36 * 60_000),
+  }).where(eq(masterStorageOperationsTable.id, restore.id));
+  await dispatchMasterStorageOperations(async () => undefined);
+  [staleProcessing] = await db.select().from(masterStorageOperationsTable).where(eq(masterStorageOperationsTable.id, restore.id));
   assert.notEqual(staleProcessing?.state, "reconciliation_required");
   await db.update(masterStorageOperationsTable).set({
-    state: "processing", attempts: 8, retryable: true, claimToken: randomUUID(), claimedAt: new Date(Date.now() - 11 * 60_000),
+    state: "processing", attempts: 8, retryable: true, claimToken: randomUUID(), claimedAt: new Date(Date.now() - 36 * 60_000),
   }).where(eq(masterStorageOperationsTable.id, restore.id));
   await dispatchMasterStorageOperations(async () => undefined);
   [staleProcessing] = await db.select().from(masterStorageOperationsTable).where(eq(masterStorageOperationsTable.id, restore.id));

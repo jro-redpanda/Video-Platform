@@ -158,10 +158,29 @@ try {
   const failedAudits = await db.select().from(auditLogsTable).where(and(eq(auditLogsTable.organizationId, orgA), eq(auditLogsTable.action, "custom_domain.verification_failed")));
   assert.equal(failedAudits.length, 1);
   await db.update(customDomainsTable).set({ lifecycleState: "verifying", claimedAt: new Date(Date.now() - 11 * 60_000), claimToken: randomUUID(), retryable: true }).where(eq(customDomainsTable.id, failureDomain.id));
-  const fakeQueue = { send: async () => "repair", findJobs: async () => [] };
+  const repairJobIds: string[] = [];
+  const fakeQueue = {
+    send: async (_name: string, _data: unknown, options: { id: string }) => {
+      repairJobIds.push(options.id);
+      return options.id;
+    },
+    findJobs: async () => [],
+  };
   await repairCustomDomainVerifications(fakeQueue as never);
-  const [repaired] = await db.select().from(customDomainsTable).where(eq(customDomainsTable.id, failureDomain.id));
-  assert.equal(repaired?.lifecycleState, "failed"); assert.equal(repaired?.retryable, true);
+  let [repaired] = await db.select().from(customDomainsTable).where(eq(customDomainsTable.id, failureDomain.id));
+  assert.equal(repaired?.lifecycleState, "verifying");
+  assert(repaired?.claimToken, "queued verification retains durable dispatch ownership");
+  await db.update(customDomainsTable).set({
+    lifecycleState: "failed",
+    claimToken: null,
+    claimedAt: null,
+    retryAfterAt: new Date(0),
+  }).where(eq(customDomainsTable.id, failureDomain.id));
+  await repairCustomDomainVerifications(fakeQueue as never);
+  assert.equal(repairJobIds.length, 2);
+  assert.notEqual(repairJobIds[0], repairJobIds[1], "retained queue rows cannot suppress a later verification");
+  [repaired] = await db.select().from(customDomainsTable).where(eq(customDomainsTable.id, failureDomain.id));
+  assert.equal(repaired?.lifecycleState, "verifying"); assert.equal(repaired?.retryable, true);
 
   // RLS reads are tenant-scoped even when explicitly using the application role.
   const rlsRows = await db.transaction(async (tx) => {

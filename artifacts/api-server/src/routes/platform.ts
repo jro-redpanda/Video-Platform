@@ -730,7 +730,12 @@ router.post("/videos/:videoId/upload-complete", requirePermission("videos.create
       status: "processing", reservationExpiresAt: null, reservedBytes: 0, quotaReleasedAt: new Date(),
       initializationRetryable: false,
     })
-      .where(and(scopedVideoWhere(req.tenant.organizationId, videoId), eq(videosTable.status, "uploading")))
+      .where(and(
+        scopedVideoWhere(req.tenant.organizationId, videoId),
+        eq(videosTable.status, "uploading"),
+        sql`${videosTable.reconciliationRequired} is null`,
+        sql`${videosTable.deletionClaim} is null`,
+      ))
       .returning({ id: videosTable.id, title: videosTable.title });
     if (updated) await writeAuditEvent(tx, {
       organizationId: req.tenant.organizationId, actor: auditUser(req.tenant.userId),

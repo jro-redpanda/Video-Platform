@@ -143,6 +143,56 @@ try {
   assert.equal(cleanup.released, 1);
   assert.equal((await init(`expired-${suffix}`)).status, 409, "expired upload cannot be resurrected");
 
+  const raceInit = await init(`expired-race-${suffix}`);
+  const raceBody = await raceInit.json() as { videoId: string };
+  await db.update(videosTable).set({ reservationExpiresAt: new Date(0) })
+    .where(eq(videosTable.id, raceBody.videoId));
+  const originalDelete = provider.deleteAsset.bind(provider);
+  let releaseDelete!: () => void;
+  const deleteReleased = new Promise<void>((resolve) => { releaseDelete = resolve; });
+  let deletionClaimed!: () => void;
+  const deletionStarted = new Promise<void>((resolve) => { deletionClaimed = resolve; });
+  provider.deleteAsset = async (space, asset) => {
+    deletionClaimed();
+    await deleteReleased;
+    return originalDelete(space, asset);
+  };
+  const racingCleanup = cleanupExpiredUploads(async () => provider);
+  await deletionStarted;
+  const racingComplete = await fetch(`${base}/api/videos/${raceBody.videoId}/upload-complete`, {
+    method: "POST",
+    headers: { cookie },
+  });
+  assert.equal(racingComplete.status, 409, "completion cannot acknowledge an asset claimed for expiry deletion");
+  releaseDelete();
+  assert.equal((await racingCleanup).released, 1);
+  provider.deleteAsset = originalDelete;
+
+  const completionWinsInit = await init(`completion-wins-${suffix}`);
+  const completionWinsBody = await completionWinsInit.json() as { videoId: string };
+  await db.update(videosTable).set({ reservationExpiresAt: new Date(0) })
+    .where(eq(videosTable.id, completionWinsBody.videoId));
+  assert.equal((await fetch(`${base}/api/videos/${completionWinsBody.videoId}/upload-complete`, {
+    method: "POST",
+    headers: { cookie },
+  })).status, 200);
+  const deletesBeforeCompletedCleanup = provider.deleteAssetCalls;
+  assert.equal((await cleanupExpiredUploads(async () => provider)).released, 0);
+  assert.equal(provider.deleteAssetCalls, deletesBeforeCompletedCleanup, "cleanup never deletes an acknowledged upload");
+
+  const staleClaimInit = await init(`stale-cleanup-claim-${suffix}`);
+  const staleClaimBody = await staleClaimInit.json() as { videoId: string };
+  await db.update(videosTable).set({
+    reservationExpiresAt: new Date(0),
+    deletionClaim: randomUUID(),
+    deletionClaimedAt: new Date(Date.now() - 16 * 60_000),
+  }).where(eq(videosTable.id, staleClaimBody.videoId));
+  await cleanupExpiredUploads(async () => provider);
+  const [staleClaim] = await db.select().from(videosTable)
+    .where(eq(videosTable.id, staleClaimBody.videoId));
+  assert.equal(staleClaim?.status, "error");
+  assert.equal(staleClaim?.reconciliationRequired, "expired upload provider deletion outcome unknown");
+
   const otherOrg = randomUUID();
   await db.insert(organizationsTable).values({ id: otherOrg, name: "Other", slug: `other-${suffix}`, status: "active", planId });
   const [foreignVideo] = await db.insert(videosTable).values({ organizationId: otherOrg, title: "Foreign" }).returning();

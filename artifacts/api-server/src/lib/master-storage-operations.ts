@@ -8,6 +8,9 @@ import { getRuntimeColdMasterTransfer, type ColdMasterTransfer, ColdMasterTransf
 import { withWorkerDb } from "./worker-db";
 
 const maxAttempts = 8;
+// Operation jobs expire after 30 minutes. A processing claim must not be
+// declared stale while pg-boss can still be running the owning worker.
+const processingLeaseMs = 35 * 60_000;
 const activeStates = ["pending", "dispatching", "queued", "processing"] as const;
 type Operation = "archive" | "restore";
 export class MasterStorageNotFoundError extends Error {}
@@ -112,18 +115,19 @@ async function workerTransaction<T>(work: (tx: TenantTransaction) => Promise<T>)
   return withWorkerDb("master_storage", work);
 }
 export async function dispatchMasterStorageOperations(enqueue: (job: { operationId: string; generation: number }) => Promise<unknown>) {
-  const staleAt = new Date(Date.now() - 10 * 60_000);
+  const staleQueuedAt = new Date(Date.now() - 10 * 60_000);
+  const staleProcessingAt = new Date(Date.now() - processingLeaseMs);
   await workerTransaction(async (tx) => {
     // A queued pg-boss job can expire without ever claiming the operation.
     await tx.update(masterStorageOperationsTable).set({ state: "pending", claimToken: null, claimedAt: null, diagnosticCode: "queue_expired" })
-      .where(and(eq(masterStorageOperationsTable.state, "queued"), lt(masterStorageOperationsTable.dispatchedAt, staleAt)));
+      .where(and(eq(masterStorageOperationsTable.state, "queued"), lt(masterStorageOperationsTable.dispatchedAt, staleQueuedAt)));
     // Only safe-to-repeat interrupted processing is returned to the dispatcher.
     await tx.update(masterStorageOperationsTable).set({ state: "failed", retryable: true, retryAfterAt: new Date(), claimToken: null, claimedAt: null, diagnosticCode: "worker_interrupted" })
-      .where(and(eq(masterStorageOperationsTable.state, "processing"), lt(masterStorageOperationsTable.claimedAt, staleAt), lt(masterStorageOperationsTable.attempts, maxAttempts)));
+      .where(and(eq(masterStorageOperationsTable.state, "processing"), lt(masterStorageOperationsTable.claimedAt, staleProcessingAt), lt(masterStorageOperationsTable.attempts, maxAttempts)));
     const exhausted = await tx.update(masterStorageOperationsTable).set({
       state: "reconciliation_required", retryable: false, completedAt: new Date(), claimToken: null,
       diagnosticCode: "worker_interrupted_attempts_exhausted", retryAfterAt: null,
-    }).where(and(eq(masterStorageOperationsTable.state, "processing"), lt(masterStorageOperationsTable.claimedAt, staleAt), eq(masterStorageOperationsTable.attempts, maxAttempts))).returning();
+    }).where(and(eq(masterStorageOperationsTable.state, "processing"), lt(masterStorageOperationsTable.claimedAt, staleProcessingAt), eq(masterStorageOperationsTable.attempts, maxAttempts))).returning();
     const failed = await tx.update(masterStorageOperationsTable).set({
       retryable: false, completedAt: new Date(), retryAfterAt: null, diagnosticCode: "attempts_exhausted",
     }).where(and(eq(masterStorageOperationsTable.state, "failed"), eq(masterStorageOperationsTable.retryable, true), eq(masterStorageOperationsTable.attempts, maxAttempts))).returning();

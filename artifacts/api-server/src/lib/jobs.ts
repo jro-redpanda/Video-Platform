@@ -45,6 +45,7 @@ type BunnyRoundTripJob = {
   requestedAt: string;
 };
 type TenantProvisionJob = { organizationId: string };
+type CustomDomainVerificationJob = { domainId: string; dispatchClaim: string };
 
 let boss: PgBoss | undefined;
 let bossStart: Promise<PgBoss> | undefined;
@@ -216,8 +217,13 @@ export async function startJobs(options: {
     reconcileActiveBilling());
   await instance.work(ANALYTICS_ROLLUP_QUEUE, { batchSize: 1 }, async () => processAnalyticsDirtyDays());
   await instance.work(ANALYTICS_RETENTION_QUEUE, { batchSize: 1 }, async () => purgeAnalyticsData());
-  await instance.work<{ domainId: string }>(CUSTOM_DOMAIN_VERIFY_QUEUE, { batchSize: 1 }, async ([job]) =>
-    processCustomDomainVerification(job.data.domainId, options.domainDnsResolver ?? nodeDomainDnsResolver));
+  await instance.work<CustomDomainVerificationJob>(CUSTOM_DOMAIN_VERIFY_QUEUE, { batchSize: 1 }, async ([job]) =>
+    processCustomDomainVerification(
+      job.data.domainId,
+      options.domainDnsResolver ?? nodeDomainDnsResolver,
+      writeAuditEvent,
+      job.data.dispatchClaim,
+    ));
   await instance.work(CUSTOM_DOMAIN_REPAIR_QUEUE, { batchSize: 1 }, async () => repairCustomDomainVerifications(instance));
   await instance.work(MASTER_STORAGE_DISPATCH_QUEUE, { batchSize: 1 }, async () => dispatchMasterStorageOperations((job) => sendMasterStorageJob(instance, job.operationId, job.generation)));
   await instance.work<{ operationId: string; generation: number }>(MASTER_STORAGE_OPERATION_QUEUE, { batchSize: 1 }, async ([job]) => processMasterStorageOperation(job.data.operationId, undefined, undefined, job.data.generation));
@@ -250,11 +256,25 @@ export async function startJobs(options: {
 export async function enqueueCustomDomainVerification(domainId: string) {
   if (customDomainVerificationEnqueuer) return customDomainVerificationEnqueuer(domainId);
   const instance = boss ?? await startJobs();
-  const id = await instance.send(CUSTOM_DOMAIN_VERIFY_QUEUE, { domainId }, { id: domainId, singletonKey: domainId });
-  if (id) return id;
-  const [existing] = await instance.findJobs(CUSTOM_DOMAIN_VERIFY_QUEUE, { id: domainId });
-  if (!existing) throw new Error("Job queue rejected custom-domain verification");
-  return existing.id;
+  // A domain can be verified repeatedly over its lifetime. Reusing the domain
+  // UUID as the pg-boss job ID lets a retained completed/dead-letter row
+  // suppress a later request. The database claim in
+  // processCustomDomainVerification provides single-flight execution.
+  const dispatchClaim = await claimCustomDomainDispatch(domainId);
+  if (!dispatchClaim) throw new Error("Custom-domain verification is not dispatchable");
+  try {
+    const jobId = `${domainId}:${randomUUID()}`;
+    const id = await instance.send(
+      CUSTOM_DOMAIN_VERIFY_QUEUE,
+      { domainId, dispatchClaim },
+      { id: jobId },
+    );
+    if (!id) throw new Error("Job queue rejected custom-domain verification");
+    return id;
+  } catch (error) {
+    await releaseCustomDomainDispatch(domainId, dispatchClaim);
+    throw error;
+  }
 }
 
 export async function repairCustomDomainVerifications(instance?: PgBoss) {
@@ -277,10 +297,51 @@ export async function repairCustomDomainVerifications(instance?: PgBoss) {
   });
   let queued = 0;
   for (const row of candidates) {
-    const id = await queue.send(CUSTOM_DOMAIN_VERIFY_QUEUE, { domainId: row.id }, { id: row.id, singletonKey: row.id });
-    if (id) queued++;
+    const dispatchClaim = await claimCustomDomainDispatch(row.id);
+    if (!dispatchClaim) continue;
+    try {
+      const id = await queue.send(
+        CUSTOM_DOMAIN_VERIFY_QUEUE,
+        { domainId: row.id, dispatchClaim },
+        { id: `${row.id}:${randomUUID()}` },
+      );
+      if (!id) throw new Error("Job queue rejected custom-domain verification");
+      queued++;
+    } catch {
+      await releaseCustomDomainDispatch(row.id, dispatchClaim);
+    }
   }
   return { queued };
+}
+
+async function claimCustomDomainDispatch(domainId: string) {
+  const claim = randomUUID();
+  const [claimed] = await withWorkerDb("custom_domain", (tx) =>
+    tx.update(customDomainsTable).set({
+      lifecycleState: "verifying",
+      claimToken: claim,
+      claimedAt: new Date(),
+    }).where(and(
+      eq(customDomainsTable.id, domainId),
+      inArray(customDomainsTable.lifecycleState, ["pending_verification", "failed"]),
+      eq(customDomainsTable.retryable, true),
+    )).returning({ id: customDomainsTable.id }));
+  return claimed ? claim : undefined;
+}
+
+async function releaseCustomDomainDispatch(domainId: string, claim: string) {
+  await withWorkerDb("custom_domain", (tx) =>
+    tx.update(customDomainsTable).set({
+      lifecycleState: "failed",
+      claimToken: null,
+      claimedAt: null,
+      diagnosticCode: "verification_enqueue_failed",
+      retryAfterAt: new Date(),
+    }).where(and(
+      eq(customDomainsTable.id, domainId),
+      eq(customDomainsTable.lifecycleState, "verifying"),
+      eq(customDomainsTable.claimToken, claim),
+    )));
 }
 
 export async function stopJobs() {
@@ -347,11 +408,20 @@ export async function dispatchPendingOnboardingIntents(instance?: PgBoss) {
   for (let index = 0; index < 100; index++) {
     const candidate = await withWorkerDb("onboarding", async (tx) => {
       const staleBefore = new Date(Date.now() - 5 * 60_000);
+      const staleWorkerBefore = new Date(Date.now() - 25 * 60_000);
       const claimable = or(
         eq(onboardingProvisioningIntentsTable.state, "pending"),
         and(
           eq(onboardingProvisioningIntentsTable.state, "dispatching"),
           lt(onboardingProvisioningIntentsTable.claimedAt, staleBefore),
+        ),
+        and(
+          eq(onboardingProvisioningIntentsTable.state, "queued"),
+          lt(onboardingProvisioningIntentsTable.dispatchedAt, staleWorkerBefore),
+        ),
+        and(
+          eq(onboardingProvisioningIntentsTable.state, "processing"),
+          lt(onboardingProvisioningIntentsTable.claimedAt, staleWorkerBefore),
         ),
       );
       const [row] = await tx.select({
@@ -364,7 +434,6 @@ export async function dispatchPendingOnboardingIntents(instance?: PgBoss) {
       const claim = randomUUID();
       const [claimed] = await tx.update(onboardingProvisioningIntentsTable).set({
         state: "dispatching", dispatchClaim: claim, claimedAt: new Date(),
-        attempts: sql`${onboardingProvisioningIntentsTable.attempts} + 1`,
       }).where(and(eq(onboardingProvisioningIntentsTable.id, row.id), claimable))
         .returning({ id: onboardingProvisioningIntentsTable.id });
       return claimed ? { ...row, claim } : undefined;
@@ -390,21 +459,24 @@ export async function dispatchPendingOnboardingIntents(instance?: PgBoss) {
           eq(onboardingProvisioningIntentsTable.dispatchClaim, candidate.claim),
         ));
       });
+      // Leave the durable row pending for the next scheduled wake-up. Retrying
+      // the same unavailable queue 100 times in one run creates a local storm
+      // without improving delivery.
+      break;
     }
   }
   return { dispatched };
 }
 
 async function sendOnboardingProvisioningJob(queue: PgBoss, organizationId: string, intentId: string) {
+  const jobId = `${intentId}:${randomUUID()}`;
   const id = await queue.send(
     TENANT_PROVISION_QUEUE,
     { organizationId },
-    { id: intentId, singletonKey: intentId },
+    { id: jobId },
   );
-  if (id) return id;
-  const [existing] = await queue.findJobs(TENANT_PROVISION_QUEUE, { id: intentId });
-  if (!existing) throw new Error("Job queue rejected onboarding provisioning");
-  return existing.id;
+  if (!id) throw new Error("Job queue rejected onboarding provisioning");
+  return id;
 }
 
 export async function processOnboardingProvisioningJob(
@@ -412,10 +484,22 @@ export async function processOnboardingProvisioningJob(
   resolver: ProvisioningProviderResolver,
 ) {
   const shouldRun = await withWorkerDb("onboarding", async (tx) => {
-    const [intent] = await tx.update(onboardingProvisioningIntentsTable).set({ state: "processing" })
+    const claimable = or(
+      inArray(onboardingProvisioningIntentsTable.state, ["queued", "pending", "dispatching"]),
+      and(
+        inArray(onboardingProvisioningIntentsTable.state, ["failed", "unavailable"]),
+        eq(onboardingProvisioningIntentsTable.retryable, true),
+      ),
+    );
+    const [intent] = await tx.update(onboardingProvisioningIntentsTable).set({
+      state: "processing",
+      attempts: sql`${onboardingProvisioningIntentsTable.attempts} + 1`,
+      claimedAt: new Date(),
+    })
       .where(and(
         eq(onboardingProvisioningIntentsTable.organizationId, organizationId),
-        inArray(onboardingProvisioningIntentsTable.state, ["queued", "pending", "dispatching", "processing"]),
+        claimable,
+        lt(onboardingProvisioningIntentsTable.attempts, 5),
       )).returning({ id: onboardingProvisioningIntentsTable.id });
     return Boolean(intent);
   });
