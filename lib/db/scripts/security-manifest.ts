@@ -29,6 +29,8 @@ export const TENANT_RLS_TABLES = [
   "custom_domains",
   "custom_domain_verification_windows",
   "master_storage_operations",
+  "video_library_snapshots",
+  "video_library_snapshot_items",
 ] as const;
 
 export const APP_TABLE_PRIVILEGES: Record<string, readonly string[]> = {
@@ -61,6 +63,8 @@ export const APP_TABLE_PRIVILEGES: Record<string, readonly string[]> = {
   provider_tenant_spaces: ["DELETE", "INSERT", "SELECT", "UPDATE"],
   thumbnail_upload_intents: ["DELETE", "INSERT", "SELECT", "UPDATE"],
   users: ["SELECT"],
+  video_library_snapshot_items: ["DELETE", "INSERT", "SELECT"],
+  video_library_snapshots: ["DELETE", "INSERT", "SELECT"],
   video_analytics_rollups: ["INSERT", "SELECT"],
   video_embeds: ["DELETE", "INSERT", "SELECT", "UPDATE"],
   videos: ["DELETE", "INSERT", "SELECT", "UPDATE"],
@@ -72,6 +76,7 @@ export const WORKER_TABLE_PRIVILEGES: Record<string, readonly string[]> = {
   analytics_playback_sessions: ["DELETE", "SELECT"],
   analytics_rate_windows: ["DELETE", "SELECT"],
   audit_logs: ["INSERT"],
+  billing_event_receipts: ["INSERT", "SELECT", "UPDATE"],
   custom_domain_verification_windows: ["SELECT", "UPDATE"],
   custom_domains: ["SELECT", "UPDATE"],
   embed_generation_outbox: ["SELECT", "UPDATE"],

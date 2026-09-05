@@ -16,45 +16,71 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useListWorkspaces, useSelectWorkspace, useGetWorkspace } from "@workspace/api-client-react"
 import { authClient } from "@/lib/auth-client"
 import { useToast } from "@/components/ui/use-toast"
+import { useTenantTransition } from "@/lib/tenant-transition"
 
 export function WorkspaceSwitcher() {
-  const { data: workspaces } = useListWorkspaces()
+  const {
+    data: workspaces,
+    isError: isWorkspacesError,
+    isFetching: isWorkspacesFetching,
+    refetch: refetchWorkspaces,
+  } = useListWorkspaces()
   const { data: workspace, isLoading } = useGetWorkspace()
   const selectWorkspace = useSelectWorkspace()
   const queryClient = useQueryClient()
   const [, setLocation] = useLocation()
   const [isSwitching, setIsSwitching] = React.useState(false)
   const { toast } = useToast()
+  const { beginTenantTransition, endTenantTransition } = useTenantTransition()
+  const clearTenantQueries = React.useCallback(async () => {
+    await queryClient.cancelQueries().catch(() => undefined)
+    queryClient.clear()
+  }, [queryClient])
 
   const activeWorkspace = workspaces?.find(w => w.current) || workspaces?.find(w => w.id === workspace?.id)
 
   const handleSwitch = async (id: string) => {
     if (id === activeWorkspace?.id) return
     setIsSwitching(true)
+    beginTenantTransition()
     try {
-      await selectWorkspace.mutateAsync({ data: { id } })
-      await queryClient.cancelQueries()
-      queryClient.clear()
+      const selected = await selectWorkspace.mutateAsync({ data: { id } })
+      if (selected.id !== id || !selected.current) {
+        throw new Error("The selected workspace could not be confirmed.")
+      }
+      await clearTenantQueries()
       setLocation("/", { replace: true })
-      window.location.reload()
     } catch {
+      await clearTenantQueries()
+      setLocation("/", { replace: true })
       toast({
-        title: "Workspace switch failed",
-        description: "Your current workspace has not changed. Please try again.",
+        title: "Workspace switch could not be confirmed",
+        description: "Workspace data is being reloaded before you continue.",
         variant: "destructive",
       })
+    } finally {
       setIsSwitching(false)
+      endTenantTransition()
     }
   }
 
   const handleLogout = async () => {
+    beginTenantTransition()
     try {
-      await authClient.signOut()
-    } finally {
-      await queryClient.cancelQueries()
-      queryClient.clear()
+      const result = await authClient.signOut()
+      if (result.error) {
+        throw new Error(result.error.message ?? "Logout failed")
+      }
+      await clearTenantQueries()
       setLocation("/", { replace: true })
-      window.location.reload()
+    } catch {
+      toast({
+        title: "Logout failed",
+        description: "Your session is still active. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      endTenantTransition()
     }
   }
 
@@ -68,7 +94,7 @@ export function WorkspaceSwitcher() {
             className="h-8 w-8 rounded flex items-center justify-center text-white text-xs font-bold shrink-0"
             style={{ backgroundColor: workspace?.playerAccent || 'var(--primary)' }}
           >
-            {workspace?.logoInitials || 'VP'}
+            {workspace?.logoInitials || workspace?.name.slice(0, 2).toUpperCase() || 'WS'}
           </div>
         )}
         <div className="flex flex-col flex-1 overflow-hidden">
@@ -83,7 +109,18 @@ export function WorkspaceSwitcher() {
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-64" align="start" side="bottom" sideOffset={8}>
         <DropdownMenuLabel className="text-xs text-muted-foreground uppercase tracking-wider">Workspaces</DropdownMenuLabel>
-        {workspaces?.map((ws) => (
+        {isWorkspacesError ? (
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
+              void refetchWorkspaces()
+            }}
+            disabled={isWorkspacesFetching}
+            data-testid="menu-item-retry-workspaces"
+          >
+            {isWorkspacesFetching ? "Retrying…" : "Could not load workspaces — retry"}
+          </DropdownMenuItem>
+        ) : workspaces?.map((ws) => (
           <DropdownMenuItem
             key={ws.id}
             onSelect={() => handleSwitch(ws.id)}

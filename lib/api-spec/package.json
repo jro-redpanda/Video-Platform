@@ -3,7 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "codegen": "orval --config ./orval.config.ts && pnpm -w run typecheck:libs"
+    "codegen": "orval --config ./orval.config.ts && node ./scripts/contract-smoke.mjs && pnpm -w run typecheck:libs",
+    "codegen:check": "node ./scripts/check-codegen.mjs && node ./scripts/contract-smoke.mjs",
+    "contract:check": "node ./scripts/contract-smoke.mjs"
   },
   "devDependencies": {
     "orval": "^8.23.0"

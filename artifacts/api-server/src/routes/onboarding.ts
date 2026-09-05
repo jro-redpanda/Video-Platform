@@ -88,7 +88,11 @@ router.post("/onboarding/retry", async (req, res): Promise<void> => {
     return;
   }
   try {
-    const state = await retryWorkspaceOnboarding(req.onboardingUserId!, parsed.data.workspaceId);
+    const state = await retryWorkspaceOnboarding(
+      req.onboardingUserId!,
+      parsed.data.workspaceId,
+      String(req.id),
+    );
     void enqueueOnboardingDispatchWakeup().catch(() => {
       req.log.warn("Onboarding retry dispatch wake-up failed; durable scanner will retry");
     });

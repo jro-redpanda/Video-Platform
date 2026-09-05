@@ -22,7 +22,17 @@ reachable or usable.
   access, and log redaction. See [AUDIT_OPERATIONS.md](AUDIT_OPERATIONS.md).
 - [ ] Check dependency *health* using approved non-secret operational signals;
   do not treat a configured flag or present environment variable as a health
-  result.
+  result. Record the signal source, UTC observation time, observer, result, and
+  evidence location for every required database, queue, storage, and provider.
+- [ ] Run the dependency/security review and inspect every peer-version
+  exception in `pnpm-workspace.yaml`. Remove an exception when its upstream
+  package declares support; do not broaden an exception to make installation
+  pass.
+- [ ] Resolve every open dependency advisory using reviewed package-manager
+  updates, then rerun the audit against the installed graph. Do not claim an
+  advisory is fixed from a proposed lockfile change when the patched package
+  archive was not installed and validated. Record the result using
+  [SECURITY_REVIEW.md](SECURITY_REVIEW.md).
 
 ## Database acceptance, migration, and verification
 
@@ -32,8 +42,8 @@ reachable or usable.
    existing pre-ledger database, use only the explicit adoption procedure in
    [lib/db/MIGRATIONS.md](lib/db/MIGRATIONS.md); otherwise investigate
    discrepancies.
-3. Run `pnpm --filter @workspace/db migrate` with the schema-owner connection.
-4. Run `pnpm --filter @workspace/db verify-schema`.
+3. Run `pnpm --filter @workspace/db run migrate` with the schema-owner connection.
+4. Run `pnpm --filter @workspace/db run verify-schema`.
 5. Only after verification succeeds, start API replicas and then workers.
    PgBoss instances use `migrate:false`; queue schema changes belong to the
    migration phase.
@@ -60,6 +70,13 @@ production by dropping data.
 Run appropriate checks in a non-production or approved isolated environment;
 do not use a smoke to create unreviewed production side effects.
 
+Database-backed smoke commands fail closed unless `SMOKE_DATABASE_URL` points
+to the isolated database, `SMOKE_SESSION_SECRET` contains test-only key
+material, and `SMOKE_DATABASE_CONFIRMATION=isolated-non-production` is set.
+The launcher substitutes those values for runtime database/session settings and
+rejects deployment/production environments. Never point these variables at a
+production database or production secret.
+
 | Area | Check |
 |---|---|
 | Database/migrations | migration acceptance, `migrate`, then `verify-schema` |
@@ -70,6 +87,11 @@ do not use a smoke to create unreviewed production side effects.
 | Analytics/audit | `analytics:smoke` and `audit:smoke`; review [ANALYTICS_OPERATIONS.md](ANALYTICS_OPERATIONS.md) and [AUDIT_OPERATIONS.md](AUDIT_OPERATIONS.md) |
 | Domains | `custom-domain:smoke` (injected DNS resolver only) |
 | Master archive | `cold-master:smoke` and `master-storage:lifecycle-smoke` (test seams only) |
+
+`provider:smoke`, `thumbnail:storage-smoke`, `thumbnail:cleanup-once`, and
+`stripe:seed` are not part of the local matrix. Each has a separate explicit
+authorization guard because it can call a provider, use object storage, delete
+objects, or write Stripe/database state.
 
 ## External blockers — do not infer readiness
 

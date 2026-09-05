@@ -190,8 +190,8 @@ export const masterStorageOperationsTable = pgTable("master_storage_operations",
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 }, (table) => [
   uniqueIndex("master_storage_operations_idempotency_idx").on(table.idempotencyKey),
-  uniqueIndex("master_storage_operations_one_active_video_idx").on(table.videoId)
-    .where(sql`${table.state} in ('pending','dispatching','queued','processing')`),
+  uniqueIndex("master_storage_operations_one_outstanding_video_idx").on(table.videoId)
+    .where(sql`${table.state} in ('pending','dispatching','queued','processing') or (${table.state} = 'failed' and ${table.retryable} = true)`),
   index("master_storage_operations_dispatch_idx").on(table.state, table.retryAfterAt, table.createdAt),
   index("master_storage_operations_org_video_idx").on(table.organizationId, table.videoId, table.createdAt),
   foreignKey({
@@ -200,6 +200,33 @@ export const masterStorageOperationsTable = pgTable("master_storage_operations",
     foreignColumns: [videosTable.id, videosTable.organizationId],
   }).onDelete("cascade"),
   check("master_storage_operations_attempts_check", sql`${table.attempts} between 0 and 8`),
+  check("master_storage_operations_dispatch_generation_check", sql`${table.dispatchGeneration} >= 0`),
+  check("master_storage_operations_idempotency_key_check", sql`${table.idempotencyKey} ~ '^[a-f0-9]{64}$'`),
+  check("master_storage_operations_claim_state_check", sql`
+    (
+      ${table.state} in ('dispatching', 'processing')
+      and ${table.claimToken} is not null
+      and ${table.claimedAt} is not null
+    ) or (
+      ${table.state} not in ('dispatching', 'processing')
+      and ${table.claimToken} is null
+      and ${table.claimedAt} is null
+    )
+  `),
+  check("master_storage_operations_retry_state_check", sql`
+    (${table.state} in ('pending', 'dispatching', 'queued', 'processing') and ${table.retryable} = true)
+    or (${table.state} in ('completed', 'reconciliation_required', 'cancelled') and ${table.retryable} = false)
+    or ${table.state} = 'failed'
+  `),
+  check("master_storage_operations_completed_state_check", sql`
+    (${table.completedAt} is not null) = (
+      ${table.state} in ('completed', 'reconciliation_required', 'cancelled')
+      or (${table.state} = 'failed' and ${table.retryable} = false)
+    )
+  `),
+  check("master_storage_operations_retry_after_check", sql`
+    ${table.retryAfterAt} is null or (${table.state} = 'failed' and ${table.retryable} = true)
+  `),
   check("master_storage_operations_restore_snapshot_check", sql`(
     ${table.operation} = 'archive'
     and ${table.restoreStorageKey} is null and ${table.restoreSha256} is null and ${table.restoreSizeBytes} is null and ${table.restoreContentType} is null

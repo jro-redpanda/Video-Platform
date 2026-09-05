@@ -9,12 +9,13 @@ import {
 import { logger } from "./logger";
 import { withWorkerDb } from "./worker-db";
 
-type DirtyDay = { organizationId: string; videoId: string; day: string; version: number };
+type DirtyDay = { organizationId: string; videoId: string; day: string; version: number; attempts: number };
 
 export async function claimAnalyticsDirtyDay(now = new Date()): Promise<DirtyDay | undefined> {
   return withWorkerDb("analytics", async (tx) => {
     const result = await tx.execute<DirtyDay>(sql`
-      select organization_id as "organizationId", video_id as "videoId", day::text as day, version::int as version
+      select organization_id as "organizationId", video_id as "videoId", day::text as day,
+        version::int as version, (attempts + 1)::int as attempts
       from ${analyticsDirtyDaysTable}
       where available_at <= ${now} and (claimed_at is null or claimed_at < ${new Date(now.getTime() - 10 * 60_000)})
       order by available_at, day for update skip locked limit 1
@@ -47,7 +48,7 @@ export async function recomputeAnalyticsDay(dirty: DirtyDay) {
             on attestation.organization_id=event.organization_id and attestation.video_id=event.video_id
               and attestation.client_session_id=event.session_id and attestation.embed_id=event.embed_id
           where event.organization_id=${dirty.organizationId} and event.video_id=${dirty.videoId}
-            and event.occurred_at >= ${dirty.day}::date and event.occurred_at < ${dirty.day}::date + interval '1 day'
+            and (event.occurred_at at time zone 'UTC')::date = ${dirty.day}::date
         ), shape as (
           select session_id, max(server_duration) server_duration,
             min(first_received_at) attested_at,
@@ -103,15 +104,11 @@ export async function recomputeAnalyticsDay(dirty: DirtyDay) {
           select count(*)::int plays, count(*)::int unique_sessions,
             floor(coalesce(sum(watch_seconds),0))::int watch_seconds,
             count(*) filter(where completion)::int completions from modern
-        ), legacy as (
-          -- Migration-only fallback: a day with zero credible modern plays may
-          -- expose distinct load sessions as plays, never as completions.
-          select count(distinct session_id)::int plays from source where event_type='load'
-        ) select case when aggregate.plays > 0 then aggregate.plays else legacy.plays end as "plays",
-          case when aggregate.plays > 0 then aggregate.unique_sessions else legacy.plays end as "uniqueSessions",
+        ) select aggregate.plays as "plays",
+          aggregate.unique_sessions as "uniqueSessions",
           aggregate.watch_seconds as "watchSeconds",
           least(aggregate.completions, aggregate.plays)::int as "completions"
-        from aggregate cross join legacy
+        from aggregate
       `);
       const rawMetrics = result.rows[0] ?? { plays: 0, uniqueSessions: 0, watchSeconds: 0, completions: 0 };
       // This should be unreachable because modern is one row per eligible
@@ -153,12 +150,13 @@ export async function recomputeAnalyticsDay(dirty: DirtyDay) {
     await withWorkerDb("analytics", async (tx) => {
       await tx.update(analyticsDirtyDaysTable).set({
         claimedAt: null,
-        availableAt: new Date(Date.now() + Math.min(60 * 60_000, 2 ** Math.min(10, dirty.version) * 1000)),
+        availableAt: new Date(Date.now() + Math.min(60 * 60_000, 2 ** Math.min(10, dirty.attempts) * 1000)),
         lastError: error instanceof Error ? error.message.slice(0, 500) : "unknown_error",
       }).where(and(
         eq(analyticsDirtyDaysTable.organizationId, dirty.organizationId),
         eq(analyticsDirtyDaysTable.videoId, dirty.videoId),
         eq(analyticsDirtyDaysTable.day, dirty.day),
+        eq(analyticsDirtyDaysTable.version, dirty.version),
       ));
     });
     throw error;

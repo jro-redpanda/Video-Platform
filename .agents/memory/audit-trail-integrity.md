@@ -15,11 +15,11 @@ For external provider work, persist the requested intent before the call. Any du
 
 **How to apply:** Use a conditional state transition as the idempotency gate, write the outcome event in that transaction, and do not audit transient retries that made no durable state change.
 
-Audit cursors must be signed and bound to tenant, normalized filters, expiry, and an initial `(createdAt,id)` snapshot. CSV export reuses the same filters, has bounded range/count/rate, and neutralizes spreadsheet formulas.
+Audit cursors must be signed and bound to tenant, normalized filters, expiry, and an initial `(createdAt,id)` snapshot. CSV export reuses the same filters, uses repeatable-read keyset batches, has bounded range/count/bytes/rate, and neutralizes spreadsheet formulas.
 
 **Why:** Unscoped cursors leak traversal state across tenants or filters, and CSV cells beginning with formula characters can execute when opened.
 
-**How to apply:** Use stable keyset ordering with a frozen first-page anchor; never use offsets or accept a cursor after filters change.
+**How to apply:** Use stable keyset ordering with a frozen first-page anchor; never use offsets or accept a cursor after filters change. Persist the export-attempt charge before generation so downstream failures cannot roll it back.
 
 The audit sanitizer's size limit applies to the combined serialized UTF-8 payload, including keys and JSON framing, after recursive secret redaction.
 

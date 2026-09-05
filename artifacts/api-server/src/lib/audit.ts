@@ -4,10 +4,12 @@ import { createHmac } from "node:crypto";
 import type { TenantTransaction } from "./tenant-db";
 
 const machine = /^[a-z][a-z0-9_.-]{0,99}$/;
+const categoryMachine = /^[a-z][a-z0-9_.-]{0,63}$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const secretKey = /(secret|token|pass(word)?|cookie|authorization|credential|signed.?url|webhook.?payload|api.?key)/i;
+const secretKey = /(secret|token|pass(word)?|cookie|authorization|credential|signed.?url|webhook.?payload|api.?key|private.?key|access.?key|signing.?key|encryption.?key)/i;
 const maxDepth = 8, maxArray = 100, maxString = 4_000;
 export const AUDIT_JSON_MAX_BYTES = 32_000;
+const auditActorKinds = new Set<AuditActorKind>(["user", "system", "webhook", "job"]);
 
 export type AuditActorKind = "user" | "system" | "webhook" | "job";
 export type AuditActor = { kind: AuditActorKind; userId?: string | null };
@@ -49,9 +51,20 @@ function sanitizeValue(value: unknown, limit: number): unknown {
     }
     if (typeof input === "object") {
       const out: Record<string, unknown> = {};
-      for (const [key, item] of Object.entries(input as Record<string, unknown>).slice(0, 100)) {
+      let entries: Array<[string, unknown]>;
+      try {
+        entries = Object.entries(input as Record<string, unknown>).slice(0, 100);
+      } catch {
+        return "[unreadable-object]";
+      }
+      for (const [key, item] of entries) {
         const safeKey = boundedString(key, 130).slice(0, 128);
-        const child = secretKey.test(key) ? "[redacted]" : visit(item, depth + 1, available);
+        let child: unknown;
+        try {
+          child = secretKey.test(key) ? "[redacted]" : visit(item, depth + 1, available);
+        } catch {
+          child = "[unreadable-value]";
+        }
         const candidate = { ...out, [safeKey]: child };
         if (jsonBytes(candidate) > available) {
           if (jsonBytes({ ...out, __truncated: marker }) <= available) out.__truncated = marker;
@@ -112,11 +125,14 @@ export async function consumeAuditExportLimit(tx: TenantTransaction, organizatio
 }
 
 export async function writeAuditEvent(tx: TenantTransaction, input: AuditInput) {
-  if (!uuid.test(input.organizationId) || !machine.test(input.action) || !machine.test(input.category)
-    || !machine.test(input.subject.type) || !input.subject.label?.trim() || input.subject.label.length > 500
-    || (input.subject.id != null && (!input.subject.id.trim() || input.subject.id.length > 200))
+  if (!input || typeof input !== "object" || !input.actor || !input.subject
+    || !uuid.test(input.organizationId) || !machine.test(input.action) || !categoryMachine.test(input.category)
+    || !auditActorKinds.has(input.actor.kind) || !machine.test(input.subject.type)
+    || typeof input.subject.label !== "string" || !input.subject.label.trim() || input.subject.label.length > 500
+    || (input.subject.id != null && (typeof input.subject.id !== "string" || !input.subject.id.trim() || input.subject.id.length > 200))
     || (input.actor.kind === "user" && (!input.actor.userId || !uuid.test(input.actor.userId)))
-    || (input.actor.kind !== "user" && input.actor.userId))
+    || (input.actor.kind !== "user" && input.actor.userId)
+    || (input.requestId != null && typeof input.requestId !== "string"))
     throw new Error("Invalid audit event");
   const safe = sanitizeAuditPayload(input.beforeState, input.afterState, input.metadata ?? {});
   const [event] = await tx.insert(auditLogsTable).values({

@@ -22,16 +22,21 @@ export default function Login({ isInvitation }: { isInvitation?: boolean }) {
     event.preventDefault()
     setPending(true)
     setError("")
-    const result = mode === "signup" && invitationToken
-      ? await authClient.signUp.email({
-          name,
-          email,
-          password,
-          invitationToken,
-        } as Parameters<typeof authClient.signUp.email>[0] & { invitationToken: string })
-      : await authClient.signIn.email({ email, password })
-    setPending(false)
-    if (result.error) setError(result.error.message ?? "Authentication failed")
+    try {
+      const result = mode === "signup" && invitationToken
+        ? await authClient.signUp.email({
+            name,
+            email,
+            password,
+            invitationToken,
+          } as Parameters<typeof authClient.signUp.email>[0] & { invitationToken: string })
+        : await authClient.signIn.email({ email, password })
+      if (result.error) setError(result.error.message ?? "Authentication failed")
+    } catch {
+      setError("Authentication could not be completed. Please try again.")
+    } finally {
+      setPending(false)
+    }
   }
 
   return (

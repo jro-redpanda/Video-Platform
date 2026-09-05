@@ -20,6 +20,7 @@ import { useVideoSelection } from "@/components/video-library/use-video-selectio
 import { BulkActionsBar } from "@/components/video-library/bulk-actions-bar"
 import { BulkMoveDialog, BulkVisibilityDialog, BulkDeleteDialog, BulkResultDialog, BulkResultContext } from "@/components/video-library/bulk-video-dialogs"
 import { useToast } from "@/components/ui/use-toast"
+import { invalidateVideoDerivedQueries } from "@/lib/query-invalidation"
 
 export default function Videos() {
   const { data: workspace } = useGetWorkspace()
@@ -133,6 +134,7 @@ export default function Videos() {
             && queryKey[0].startsWith("/api/folders/")
           )
         }),
+        invalidateVideoDerivedQueries(queryClient),
       ])
     })()
   }, [queryClient, resetPaginationState])

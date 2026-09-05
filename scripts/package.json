@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "hello": "tsx ./src/hello.ts",
-    "stripe:seed": "tsx ./src/seed-stripe-catalog.ts",
+    "stripe:seed": "DATABASE_URL=\"$SMOKE_DATABASE_URL\" tsx ./src/seed-stripe-catalog.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

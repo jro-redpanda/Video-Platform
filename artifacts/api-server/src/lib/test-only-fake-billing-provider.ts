@@ -10,6 +10,7 @@ export class FakeBillingProvider implements BillingProvider {
   ambiguousNextCheckout = false;
   ambiguousNextCustomer = false;
   retrieveDelayMs = 0;
+  failNextRetrieve = false;
   failNextUpgrade = false;
   calls: Array<{ operation: string; organizationId?: string; customerId?: string }> = [];
 
@@ -46,18 +47,33 @@ export class FakeBillingProvider implements BillingProvider {
     this.calls.push({ operation: "checkout_expire" });
   }
   async retrieveSubscription(id: string) {
+    if (this.failNextRetrieve) { this.failNextRetrieve = false; throw new Error("fake_transient_provider_failure"); }
     const value = this.subscriptions.get(id);
     if (!value) throw new Error("fake_subscription_missing");
     if (this.retrieveDelayMs) await new Promise((resolve) => setTimeout(resolve, this.retrieveDelayMs));
     return value;
   }
-  async listSubscriptions() { return [...this.subscriptions.values()]; }
+  async listSubscriptions(customerId: string) {
+    return [...this.subscriptions.values()].filter((subscription) => {
+      const boundCustomerId = typeof subscription.customer === "string"
+        ? subscription.customer
+        : subscription.customer.id;
+      return boundCustomerId === customerId;
+    });
+  }
   async updateSubscription(input: { subscription: ProviderSubscription }) {
     if (this.failNextUpgrade) { this.failNextUpgrade = false; throw new Error("subscription_payment_incomplete"); }
     return input.subscription;
   }
-  async scheduleDowngrade(input: { subscription: ProviderSubscription }) {
-    return { id: `sub_sched_${input.subscription.id}` };
+  async scheduleDowngrade(input: { subscription: ProviderSubscription; priceId: string }) {
+    const item = input.subscription.items.data[0] as ProviderSubscription["items"]["data"][number] & {
+      current_period_end?: number;
+    };
+    return {
+      id: `sub_sched_${input.subscription.id}`,
+      priceId: input.priceId,
+      effectiveAt: item.current_period_end ?? 0,
+    };
   }
   async setCancelAtPeriodEnd(input: { subscriptionId: string; cancel: boolean }) {
     const subscription = await this.retrieveSubscription(input.subscriptionId);

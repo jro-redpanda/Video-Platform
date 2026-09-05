@@ -12,7 +12,9 @@ export async function resolveExactTxt(resolver: DomainDnsResolver, name: string,
   try {
     const records = await Promise.race([
       resolver.resolveTxt(name),
-      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("dns_timeout")), timeoutMs); }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("dns_timeout")), timeoutMs);
+      }),
     ]);
     return records.some((parts) => parts.join("") === expected);
   } finally {

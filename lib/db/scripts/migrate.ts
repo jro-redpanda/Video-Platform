@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { getConstructionPlans, getMigrationPlans } from "pg-boss";
 import { catalogFingerprint, EXPECTED_CATALOG_HASHES, type CatalogStage } from "./catalog.ts";
+import { formatOperationalError } from "./safe-error.ts";
 
 const { Client } = pg;
 const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
@@ -55,7 +56,11 @@ async function assertBaselineManifest(client: pg.Client) {
 }
 async function assertStage(client: pg.Client, stage: CatalogStage) {
   const actual = await catalogFingerprint(client, stage);
-  if (actual.hash !== EXPECTED_CATALOG_HASHES[stage]) throw new Error(`${stage} catalog fingerprint mismatch: ${actual.hash}`);
+  const expected = EXPECTED_CATALOG_HASHES[stage];
+  if (expected.startsWith("REPLACE_")) {
+    throw new Error(`${stage} catalog fingerprint is not accepted; isolated catalog hash: ${actual.hash}`);
+  }
+  if (actual.hash !== expected) throw new Error(`${stage} catalog fingerprint mismatch: ${actual.hash}`);
 }
 async function main() {
   const adopt = process.argv.includes("adopt-baseline");
@@ -147,8 +152,13 @@ async function main() {
               : file.name === "0030_custom_domains.sql" ? "customDomain"
                : file.name === "0031_master_storage_operations.sql" ? "masterStorage"
                  : file.name === "0032_master_archive_integrity.sql" ? "masterArchiveIntegrity"
-                   : file.name === "0033_g1_identity_integrity.sql" ? "g1Identity"
-                    : file.name === "0034_g3_database_hardening.sql" ? "g3Hardening" : "thumbnailIntegrity");
+                    : file.name === "0033_g1_identity_integrity.sql" ? "g1Identity"
+                     : file.name === "0034_g3_database_hardening.sql" ? "g3Hardening"
+                      : file.name === "0035_video_library_snapshots.sql" ? "videoLibrarySnapshots"
+                       : file.name === "0036_g13_billing_reliability.sql" ? "billingReliability"
+                        : file.name === "0037_g14_custom_domain_integrity.sql" ? "customDomainIntegrity"
+                         : file.name === "0038_g15_master_storage_integrity.sql" ? "masterStorageIntegrity"
+                          : "thumbnailIntegrity");
         await client.query("insert into public.schema_migrations(name, checksum) values($1,$2)", [file.name, file.checksum]);
         await client.query("commit");
       } catch (error) {
@@ -160,4 +170,7 @@ async function main() {
     try { await client.query("select pg_advisory_unlock(hashtext($1))", [lockName]); } finally { await client.end(); }
   }
 }
-void main().catch((error: unknown) => { console.error(error); process.exitCode = 1; });
+void main().catch((error: unknown) => {
+  console.error(formatOperationalError(error));
+  process.exitCode = 1;
+});

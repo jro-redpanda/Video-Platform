@@ -3,6 +3,7 @@ import { MediaPlayer, MediaOutlet, MediaCommunitySkin } from '@vidstack/react';
 import 'vidstack/styles/defaults.css';
 import 'vidstack/styles/community-skin/video.css';
 import type { MediaPlayerElement } from 'vidstack';
+import { getSafeMediaUrl, getSafePosterUrl } from '@/lib/frontend-safety';
 
 export interface PlayerProps {
   title: string;
@@ -53,6 +54,19 @@ export function Player({
 }: PlayerProps) {
   const playerRef = useRef<MediaPlayerElement>(null);
   const id = useId().replace(/:/g, '');
+  const safePoster = getSafePosterUrl(poster);
+  const safeSrc = typeof src === 'string'
+    ? getSafeMediaUrl(src)
+    : src
+      ? (() => {
+          const safeUrl = getSafeMediaUrl(src.src);
+          return safeUrl ? { ...src, src: safeUrl } : null;
+        })()
+      : null;
+  const effectiveStatus = src && !safeSrc ? 'error' : status;
+  const effectiveMessage = src && !safeSrc
+    ? 'Playback source is invalid.'
+    : message;
 
   const style = {
     '--video-brand': accentColor,
@@ -80,13 +94,13 @@ export function Player({
     );
   };
 
-  if (!src && status) {
+  if (!safeSrc && effectiveStatus) {
     return (
       <div
         className={`w-full aspect-video bg-black flex flex-col items-center justify-center relative overflow-hidden ${className}`}
         style={style}
-        role={status === 'error' ? "alert" : "status"}
-        aria-live={status === 'error' ? "assertive" : "polite"}
+        role={effectiveStatus === 'error' ? "alert" : "status"}
+        aria-live={effectiveStatus === 'error' ? "assertive" : "polite"}
       >
         <div className="z-10 flex flex-col items-center p-6 text-center text-white" style={{ color: controlForegroundColor }}>
           {logoInitials && (
@@ -98,7 +112,7 @@ export function Player({
             </div>
           )}
           <h1 className="text-xl font-semibold mb-2">{title}</h1>
-          <p className="text-sm opacity-80">{message || `Video is ${status}`}</p>
+          <p className="text-sm opacity-80">{effectiveMessage || `Video is ${effectiveStatus}`}</p>
           {actionLabel && onAction && (
             <button
               type="button"
@@ -110,16 +124,16 @@ export function Player({
             </button>
           )}
         </div>
-        {poster && (
+        {safePoster && (
           <div className="absolute inset-0 z-0 opacity-20">
-            <img src={poster} alt="" className="w-full h-full object-cover" style={{ filter: treatmentFilter }} />
+            <img src={safePoster} alt="" className="w-full h-full object-cover" style={{ filter: treatmentFilter }} />
           </div>
         )}
       </div>
     );
   }
 
-  if (!src) {
+  if (!safeSrc) {
     return (
       <div className={`relative w-full aspect-video bg-black ${className}`}>
         <style>{`
@@ -131,7 +145,7 @@ export function Player({
           className={`w-full aspect-video overflow-hidden player-wrapper-${id}`}
           style={style}
           title={title}
-          poster={poster || undefined}
+          poster={safePoster || undefined}
           viewType="video"
         >
           <MediaOutlet />
@@ -141,8 +155,6 @@ export function Player({
       </div>
     );
   }
-
-  const mediaSrc = typeof src === 'string' ? src : (src as any);
 
   return (
     <div className={`relative w-full aspect-video bg-black ${className}`}>
@@ -155,8 +167,8 @@ export function Player({
         className={`w-full aspect-video overflow-hidden player-wrapper-${id}`}
         style={style}
         title={title}
-        src={mediaSrc}
-        poster={poster || undefined}
+        src={safeSrc}
+        poster={safePoster || undefined}
         crossOrigin
         playsInline
         autoPlay={autoPlay}

@@ -1,17 +1,22 @@
 # Mock, Fixture, Stub, and Placeholder Register
 
-This file tracks every non-production implementation currently present. Each code site carries a greppable `// MOCK: replaced at step N` marker.
+This file tracks long-lived non-production implementations and launch-relevant
+placeholders. Inline test data and one-off failure injections remain test-local;
+they do not imply production readiness or require historical step markers.
 
-| Site | Current behavior | Replacement |
+| Site | Current behavior | Disposition or exit criteria |
 |---|---|---|
-| `artifacts/api-server/src/lib/bootstrap.ts` development bootstrap | Creates the development tenant, user, groups, plan, customization, and sample records. It never runs in production; production workspace onboarding is implemented separately. | Development fixture only |
-| `artifacts/api-server/src/lib/bootstrap.ts` demo videos | Seeds four metadata-only videos without provider assets. Development-only fixtures do not exercise direct upload. | Step 18 production onboarding and hardening |
-| `artifacts/api-server/src/lib/bootstrap.ts` audit activity | Seeds sample audit history. | Step 17 platform audit operations |
-| `VID_APP_DOMAIN=app.example.com` | Runtime-configured development domain placeholder. | Step 18 production hardening |
-| Cold-master storage | Intentionally unconfigured behind a provider-neutral byte-storage boundary; no archival success or metadata is manufactured. | External cold storage configuration |
-| Cold-master provider transfer | Intentionally unconfigured byte-stream source/restore boundary. It makes no provider-health claim and never manufactures source bytes or target writes. | Explicit production transfer adapter configuration |
-| `lib/providers/src/test-only-fake.ts` Step 7 smoke provider | Deterministic in-process provider installed only by explicit test entrypoints or direct test injection; the production registry does not import it and never falls back to it. | Test-only smoke infrastructure |
-| `lib/providers/src/portable-contract-fixture.ts` portable contract fixture | Deliberately non-Bunny-shaped DASH/multipart adapter used only by provider conformance tests. It proves local contract neutrality, not live provider portability. | Test-only contract infrastructure |
-| Custom-domain smoke DNS resolver | Injected deterministic TXT resolver used only by `custom-domain:smoke`; production worker uses Node TXT resolution and never trusts CNAME/A/AAAA records. | Test-only smoke infrastructure |
+| `artifacts/api-server/src/lib/bootstrap.ts` development bootstrap | Creates a development tenant, users, groups, plan, customization, metadata-only videos, and sample audit history. Startup configuration prevents it from running in production. | Retain as a development fixture; it is not onboarding, upload, provider, or audit production evidence. |
+| `VID_APP_DOMAIN=app.example.com` | Development-domain placeholder supplied by workspace configuration. | Replace with the approved public application domain before launch and verify redirects/callbacks there. |
+| Cold-master storage boundary | Production default is intentionally unconfigured and never manufactures archive success or metadata. | Configure and independently validate an approved byte-storage adapter. |
+| Cold-master provider-transfer boundary | Production default is intentionally unconfigured and never manufactures source bytes or target writes. | Configure and independently validate an approved provider transfer adapter. |
+| `lib/providers/src/test-only-fake.ts` | Deterministic provider used only by explicit smoke entrypoints or direct test injection; the production registry does not import or fall back to it. | Retain as test-only infrastructure. |
+| `lib/providers/src/portable-contract-fixture.ts` | Non-Bunny DASH/multipart fixture used by provider conformance tests. | Retain as test-only contract infrastructure; it is not live-provider portability evidence. |
+| `artifacts/api-server/src/lib/test-only-fake-billing-provider.ts` | In-memory billing customer, checkout, and subscription provider imported by the billing smoke only. | Retain as test-only infrastructure; live Stripe lifecycle validation remains separate. |
+| `artifacts/api-server/src/custom-domain-smoke.ts` DNS/queue seams | Injected TXT resolver and queue used by the custom-domain smoke. | Retain as test-only infrastructure; it does not prove public DNS, TLS, or edge routing. |
+| `artifacts/api-server/src/thumbnail-step15-smoke.ts` storage seam | In-memory thumbnail storage with injected read/delete failures. | Retain as test-only infrastructure; App Storage has a separate explicitly authorized round trip. |
+| `artifacts/api-server/src/cold-master-storage-smoke.ts` adapters | In-memory byte storage and provider transfer used to verify local integrity contracts. | Retain as test-only infrastructure; configured storage/provider evidence remains external. |
 
-The separate `artifacts/mockup-sandbox` artifact is design tooling and is not imported by the production application.
+The separate `artifacts/mockup-sandbox` artifact is development-only design
+tooling. Its artifact manifest intentionally has no production service, and it
+is not imported by the production application.

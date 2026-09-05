@@ -37,8 +37,11 @@ export const organizationBillingTable = pgTable("organization_billing", {
   cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
   pendingPlanId: uuid("pending_plan_id").references(() => plansTable.id, { onDelete: "restrict" }),
   pendingEffectiveAt: timestamp("pending_effective_at", { withTimezone: true }),
+  pendingSubscriptionScheduleId: text("pending_subscription_schedule_id")
+    .unique("organization_billing_pending_subscription_schedule_unique"),
   /** Checkout is pending payment only; this never changes paid/grandfathered access. */
-  pendingCheckoutSessionId: text("pending_checkout_session_id"),
+  pendingCheckoutSessionId: text("pending_checkout_session_id")
+    .unique("organization_billing_pending_checkout_session_unique"),
   pendingCheckoutPlanId: uuid("pending_checkout_plan_id").references(() => plansTable.id, { onDelete: "restrict" }),
   pendingCheckoutPriceId: text("pending_checkout_price_id"),
   pendingCheckoutInterval: billingIntervalEnum("pending_checkout_interval"),
@@ -83,9 +86,15 @@ export const billingEventReceiptsTable = pgTable("billing_event_receipts", {
   organizationId: uuid("organization_id").references(() => organizationsTable.id, { onDelete: "set null" }),
   stripeEventId: text("stripe_event_id").notNull(),
   stripeObjectId: text("stripe_object_id"),
+  stripeCustomerId: text("stripe_customer_id"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  stripeCheckoutSessionId: text("stripe_checkout_session_id"),
   stripeObjectVersion: text("stripe_object_version"),
   eventType: text("event_type").notNull(),
   processingState: text("processing_state").notNull().default("received"),
+  processingClaim: uuid("processing_claim"),
+  processingClaimedAt: timestamp("processing_claimed_at", { withTimezone: true }),
+  attempts: integer("attempts").notNull().default(0),
   diagnosticCode: text("diagnostic_code"),
   receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
   processedAt: timestamp("processed_at", { withTimezone: true }),

@@ -76,16 +76,16 @@ class InMemoryColdMasterTransfer implements ColdMasterTransfer {
   async openSource(snapshot: ColdMasterProviderAssetSnapshot) {
     const bytes = this.source.get(this.key(snapshot));
     assert.ok(bytes, "source must be a persisted provider asset");
-    return { contentLength: bytes.length, contentType: "video/mp4", sha256: digest(bytes), body: asStream(bytes) };
+    return { source: snapshot, contentLength: bytes.length, contentType: "video/mp4", sha256: digest(bytes), body: asStream(bytes) };
   }
   async restoreToTarget(input: RestoreColdMasterTargetInput) {
     assert.ok(input.idempotencyKey.length > 0, "restore idempotency is mandatory");
     const bytes = await collect(input.body);
     assert.equal(digest(bytes), input.sha256);
     const target = this.key(input.target), seen = this.writes.get(input.idempotencyKey);
-    if (seen) { assert.equal(seen, target); return { idempotencyKey: input.idempotencyKey, contentLength: input.contentLength, contentType: input.contentType, sha256: input.sha256 }; }
+    if (seen) { assert.equal(seen, target); return { target: input.target, idempotencyKey: input.idempotencyKey, contentLength: input.contentLength, contentType: input.contentType, sha256: input.sha256 }; }
     this.writes.set(input.idempotencyKey, target); this.targets.set(target, bytes);
-    return { idempotencyKey: input.idempotencyKey, contentLength: input.contentLength, contentType: input.contentType, sha256: input.sha256 };
+    return { target: input.target, idempotencyKey: input.idempotencyKey, contentLength: input.contentLength, contentType: input.contentType, sha256: input.sha256 };
   }
 }
 

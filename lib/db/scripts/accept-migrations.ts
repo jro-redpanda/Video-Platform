@@ -65,13 +65,49 @@ try {
     ["audit", "0028_audit_export_rate_window.sql"],
     ["archive", "0032_master_archive_integrity.sql"],
     ["identity", "0033_g1_identity_integrity.sql"],
+    ["snapshots", "0035_video_library_snapshots.sql"],
+    ["billing-reliability", "0036_g13_billing_reliability.sql"],
+    ["domain-integrity", "0037_g14_custom_domain_integrity.sql"],
+    ["master-integrity", "0037_g14_custom_domain_integrity.sql"],
   ] as const) {
     const database = `${prefix}_upgrade_${suffix}`;
     create(database);
     migrateThrough(database, target);
     const fixture = randomUUID();
     sql(database, `insert into plans(id,code,name,storage_limit_gb) values('${fixture}','fixture-${suffix}','Fixture',1)`);
+    if (suffix === "master-integrity") {
+      const organization = randomUUID(), user = randomUUID(), video = randomUUID(), terminalVideo = randomUUID();
+      sql(database, `
+        insert into organizations(id,name,slug,plan_id)
+          values('${organization}','Master integrity fixture','master-integrity-${fixture.slice(0, 8)}','${fixture}');
+        insert into users(id,email,name,email_verified)
+          values('${user}','master-integrity-${fixture.slice(0, 8)}@example.invalid','Fixture',true);
+        insert into videos(id,organization_id,title) values
+          ('${video}','${organization}','Outstanding normalization'),
+          ('${terminalVideo}','${organization}','Terminal normalization');
+        insert into master_storage_operations(
+          id,organization_id,video_id,requested_by_user_id,operation,state,retryable,
+          attempts,idempotency_key,provider_account_id,provider_tenant_space_id,provider_asset_id
+        ) values
+          ('${randomUUID()}','${organization}','${video}','${user}','archive','processing',true,2,repeat('1',64),'${randomUUID()}','space','asset-processing'),
+          ('${randomUUID()}','${organization}','${video}','${user}','archive','failed',true,1,repeat('2',64),'${randomUUID()}','space','asset-retry-a'),
+          ('${randomUUID()}','${organization}','${video}','${user}','archive','failed',true,1,repeat('3',64),'${randomUUID()}','space','asset-retry-b'),
+          ('${randomUUID()}','${organization}','${terminalVideo}','${user}','archive','completed',true,1,repeat('4',64),'${randomUUID()}','space','asset-completed');
+      `);
+    }
     run("node",["--experimental-strip-types","scripts/migrate.ts"],{DATABASE_URL:url(database)});
+    if (suffix === "master-integrity") {
+      sql(database, `do $$ begin
+        if (select count(*) from master_storage_operations
+              where video_id in (select id from videos where title='Outstanding normalization')
+                and (state in ('pending','dispatching','queued','processing') or (state='failed' and retryable))) <> 1
+          then raise exception '0038 did not normalize duplicate outstanding operations'; end if;
+        if exists(select 1 from master_storage_operations
+            where video_id in (select id from videos where title='Terminal normalization')
+              and state='completed' and (retryable or completed_at is null))
+          then raise exception '0038 did not normalize terminal lifecycle fields'; end if;
+      end $$;`);
+    }
     run("node",["--experimental-strip-types","scripts/verify-schema.ts"],{DATABASE_URL:url(database)});
     const preserved = run("psql",[url(database),"-Atc",`select count(*) from plans where id='${fixture}'`]).toString().trim();
     if (preserved !== "1") throw new Error(`intermediate ${target} upgrade did not preserve data`);

@@ -6,9 +6,13 @@
 - [Folder hierarchy concurrency](folder-hierarchy-concurrency.md) — serialize every mutation that changes folder membership with hierarchy create/move/delete checks.
 - [Strict union request validation](strict-union-request-validation.md) — keep raw-key boundary guards for mutually exclusive OpenAPI bodies generated through Orval/Zod.
 - [App Storage thumbnail promotion](app-storage-thumbnail-promotion.md) — copied objects may lose Content-Type; patch metadata conditionally and pin the final generation.
-- [Billing lifecycle integrity](billing-lifecycle-integrity.md) — serialize Checkout and reconciliation per tenant; generation-scope Stripe customer creation so deleted IDs cannot replay.
+- [Billing lifecycle integrity](billing-lifecycle-integrity.md) — serialize tenant billing; leased receipts reconcile authority; retry outages but quarantine integrity failures.
 - [Analytics telemetry integrity](analytics-telemetry-integrity.md) — attest public playback server-side; bound metrics by receipt time, and persist queued events independently per video/event.
 - [Audit trail integrity](audit-trail-integrity.md) — keep tenant audit rows append-only, snapshot cursors scope-bound, and state transitions atomic with outcome events.
 - [Cold-master operation integrity](cold-master-operation-integrity.md) — generation-scope jobs, verify bytes/identity, and keep legacy unverified archives non-restorable.
 - [Onboarding transition integrity](onboarding-transition-integrity.md) — lock intent before organization/provider space, and never let async provisioning overwrite suspension.
 - [Playback source trust](playback-source-trust.md) — validate fresh provider redirects generically, then recheck video eligibility after provider I/O.
+- [Custom-domain trust boundary](custom-domain-trust-boundary.md) — TXT proves ownership only; future edge activation must independently validate every destination.
+- [OpenAPI codegen integrity](openapi-codegen-integrity.md) — document internal ingress without client hooks; guard Orval output with route parity and disposable regeneration.
+- [Frontend tenant cache boundary](frontend-tenant-cache-boundary.md) — unmount tenant UI before identity changes; clear old cache and fail closed until the new tenant is confirmed.
+- [Dependency release evidence](dependency-release-evidence.md) — lockfile remediation is not installed-graph proof; require clean install and audit evidence before release.

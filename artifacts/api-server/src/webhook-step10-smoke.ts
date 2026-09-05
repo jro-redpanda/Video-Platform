@@ -40,6 +40,7 @@ const otherLibraryId = libraryId + 1;
 const readOnlyApiKey = `step10-read-${marker}`;
 const accountEnvelope = encryptProviderCredentials({ accountApiKey: `step10-account-${marker}` });
 const libraryEnvelope = encryptProviderCredentials({
+  // nosemgrep: secrets.generic.api-key.string.string -- randomized test-only fixture
   apiKey: `step10-library-${marker}`,
   readOnlyApiKey,
   zoneSecurityKey: `step10-zone-${marker}`,

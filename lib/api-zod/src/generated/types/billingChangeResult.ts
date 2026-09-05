@@ -10,5 +10,4 @@ export interface BillingChangeResult {
   scheduled: boolean;
   /** @nullable */
   effectiveAt: Date | null;
-  reference: string;
 }

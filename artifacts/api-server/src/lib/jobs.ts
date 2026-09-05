@@ -7,6 +7,7 @@ import { cleanupExpiredUploads } from "./upload-expiry-cleanup";
 import { generateVideoEmbed } from "./video-embeds";
 import { cleanupThumbnailObjects } from "./thumbnail-cleanup";
 import { reconcileActiveBilling } from "./billing-reconciliation";
+import { reconcilePendingBillingReceipts } from "./stripe-webhook";
 import type { ThumbnailStorage } from "./thumbnail-storage";
 import { and, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 import {
@@ -225,8 +226,16 @@ export async function startJobs(options: {
   });
   await instance.work(THUMBNAIL_CLEANUP_QUEUE, { batchSize: 1 }, async () =>
     cleanupThumbnailObjects(options.thumbnailStorage));
-  await instance.work(BILLING_RECONCILIATION_QUEUE, { batchSize: 1 }, async () =>
-    reconcileActiveBilling());
+  await instance.work(BILLING_RECONCILIATION_QUEUE, { batchSize: 1 }, async () => {
+    const [receipts, billing] = await Promise.allSettled([
+      reconcilePendingBillingReceipts(),
+      reconcileActiveBilling(),
+    ]);
+    if (receipts.status === "rejected" || billing.status === "rejected") {
+      throw new Error("billing_reconciliation_batch_retryable");
+    }
+    return { ...billing.value, receiptsReconciled: receipts.value.reconciled };
+  });
   await instance.work(ANALYTICS_ROLLUP_QUEUE, { batchSize: 1 }, async () => processAnalyticsDirtyDays());
   await instance.work(ANALYTICS_RETENTION_QUEUE, { batchSize: 1 }, async () => purgeAnalyticsData());
   await instance.work<CustomDomainVerificationJob>(CUSTOM_DOMAIN_VERIFY_QUEUE, { batchSize: 1 }, async ([job]) =>
@@ -337,6 +346,7 @@ async function claimCustomDomainDispatch(domainId: string) {
       eq(customDomainsTable.id, domainId),
       inArray(customDomainsTable.lifecycleState, ["pending_verification", "failed"]),
       eq(customDomainsTable.retryable, true),
+      or(lt(customDomainsTable.retryAfterAt, new Date()), sql`${customDomainsTable.retryAfterAt} is null`),
     )).returning({ id: customDomainsTable.id }));
   return claimed ? claim : undefined;
 }

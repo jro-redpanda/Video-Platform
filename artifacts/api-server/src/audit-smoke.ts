@@ -6,6 +6,7 @@ const { and, eq, or, sql } = await import("drizzle-orm");
 const { auditLogsTable, analyticsRateWindowsTable, db, groupPermissionsTable, membershipsTable, organizationsTable, permissionGroupsTable, permissionsTable, plansTable, sessionsTable, usersTable } = await import("@workspace/db");
 const { default: app } = await import("./app");
 const { AUDIT_JSON_MAX_BYTES, AuditExportRateLimitError, auditDiff, auditJob, auditSystem, auditWebhook, consumeAuditExportLimit, sanitizeAuditValue, writeAuditEvent } = await import("./lib/audit");
+const { AUDIT_EXPORT_MAX_BYTES } = await import("./routes/platform");
 const { withOrganizationDb } = await import("./lib/tenant-db");
 const { reconcileSystemVideoDeletePermission } = await import("./lib/bootstrap");
 
@@ -59,6 +60,27 @@ try {
   await insert(orgA, { action: "job.completed", category: "operations", subjectType: "job", subjectId: "job-1", subjectLabel: "job", actorKind: "job" });
   const dangerous = sanitizeAuditValue({ password: "secret", nested: { authorization: "secret" }, long: "x".repeat(5000), array: Array.from({ length: 101 }, () => "x") });
   assert.equal(dangerous.password, "[redacted]"); assert.equal((dangerous.nested as Record<string, unknown>).authorization, "[redacted]"); assert.equal((dangerous.long as string).length, 4000); assert.equal((dangerous.array as unknown[]).length, 100); assert.deepEqual(Object.keys(auditDiff({}, {})), ["beforeState", "afterState"]);
+  const cyclic: Record<string, unknown> = { privateKey: "must-not-survive", amount: 1n }; cyclic.self = cyclic;
+  assert.doesNotThrow(() => sanitizeAuditValue(cyclic));
+  const sanitizedCycle = sanitizeAuditValue(cyclic);
+  assert.equal(sanitizedCycle.privateKey, "[redacted]");
+  const hostile = Object.create(null);
+  Object.defineProperty(hostile, "value", { enumerable: true, get() { throw new Error("getter must not escape"); } });
+  assert.deepEqual(sanitizeAuditValue(hostile), { value: "[unreadable-object]" });
+  await assert.rejects(() => withOrganizationDb(orgA, (tx) => writeAuditEvent(tx, {
+    organizationId: orgA,
+    actor: { kind: "invalid" } as never,
+    action: "invalid.actor",
+    category: "operations",
+    subject: { type: "test", label: "invalid" },
+  })), /Invalid audit event/);
+  await assert.rejects(() => withOrganizationDb(orgA, (tx) => writeAuditEvent(tx, {
+    organizationId: orgA,
+    actor: auditSystem(),
+    action: "invalid.category",
+    category: `a${"b".repeat(64)}`,
+    subject: { type: "test", label: "invalid" },
+  })), /Invalid audit event/);
   const huge = Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`長いキー${index}${"界".repeat(100)}`, `${"é".repeat(2100)}-${index}`]));
   await withOrganizationDb(orgA, (tx) => writeAuditEvent(tx, { organizationId: orgA, actor: auditSystem(), action: "sanitizer.boundary", category: "operations", subject: { type: "test", label: "boundary" }, beforeState: huge, afterState: huge, metadata: { ...huge, providerCredential: "must-not-survive" } }));
   const [bounded] = await db.select({ before: auditLogsTable.beforeState, after: auditLogsTable.afterState, metadata: auditLogsTable.metadata }).from(auditLogsTable).where(eq(auditLogsTable.action, "sanitizer.boundary"));
@@ -73,10 +95,12 @@ try {
   const second = await get(`/api/audit-events?limit=2&cursor=${encodeURIComponent(page1.nextCursor)}`, owner.cookie); assert.equal(second.status, 200);
   const page2 = await second.json() as { items: Array<{ id: string }>; nextCursor: string | null }; assert.equal(page2.items.some((x) => x.id === ids.at(-1)), false); assert.equal(new Set([...page1.items, ...page2.items].map((x) => x.id)).size, 4);
   assert.equal((await get(`/api/audit-events?limit=2&cursor=${encodeURIComponent(`${page1.nextCursor}x`)}`, owner.cookie)).status, 400);
+  const [cursorBody, validSignature] = page1.nextCursor.split("."); assert(cursorBody && validSignature);
+  const unicodeSignature = "é".repeat(validSignature.length);
+  assert.equal((await get(`/api/audit-events?limit=2&cursor=${encodeURIComponent(`${cursorBody}.${unicodeSignature}`)}`, owner.cookie)).status, 400);
   assert.equal((await get(`/api/audit-events?limit=2&category=video&cursor=${encodeURIComponent(page1.nextCursor)}`, owner.cookie)).status, 400);
   assert.equal((await get(`/api/audit-events?limit=2&cursor=${encodeURIComponent(page1.nextCursor)}`, ownerB.cookie)).status, 400, "org B rejects tenant-bound cursor");
   assert.equal((await get("/api/audit-events?limit=0", owner.cookie)).status, 400); assert.equal((await get("/api/audit-events?cursor=not-a-cursor", owner.cookie)).status, 400);
-  const [cursorBody] = page1.nextCursor.split("."); assert(cursorBody);
   const expiredPayload = JSON.parse(Buffer.from(cursorBody, "base64url").toString("utf8")) as { expiresAt: number }; expiredPayload.expiresAt = 0;
   const expiredBody = Buffer.from(JSON.stringify(expiredPayload)).toString("base64url");
   const cursorKey = createHmac("sha256", process.env.SESSION_SECRET!).update("video-library-cursor:v1").digest();
@@ -87,10 +111,11 @@ try {
   }
   const all = await get("/api/audit-events?limit=100", owner.cookie); const actorKinds = new Set((await all.json() as { items: Array<{ actor: { kind: string; userId: string | null } }> }).items.map((x) => x.actor.kind));
   for (const kind of ["user", "system", "job", "webhook"]) assert(actorKinds.has(kind)); assert(actorKinds.has("system"));
-  await insert(orgA, { action: "video.exported", category: "video", subjectType: "video", subjectId: "export-1", subjectLabel: "=Needle, \"quoted\"\nline", metadata: { note: "=formula" }, createdAt: new Date() });
+  await insert(orgA, { action: "video.exported", category: "video", subjectType: "video", subjectId: "export-1", subjectLabel: " \t=Needle, \"quoted\"\nline", metadata: { note: "=formula" }, createdAt: new Date() });
   const exported = await get("/api/audit-events/export?search=Needle", owner.cookie); assert.equal(exported.status, 200); assert.match(exported.headers.get("content-type") ?? "", /text\/csv/); assert.match(exported.headers.get("content-disposition") ?? "", /audit-events\.csv/);
-  const csv = await exported.text(); assert(csv.includes("\"'=Needle, \"\"quoted\"\"\nline\"")); assert(!csv.includes("secret"));
+  const csv = await exported.text(); assert(csv.includes("\"' \t=Needle, \"\"quoted\"\"\nline\"")); assert(!csv.includes("secret")); assert(Buffer.byteLength(csv, "utf8") <= AUDIT_EXPORT_MAX_BYTES);
   assert.equal((await get("/api/audit-events/export?from=2020-01-01T00:00:00Z&to=2026-01-01T00:00:00Z", owner.cookie)).status, 400);
+  assert.equal((await get("/api/audit-events/export?from=2026-01-02T00:00:00Z&to=2026-01-01T00:00:00Z", owner.cookie)).status, 400);
   for (let i = 0; i < 4; i++) assert.equal((await get("/api/audit-events/export", owner.cookie)).status, 200);
   const limited = await get("/api/audit-events/export", owner.cookie); assert.equal(limited.status, 429); assert(limited.headers.get("retry-after"));
   await assert.rejects(() => withOrganizationDb(orgA, async (tx) => { await writeAuditEvent(tx, { organizationId: orgA, actor: auditSystem(), action: "rollback.test", category: "operations", subject: { type: "test", label: "rollback" } }); throw new Error("rollback"); }));

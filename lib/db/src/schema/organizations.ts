@@ -28,6 +28,8 @@ export const plansTable = pgTable("plans", {
   sortOrder: integer("sort_order").notNull().default(0),
   storageLimitGb: integer("storage_limit_gb").notNull(),
   entitlements: jsonb("entitlements").$type<Record<string, boolean | number | string>>().notNull().default({}),
+  monthlyAmountCents: integer("monthly_amount_cents"),
+  annualAmountCents: integer("annual_amount_cents"),
   /** Provider identifiers only; product and price attributes remain Stripe-authoritative. */
   stripeProductId: text("stripe_product_id"),
   stripeMonthlyPriceId: text("stripe_monthly_price_id"),

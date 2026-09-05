@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, ilike, isNull, lt, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, ilike, inArray, isNull, lt, lte, or, sql, type SQL } from "drizzle-orm";
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter, type Request } from "express";
 import { runtimeConfig } from "../lib/config";
@@ -8,6 +8,7 @@ import {
   foldersTable,
   groupPermissionsTable,
   membershipsTable,
+  masterStorageOperationsTable,
   organizationCustomizationTable,
   objectCleanupOutboxTable,
   organizationsTable,
@@ -148,16 +149,23 @@ router.get("/workspace", async (req, res) => {
 // plan access is independently checked below through the entitlement guard path.
 router.patch("/workspace", requirePermission("workspace.manage"), async (req, res) => {
   const raw = req.body as Record<string, unknown>;
+  if (raw.logoObjectKey !== undefined || raw.watermarkObjectKey !== undefined) {
+    return void res.status(400).json({ error: "Direct branding object-key updates are not supported." });
+  }
   for (const key of ["playerAccent", "playerControlForeground", "playerControlBackground"]) {
     if (raw[key] !== undefined && (typeof raw[key] !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(raw[key]))) {
       return void res.status(400).json({ error: `${key} must be a safe six-digit hex color.` });
     }
   }
+  if (raw.logoInitials !== undefined && (
+    typeof raw.logoInitials !== "string" || !/^[A-Za-z0-9]{1,3}$/.test(raw.logoInitials)
+  )) {
+    return void res.status(400).json({ error: "logoInitials must contain one to three letters or numbers." });
+  }
   const update = UpdateWorkspaceBody.parse(req.body);
   const changesCustomization = Boolean(
     update.playerAccent !== undefined || update.playerControlForeground !== undefined || update.playerControlBackground !== undefined ||
-    update.logoInitials !== undefined || update.logoObjectKey !== undefined || update.watermarkObjectKey !== undefined ||
-    update.posterTreatment !== undefined
+    update.logoInitials !== undefined || update.posterTreatment !== undefined
   );
   if (changesCustomization) {
     const access = await withTenantDb(req.tenant, (tx) => resolveBillingAccess(tx, req.tenant.organizationId));
@@ -167,8 +175,7 @@ router.patch("/workspace", requirePermission("workspace.manage"), async (req, re
   }
   const entitlementForField: Array<[EntitlementKey, boolean]> = [
     ["branding.player_colors", update.playerAccent !== undefined || update.playerControlForeground !== undefined || update.playerControlBackground !== undefined || update.posterTreatment !== undefined],
-    ["branding.logo", update.logoInitials !== undefined || update.logoObjectKey !== undefined],
-    ["branding.watermark", update.watermarkObjectKey !== undefined],
+    ["branding.logo", update.logoInitials !== undefined],
   ];
   for (const [key, requested] of entitlementForField) {
     if (requested && !await hasEntitlement(req, key)) {
@@ -192,16 +199,13 @@ router.patch("/workspace", requirePermission("workspace.manage"), async (req, re
     }
     if (
       update.playerAccent !== undefined || update.playerControlForeground !== undefined || update.playerControlBackground !== undefined ||
-      update.logoInitials !== undefined || update.logoObjectKey !== undefined || update.watermarkObjectKey !== undefined ||
-      update.posterTreatment !== undefined
+      update.logoInitials !== undefined || update.posterTreatment !== undefined
     ) {
       await tx.update(organizationCustomizationTable).set({
         ...(update.playerAccent !== undefined ? { playerAccent: update.playerAccent } : {}),
         ...(update.playerControlForeground !== undefined ? { playerControlForeground: update.playerControlForeground } : {}),
         ...(update.playerControlBackground !== undefined ? { playerControlBackground: update.playerControlBackground } : {}),
         ...(update.logoInitials !== undefined ? { logoInitials: update.logoInitials } : {}),
-        ...(update.logoObjectKey !== undefined ? { logoObjectKey: update.logoObjectKey } : {}),
-        ...(update.watermarkObjectKey !== undefined ? { watermarkObjectKey: update.watermarkObjectKey } : {}),
         ...(update.posterTreatment ? { posterTreatment: update.posterTreatment } : {}),
       }).where(eq(organizationCustomizationTable.organizationId, req.tenant.organizationId));
     }
@@ -239,8 +243,8 @@ async function fetchWorkspace(tx: TenantTransaction, organizationId: string, use
     playerControlForeground: organizationCustomizationTable.playerControlForeground,
     playerControlBackground: organizationCustomizationTable.playerControlBackground,
     logoInitials: organizationCustomizationTable.logoInitials,
-    logoObjectKey: organizationCustomizationTable.logoObjectKey,
-    watermarkObjectKey: organizationCustomizationTable.watermarkObjectKey,
+    hasLogoAsset: sql<boolean>`${organizationCustomizationTable.logoObjectKey} is not null`,
+    hasWatermarkAsset: sql<boolean>`${organizationCustomizationTable.watermarkObjectKey} is not null`,
     posterTreatment: organizationCustomizationTable.posterTreatment,
     customDomain: organizationCustomizationTable.customDomain,
     customDomainVerified: organizationCustomizationTable.customDomainVerified,
@@ -305,7 +309,7 @@ router.get("/dashboard", requirePermission("analytics.read"), async (req, res) =
     .where(eq(videosTable.organizationId, organizationId))
     .groupBy(videosTable.id)
     .orderBy(desc(sql`coalesce(sum(${videoAnalyticsRollupsTable.plays}), 0)`))
-    .limit(3);
+    .limit(5);
     const trendResult = await tx.execute<{ date: string; plays: number }>(sql`
       select to_char(days.day, 'YYYY-MM-DD') date, coalesce(sum(rollup.plays),0)::int plays
       from generate_series(${firstDay}, ${today}, interval '1 day') days(day)
@@ -1476,15 +1480,24 @@ async function deleteVideoDurably(
       if (claimIsFresh) {
         return { status: 409, error: "Video deletion is already in progress." };
       }
-      await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
-        status: "error",
-        reconciliationRequired: "provider asset deletion outcome unknown",
-        uploadFailureDetail: "Deletion requires provider reconciliation.",
-        initializationRetryable: false,
-      }).where(and(
-        scopedVideoWhere(organizationId, videoId),
-        eq(videosTable.deletionClaim, video.deletionClaim!),
-      )));
+      await withTenantDb(req.tenant, async (tx) => {
+        const [changed] = await tx.update(videosTable).set({
+          status: "error",
+          reconciliationRequired: "provider asset deletion outcome unknown",
+          uploadFailureDetail: "Deletion requires provider reconciliation.",
+          initializationRetryable: false,
+        }).where(and(
+          scopedVideoWhere(organizationId, videoId),
+          eq(videosTable.deletionClaim, video.deletionClaim!),
+          isNull(videosTable.reconciliationRequired),
+        )).returning({ id: videosTable.id });
+        if (changed) await writeAuditEvent(tx, {
+          organizationId, actor: auditUser(req.tenant.userId), action: "video.deletion_reconciliation_required", category: "content",
+          subject: { type: "video", id: videoId, label: video.title },
+          beforeState: { status: video.status }, afterState: { status: "error", reconciliationRequired: true },
+          metadata: { code: "stale_deletion_claim" }, requestId: String(req.id),
+        });
+      });
     }
     return { status: 409, error: "Video deletion requires provider reconciliation." };
   }
@@ -1496,12 +1509,21 @@ async function deleteVideoDurably(
     return { status: 204 };
   }
   if (!video.providerAccountId || !video.providerTenantSpaceId) {
-    await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
-      status: "error",
-      reconciliationRequired: "incomplete provider linkage prevents safe deletion",
-      uploadFailureDetail: "Deletion requires provider reconciliation.",
-      initializationRetryable: false,
-    }).where(scopedVideoWhere(organizationId, videoId)));
+    await withTenantDb(req.tenant, async (tx) => {
+      const [changed] = await tx.update(videosTable).set({
+        status: "error",
+        reconciliationRequired: "incomplete provider linkage prevents safe deletion",
+        uploadFailureDetail: "Deletion requires provider reconciliation.",
+        initializationRetryable: false,
+      }).where(and(scopedVideoWhere(organizationId, videoId), isNull(videosTable.reconciliationRequired)))
+        .returning({ id: videosTable.id });
+      if (changed) await writeAuditEvent(tx, {
+        organizationId, actor: auditUser(req.tenant.userId), action: "video.deletion_reconciliation_required", category: "content",
+        subject: { type: "video", id: videoId, label: video.title },
+        beforeState: { status: video.status }, afterState: { status: "error", reconciliationRequired: true },
+        metadata: { code: "incomplete_provider_linkage" }, requestId: String(req.id),
+      });
+    });
     return { status: 409, error: "Video deletion requires provider reconciliation." };
   }
 
@@ -1564,12 +1586,24 @@ async function deleteVideoDurably(
     await withTenantDb(req.tenant, (tx) => deleteOwnedVideoMetadata(tx, organizationId, videoId, claim, req));
     return { status: 204 };
   } catch (error) {
-    await withTenantDb(req.tenant, (tx) => tx.update(videosTable).set({
-      status: "error",
-      reconciliationRequired: "provider asset deleted but local metadata deletion was not confirmed",
-      uploadFailureDetail: "Deletion requires provider reconciliation.",
-      initializationRetryable: false,
-    }).where(and(scopedVideoWhere(organizationId, videoId), eq(videosTable.deletionClaim, claim))));
+    await withTenantDb(req.tenant, async (tx) => {
+      const [changed] = await tx.update(videosTable).set({
+        status: "error",
+        reconciliationRequired: "provider asset deleted but local metadata deletion was not confirmed",
+        uploadFailureDetail: "Deletion requires provider reconciliation.",
+        initializationRetryable: false,
+      }).where(and(
+        scopedVideoWhere(organizationId, videoId),
+        eq(videosTable.deletionClaim, claim),
+        isNull(videosTable.reconciliationRequired),
+      )).returning({ id: videosTable.id });
+      if (changed) await writeAuditEvent(tx, {
+        organizationId, actor: auditUser(req.tenant.userId), action: "video.deletion_reconciliation_required", category: "content",
+        subject: { type: "video", id: videoId, label: video.title },
+        beforeState: { status: video.status }, afterState: { status: "error", reconciliationRequired: true },
+        metadata: { code: "local_delete_unconfirmed_after_provider_delete" }, requestId: String(req.id),
+      });
+    });
     req.log.error({ err: error, videoId }, "Local metadata deletion failed after provider deletion");
     return { status: 503, error: "Video deletion could not be confirmed and requires reconciliation." };
   }
@@ -1590,7 +1624,7 @@ async function claimVideoForDeletion(req: Request, organizationId: string, video
       const claimIsFresh = locked.assetCreationClaimedAt
         && locked.assetCreationClaimedAt.getTime() >= Date.now() - 15 * 60_000;
       if (!claimIsFresh) {
-        await tx.update(videosTable).set({
+        const [changed] = await tx.update(videosTable).set({
           status: "error",
           reconciliationRequired: "provider asset creation outcome unknown",
           uploadFailureDetail: "Deletion requires provider reconciliation.",
@@ -1598,10 +1632,32 @@ async function claimVideoForDeletion(req: Request, organizationId: string, video
         }).where(and(
           scopedVideoWhere(organizationId, videoId),
           eq(videosTable.assetCreationClaim, locked.assetCreationClaim),
-        ));
+          isNull(videosTable.reconciliationRequired),
+        )).returning({ id: videosTable.id });
+        if (changed) await writeAuditEvent(tx, {
+          organizationId, actor: auditUser(req.tenant.userId), action: "video.deletion_reconciliation_required", category: "content",
+          subject: { type: "video", id: videoId, label: locked.title },
+          beforeState: { status: locked.status }, afterState: { status: "error", reconciliationRequired: true },
+          metadata: { code: "stale_asset_creation_claim" }, requestId: String(req.id),
+        });
       }
       return undefined;
     }
+    const [masterOperation] = await tx.select({ id: masterStorageOperationsTable.id })
+      .from(masterStorageOperationsTable)
+      .where(and(
+        eq(masterStorageOperationsTable.organizationId, organizationId),
+        eq(masterStorageOperationsTable.videoId, videoId),
+        or(
+          inArray(masterStorageOperationsTable.state, ["pending", "dispatching", "queued", "processing"]),
+          and(
+            eq(masterStorageOperationsTable.state, "failed"),
+            eq(masterStorageOperationsTable.retryable, true),
+          ),
+        ),
+      ))
+      .limit(1);
+    if (masterOperation) return undefined;
     const claim = randomUUID();
     const [claimed] = await tx.update(videosTable).set({
       deletionClaim: claim,
@@ -1735,11 +1791,19 @@ function signAuditCursor(payload: AuditCursor) {
 }
 function parseAuditCursor(value: string, tenant: string, filters: string): AuditCursor | undefined {
   const [body, signature, extra] = value.split(".");
-  if (!body || !signature || extra) return undefined;
+  if (!body || !signature || extra || !/^[A-Za-z0-9_-]+$/.test(body) || !/^[A-Za-z0-9_-]+$/.test(signature)) {
+    return undefined;
+  }
   const expected = createHmac("sha256", cursorSigningKey).update(`audit:v1.${body}`).digest("base64url");
-  if (signature.length !== expected.length || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return undefined;
   try {
-    const item = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as AuditCursor;
+    const signatureBytes = Buffer.from(signature, "base64url");
+    const expectedBytes = Buffer.from(expected, "base64url");
+    const bodyBytes = Buffer.from(body, "base64url");
+    if (signatureBytes.toString("base64url") !== signature
+      || bodyBytes.toString("base64url") !== body
+      || signatureBytes.length !== expectedBytes.length
+      || !timingSafeEqual(signatureBytes, expectedBytes)) return undefined;
+    const item = JSON.parse(bodyBytes.toString("utf8")) as AuditCursor;
     return item.v === 1 && item.tenant === tenant && item.filters === filters && item.expiresAt >= Date.now()
       && [item.snapshotAt, item.lastAt].every((d) => !Number.isNaN(Date.parse(d))) && uuidPattern.test(item.snapshotId) && uuidPattern.test(item.lastId) ? item : undefined;
   } catch { return undefined; }
@@ -1752,7 +1816,7 @@ function auditWhere(tenant: string, filters: AuditFilters, anchor?: { at: string
   if (filters.subjectId) conditions.push(eq(auditLogsTable.subjectId, filters.subjectId));
   if (filters.actorKind) conditions.push(eq(auditLogsTable.actorKind, filters.actorKind as "user" | "system" | "webhook" | "job"));
   if (filters.actorUserId) conditions.push(eq(auditLogsTable.actorUserId, filters.actorUserId));
-  if (filters.from) conditions.push(gt(auditLogsTable.createdAt, filters.from));
+  if (filters.from) conditions.push(gte(auditLogsTable.createdAt, filters.from));
   if (filters.to) conditions.push(lte(auditLogsTable.createdAt, filters.to));
   if (filters.search) conditions.push(or(ilike(auditLogsTable.subjectLabel, `%${filters.search.replace(/[%_\\]/g, "\\$&")}%`), ilike(auditLogsTable.action, `%${filters.search.replace(/[%_\\]/g, "\\$&")}%`))!);
   if (anchor) conditions.push(or(lt(auditLogsTable.createdAt, new Date(anchor.at)), and(eq(auditLogsTable.createdAt, new Date(anchor.at)), lte(auditLogsTable.id, anchor.id)))!);
@@ -1798,42 +1862,79 @@ router.get("/audit-events", requirePermission("audit.read"), async (req, res) =>
 function csvField(value: unknown) {
   let text = value === null || value === undefined ? "" : typeof value === "string" ? value : value instanceof Date ? value.toISOString() : JSON.stringify(value);
   // Spreadsheet programs evaluate these prefixes even in a quoted CSV cell.
-  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  if (/^\s*[=+\-@]/.test(text) || /^[\t\r\n]/.test(text)) text = `'${text}`;
   return `"${text.replace(/"/g, '""')}"`;
+}
+const auditExportMaxRows = 10_000;
+export const AUDIT_EXPORT_MAX_BYTES = 16 * 1024 * 1024;
+const auditExportBatchSize = 250;
+const auditExportHeader = ["id", "created_at", "category", "action", "actor_kind", "actor_user_id", "actor_name", "subject_type", "subject_id", "subject_label", "before_state", "after_state", "metadata", "request_id"];
+function auditCsvLine(row: unknown[]) {
+  return `${row.map(csvField).join(",")}\r\n`;
 }
 router.get("/audit-events/export", requirePermission("audit.export"), async (req, res) => {
   // Reuse the strict filter parser while intentionally ignoring pagination state.
   const query = { ...req.query, limit: "100", cursor: undefined };
   const parsed = auditQuery({ ...req, query } as unknown as Request);
   if (!parsed) return auditBadRequest(res, "Invalid audit export query");
-  const now = new Date(); const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const from = parsed.filters.from ?? defaultFrom; const to = parsed.filters.to ?? now;
-  if (to.getTime() - from.getTime() > 90 * 24 * 60 * 60 * 1000) return auditBadRequest(res, "Audit export range may not exceed 90 days");
+  const now = new Date(); const to = parsed.filters.to ?? now;
+  const from = parsed.filters.from ?? new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000);
+  if (from > to || to.getTime() - from.getTime() > 90 * 24 * 60 * 60 * 1000) {
+    return auditBadRequest(res, "Audit export range must be ordered and may not exceed 90 days");
+  }
   parsed.filters.from = from; parsed.filters.to = to;
-  let rows: AuditRow[];
+  let exported: { body: string; truncated: boolean };
   try {
-    rows = await withTenantDb(req.tenant, async (tx) => {
-      await consumeAuditExportLimit(tx, req.tenant.organizationId, req.tenant.userId);
-      return tx.select(auditProjection).from(auditLogsTable)
-        .leftJoin(usersTable, eq(usersTable.id, auditLogsTable.actorUserId))
-        .where(auditWhere(req.tenant.organizationId, parsed.filters))
-        .orderBy(desc(auditLogsTable.createdAt), desc(auditLogsTable.id)).limit(10_001);
-    });
+    await withTenantDb(req.tenant, (tx) =>
+      consumeAuditExportLimit(tx, req.tenant.organizationId, req.tenant.userId));
   } catch (error) {
     if (error instanceof AuditExportRateLimitError) {
       res.set("Retry-After", String(error.retryAfter)).status(429).json({ error: error.message }); return;
     }
     throw error;
   }
-  const truncated = rows.length > 10_000; const header = ["id", "created_at", "category", "action", "actor_kind", "actor_user_id", "actor_name", "subject_type", "subject_id", "subject_label", "before_state", "after_state", "metadata", "request_id"];
-  const body = [header, ...rows.slice(0, 10_000).map((row) => [row.id, row.createdAt, row.category, row.action, row.actorKind, row.actorUserId, row.actorName, row.subjectType, row.subjectId, row.subjectLabel, row.beforeState, row.afterState, row.metadata, row.requestId])]
-    .map((row) => row.map(csvField).join(",")).join("\r\n") + "\r\n";
+  try {
+    exported = await withTenantDb(req.tenant, async (tx) => {
+      const lines = [auditCsvLine(auditExportHeader)];
+      let bytes = Buffer.byteLength(lines[0], "utf8");
+      let count = 0;
+      let last: { at: string; id: string } | undefined;
+      let truncated = false;
+      while (!truncated && count <= auditExportMaxRows) {
+        const batch = await tx.select(auditProjection).from(auditLogsTable)
+          .leftJoin(usersTable, eq(usersTable.id, auditLogsTable.actorUserId))
+          .where(auditWhere(req.tenant.organizationId, parsed.filters, undefined, last))
+          .orderBy(desc(auditLogsTable.createdAt), desc(auditLogsTable.id))
+          .limit(Math.min(auditExportBatchSize, auditExportMaxRows + 1 - count));
+        if (batch.length === 0) break;
+        for (const row of batch) {
+          if (count >= auditExportMaxRows) {
+            truncated = true;
+            break;
+          }
+          const line = auditCsvLine([row.id, row.createdAt, row.category, row.action, row.actorKind, row.actorUserId, row.actorName, row.subjectType, row.subjectId, row.subjectLabel, row.beforeState, row.afterState, row.metadata, row.requestId]);
+          const lineBytes = Buffer.byteLength(line, "utf8");
+          if (bytes + lineBytes > AUDIT_EXPORT_MAX_BYTES) {
+            truncated = true;
+            break;
+          }
+          lines.push(line);
+          bytes += lineBytes;
+          count += 1;
+        }
+        const tail = batch.at(-1);
+        if (truncated || batch.length < auditExportBatchSize || !tail) break;
+        last = { at: tail.createdAt.toISOString(), id: tail.id };
+      }
+      return { body: lines.join(""), truncated };
+    }, { isolationLevel: "repeatable read" });
+  } catch (error) { throw error; }
   res.status(200).set({
     "Content-Type": "text/csv; charset=utf-8",
     "Content-Disposition": "attachment; filename=\"audit-events.csv\"",
-    "X-Audit-Export-Truncated": truncated ? "true" : "false",
+    "X-Audit-Export-Truncated": exported.truncated ? "true" : "false",
     "X-Content-Type-Options": "nosniff",
-  }).send(body);
+  }).send(exported.body);
 });
 
 export default router;

@@ -23,12 +23,15 @@ import type {
   ActivityItem,
   AuditEventPage,
   AuthenticatedPlaybackVideo,
+  AuthenticationRequiredResponse,
   BillingActionInput,
   BillingCancellation,
   BillingCatalog,
   BillingChangeResult,
+  BillingConflictResponse,
   BillingInvoiceList,
   BillingPlanInput,
+  BillingProviderUnavailableResponse,
   BillingReconcileResult,
   BillingSubscription,
   BillingUrl,
@@ -39,12 +42,15 @@ import type {
   CustomDomainInput,
   CustomDomainStatus,
   Dashboard,
+  ErrorResponse,
   ExportAuditEventsParams,
   Folder,
   FolderDetail,
   FolderInput,
   FolderUpdate,
+  GetVideoThumbnailParams,
   HealthStatus,
+  InvalidBillingRequestResponse,
   Invitation,
   InvitationAcceptance,
   InvitationAcceptanceInput,
@@ -60,6 +66,9 @@ import type {
   Permission,
   PermissionGroup,
   PermissionGroupInput,
+  PermissionRequiredResponse,
+  PlaybackAnalyticsGrant,
+  PlaybackAnalyticsGrantInput,
   PlaybackEventBatch,
   PublicVideo,
   RuntimeConfig,
@@ -340,7 +349,7 @@ export const getGetBillingCatalogQueryKey = () => {
     }
 
 
-export const getGetBillingCatalogQueryOptions = <TData = Awaited<ReturnType<typeof getBillingCatalog>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBillingCatalog>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetBillingCatalogQueryOptions = <TData = Awaited<ReturnType<typeof getBillingCatalog>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBillingCatalog>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -359,11 +368,11 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetBillingCatalogQueryResult = NonNullable<Awaited<ReturnType<typeof getBillingCatalog>>>
-export type GetBillingCatalogQueryError = ErrorType<unknown>
+export type GetBillingCatalogQueryError = ErrorType<ErrorResponse>
 
 
 
-export function useGetBillingCatalog<TData = Awaited<ReturnType<typeof getBillingCatalog>>, TError = ErrorType<unknown>>(
+export function useGetBillingCatalog<TData = Awaited<ReturnType<typeof getBillingCatalog>>, TError = ErrorType<ErrorResponse>>(
   options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBillingCatalog>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
@@ -411,7 +420,7 @@ export const getGetBillingSubscriptionQueryKey = () => {
     }
 
 
-export const getGetBillingSubscriptionQueryOptions = <TData = Awaited<ReturnType<typeof getBillingSubscription>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBillingSubscription>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetBillingSubscriptionQueryOptions = <TData = Awaited<ReturnType<typeof getBillingSubscription>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBillingSubscription>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -430,11 +439,11 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetBillingSubscriptionQueryResult = NonNullable<Awaited<ReturnType<typeof getBillingSubscription>>>
-export type GetBillingSubscriptionQueryError = ErrorType<unknown>
+export type GetBillingSubscriptionQueryError = ErrorType<ErrorResponse>
 
 
 
-export function useGetBillingSubscription<TData = Awaited<ReturnType<typeof getBillingSubscription>>, TError = ErrorType<unknown>>(
+export function useGetBillingSubscription<TData = Awaited<ReturnType<typeof getBillingSubscription>>, TError = ErrorType<ErrorResponse>>(
   options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getBillingSubscription>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
@@ -475,7 +484,7 @@ export const createBillingCheckout = async (billingPlanInput: BillingPlanInput, 
 
 
 
-export const getCreateBillingCheckoutMutationOptions = <TError = ErrorType<unknown>,
+export const getCreateBillingCheckoutMutationOptions = <TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | BillingConflictResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createBillingCheckout>>, TError,{data: BodyType<BillingPlanInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createBillingCheckout>>, TError,{data: BodyType<BillingPlanInput>}, TContext> => {
 
@@ -504,9 +513,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CreateBillingCheckoutMutationResult = NonNullable<Awaited<ReturnType<typeof createBillingCheckout>>>
     export type CreateBillingCheckoutMutationBody = BodyType<BillingPlanInput>
-    export type CreateBillingCheckoutMutationError = ErrorType<unknown>
+    export type CreateBillingCheckoutMutationError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | BillingConflictResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>
 
-    export const useCreateBillingCheckout = <TError = ErrorType<unknown>,
+    export const useCreateBillingCheckout = <TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | BillingConflictResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createBillingCheckout>>, TError,{data: BodyType<BillingPlanInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof createBillingCheckout>>,
@@ -540,7 +549,7 @@ export const changeBillingPlan = async (billingPlanInput: BillingPlanInput, opti
 
 
 
-export const getChangeBillingPlanMutationOptions = <TError = ErrorType<unknown>,
+export const getChangeBillingPlanMutationOptions = <TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | BillingConflictResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changeBillingPlan>>, TError,{data: BodyType<BillingPlanInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof changeBillingPlan>>, TError,{data: BodyType<BillingPlanInput>}, TContext> => {
 
@@ -569,9 +578,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type ChangeBillingPlanMutationResult = NonNullable<Awaited<ReturnType<typeof changeBillingPlan>>>
     export type ChangeBillingPlanMutationBody = BodyType<BillingPlanInput>
-    export type ChangeBillingPlanMutationError = ErrorType<unknown>
+    export type ChangeBillingPlanMutationError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | BillingConflictResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>
 
-    export const useChangeBillingPlan = <TError = ErrorType<unknown>,
+    export const useChangeBillingPlan = <TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | BillingConflictResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof changeBillingPlan>>, TError,{data: BodyType<BillingPlanInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof changeBillingPlan>>,
@@ -605,7 +614,7 @@ export const cancelBillingSubscription = async (billingActionInput: BillingActio
 
 
 
-export const getCancelBillingSubscriptionMutationOptions = <TError = ErrorType<unknown>,
+export const getCancelBillingSubscriptionMutationOptions = <TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | BillingConflictResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelBillingSubscription>>, TError,{data: BodyType<BillingActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof cancelBillingSubscription>>, TError,{data: BodyType<BillingActionInput>}, TContext> => {
 
@@ -634,9 +643,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CancelBillingSubscriptionMutationResult = NonNullable<Awaited<ReturnType<typeof cancelBillingSubscription>>>
     export type CancelBillingSubscriptionMutationBody = BodyType<BillingActionInput>
-    export type CancelBillingSubscriptionMutationError = ErrorType<unknown>
+    export type CancelBillingSubscriptionMutationError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | BillingConflictResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>
 
-    export const useCancelBillingSubscription = <TError = ErrorType<unknown>,
+    export const useCancelBillingSubscription = <TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | BillingConflictResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelBillingSubscription>>, TError,{data: BodyType<BillingActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof cancelBillingSubscription>>,
@@ -670,7 +679,7 @@ export const resumeBillingSubscription = async (billingActionInput: BillingActio
 
 
 
-export const getResumeBillingSubscriptionMutationOptions = <TError = ErrorType<unknown>,
+export const getResumeBillingSubscriptionMutationOptions = <TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | BillingConflictResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resumeBillingSubscription>>, TError,{data: BodyType<BillingActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof resumeBillingSubscription>>, TError,{data: BodyType<BillingActionInput>}, TContext> => {
 
@@ -699,9 +708,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type ResumeBillingSubscriptionMutationResult = NonNullable<Awaited<ReturnType<typeof resumeBillingSubscription>>>
     export type ResumeBillingSubscriptionMutationBody = BodyType<BillingActionInput>
-    export type ResumeBillingSubscriptionMutationError = ErrorType<unknown>
+    export type ResumeBillingSubscriptionMutationError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | BillingConflictResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>
 
-    export const useResumeBillingSubscription = <TError = ErrorType<unknown>,
+    export const useResumeBillingSubscription = <TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | BillingConflictResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resumeBillingSubscription>>, TError,{data: BodyType<BillingActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof resumeBillingSubscription>>,
@@ -735,7 +744,7 @@ export const createBillingPortal = async (billingActionInput: BillingActionInput
 
 
 
-export const getCreateBillingPortalMutationOptions = <TError = ErrorType<unknown>,
+export const getCreateBillingPortalMutationOptions = <TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | BillingConflictResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createBillingPortal>>, TError,{data: BodyType<BillingActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createBillingPortal>>, TError,{data: BodyType<BillingActionInput>}, TContext> => {
 
@@ -764,9 +773,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CreateBillingPortalMutationResult = NonNullable<Awaited<ReturnType<typeof createBillingPortal>>>
     export type CreateBillingPortalMutationBody = BodyType<BillingActionInput>
-    export type CreateBillingPortalMutationError = ErrorType<unknown>
+    export type CreateBillingPortalMutationError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | BillingConflictResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>
 
-    export const useCreateBillingPortal = <TError = ErrorType<unknown>,
+    export const useCreateBillingPortal = <TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | BillingConflictResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createBillingPortal>>, TError,{data: BodyType<BillingActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof createBillingPortal>>,
@@ -814,7 +823,7 @@ export const getListBillingInvoicesQueryKey = (params?: ListBillingInvoicesParam
     }
 
 
-export const getListBillingInvoicesQueryOptions = <TData = Awaited<ReturnType<typeof listBillingInvoices>>, TError = ErrorType<unknown>>(params?: ListBillingInvoicesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listBillingInvoices>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListBillingInvoicesQueryOptions = <TData = Awaited<ReturnType<typeof listBillingInvoices>>, TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | BillingConflictResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>>(params?: ListBillingInvoicesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listBillingInvoices>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -833,11 +842,11 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListBillingInvoicesQueryResult = NonNullable<Awaited<ReturnType<typeof listBillingInvoices>>>
-export type ListBillingInvoicesQueryError = ErrorType<unknown>
+export type ListBillingInvoicesQueryError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | BillingConflictResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>
 
 
 
-export function useListBillingInvoices<TData = Awaited<ReturnType<typeof listBillingInvoices>>, TError = ErrorType<unknown>>(
+export function useListBillingInvoices<TData = Awaited<ReturnType<typeof listBillingInvoices>>, TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | BillingConflictResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>>(
  params?: ListBillingInvoicesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listBillingInvoices>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
@@ -878,7 +887,7 @@ export const reconcileBillingSubscription = async (billingActionInput: BillingAc
 
 
 
-export const getReconcileBillingSubscriptionMutationOptions = <TError = ErrorType<unknown>,
+export const getReconcileBillingSubscriptionMutationOptions = <TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reconcileBillingSubscription>>, TError,{data: BodyType<BillingActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof reconcileBillingSubscription>>, TError,{data: BodyType<BillingActionInput>}, TContext> => {
 
@@ -907,9 +916,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type ReconcileBillingSubscriptionMutationResult = NonNullable<Awaited<ReturnType<typeof reconcileBillingSubscription>>>
     export type ReconcileBillingSubscriptionMutationBody = BodyType<BillingActionInput>
-    export type ReconcileBillingSubscriptionMutationError = ErrorType<unknown>
+    export type ReconcileBillingSubscriptionMutationError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>
 
-    export const useReconcileBillingSubscription = <TError = ErrorType<unknown>,
+    export const useReconcileBillingSubscription = <TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | InvalidBillingRequestResponse | BillingProviderUnavailableResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reconcileBillingSubscription>>, TError,{data: BodyType<BillingActionInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof reconcileBillingSubscription>>,
@@ -1092,7 +1101,7 @@ export const getGetWorkspaceQueryKey = () => {
     }
 
 
-export const getGetWorkspaceQueryOptions = <TData = Awaited<ReturnType<typeof getWorkspace>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWorkspace>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetWorkspaceQueryOptions = <TData = Awaited<ReturnType<typeof getWorkspace>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWorkspace>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -1111,11 +1120,11 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetWorkspaceQueryResult = NonNullable<Awaited<ReturnType<typeof getWorkspace>>>
-export type GetWorkspaceQueryError = ErrorType<unknown>
+export type GetWorkspaceQueryError = ErrorType<void>
 
 
 
-export function useGetWorkspace<TData = Awaited<ReturnType<typeof getWorkspace>>, TError = ErrorType<unknown>>(
+export function useGetWorkspace<TData = Awaited<ReturnType<typeof getWorkspace>>, TError = ErrorType<void>>(
   options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWorkspace>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
@@ -1156,7 +1165,7 @@ export const updateWorkspace = async (workspaceUpdate: WorkspaceUpdate, options?
 
 
 
-export const getUpdateWorkspaceMutationOptions = <TError = ErrorType<unknown>,
+export const getUpdateWorkspaceMutationOptions = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateWorkspace>>, TError,{data: BodyType<WorkspaceUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof updateWorkspace>>, TError,{data: BodyType<WorkspaceUpdate>}, TContext> => {
 
@@ -1185,9 +1194,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type UpdateWorkspaceMutationResult = NonNullable<Awaited<ReturnType<typeof updateWorkspace>>>
     export type UpdateWorkspaceMutationBody = BodyType<WorkspaceUpdate>
-    export type UpdateWorkspaceMutationError = ErrorType<unknown>
+    export type UpdateWorkspaceMutationError = ErrorType<void>
 
-    export const useUpdateWorkspace = <TError = ErrorType<unknown>,
+    export const useUpdateWorkspace = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateWorkspace>>, TError,{data: BodyType<WorkspaceUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof updateWorkspace>>,
@@ -1228,7 +1237,7 @@ export const getGetCustomDomainQueryKey = () => {
     }
 
 
-export const getGetCustomDomainQueryOptions = <TData = Awaited<ReturnType<typeof getCustomDomain>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCustomDomain>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetCustomDomainQueryOptions = <TData = Awaited<ReturnType<typeof getCustomDomain>>, TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCustomDomain>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -1247,11 +1256,11 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetCustomDomainQueryResult = NonNullable<Awaited<ReturnType<typeof getCustomDomain>>>
-export type GetCustomDomainQueryError = ErrorType<unknown>
+export type GetCustomDomainQueryError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse>
 
 
 
-export function useGetCustomDomain<TData = Awaited<ReturnType<typeof getCustomDomain>>, TError = ErrorType<unknown>>(
+export function useGetCustomDomain<TData = Awaited<ReturnType<typeof getCustomDomain>>, TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse>>(
   options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCustomDomain>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
@@ -1292,7 +1301,7 @@ export const createCustomDomain = async (customDomainInput: CustomDomainInput, o
 
 
 
-export const getCreateCustomDomainMutationOptions = <TError = ErrorType<void>,
+export const getCreateCustomDomainMutationOptions = <TError = ErrorType<ErrorResponse | AuthenticationRequiredResponse | PermissionRequiredResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createCustomDomain>>, TError,{data: BodyType<CustomDomainInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createCustomDomain>>, TError,{data: BodyType<CustomDomainInput>}, TContext> => {
 
@@ -1321,9 +1330,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CreateCustomDomainMutationResult = NonNullable<Awaited<ReturnType<typeof createCustomDomain>>>
     export type CreateCustomDomainMutationBody = BodyType<CustomDomainInput>
-    export type CreateCustomDomainMutationError = ErrorType<void>
+    export type CreateCustomDomainMutationError = ErrorType<ErrorResponse | AuthenticationRequiredResponse | PermissionRequiredResponse>
 
-    export const useCreateCustomDomain = <TError = ErrorType<void>,
+    export const useCreateCustomDomain = <TError = ErrorType<ErrorResponse | AuthenticationRequiredResponse | PermissionRequiredResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createCustomDomain>>, TError,{data: BodyType<CustomDomainInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof createCustomDomain>>,
@@ -1357,7 +1366,7 @@ export const deleteCustomDomain = async ( options?: Parameters<typeof customFetc
 
 
 
-export const getDeleteCustomDomainMutationOptions = <TError = ErrorType<void>,
+export const getDeleteCustomDomainMutationOptions = <TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteCustomDomain>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteCustomDomain>>, TError,void, TContext> => {
 
@@ -1386,9 +1395,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteCustomDomainMutationResult = NonNullable<Awaited<ReturnType<typeof deleteCustomDomain>>>
 
-    export type DeleteCustomDomainMutationError = ErrorType<void>
+    export type DeleteCustomDomainMutationError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse>
 
-    export const useDeleteCustomDomain = <TError = ErrorType<void>,
+    export const useDeleteCustomDomain = <TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteCustomDomain>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof deleteCustomDomain>>,
@@ -1422,7 +1431,7 @@ export const verifyCustomDomain = async ( options?: Parameters<typeof customFetc
 
 
 
-export const getVerifyCustomDomainMutationOptions = <TError = ErrorType<void>,
+export const getVerifyCustomDomainMutationOptions = <TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | ErrorResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyCustomDomain>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof verifyCustomDomain>>, TError,void, TContext> => {
 
@@ -1451,9 +1460,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type VerifyCustomDomainMutationResult = NonNullable<Awaited<ReturnType<typeof verifyCustomDomain>>>
 
-    export type VerifyCustomDomainMutationError = ErrorType<void>
+    export type VerifyCustomDomainMutationError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | ErrorResponse>
 
-    export const useVerifyCustomDomain = <TError = ErrorType<void>,
+    export const useVerifyCustomDomain = <TError = ErrorType<AuthenticationRequiredResponse | PermissionRequiredResponse | ErrorResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyCustomDomain>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof verifyCustomDomain>>,
@@ -2111,7 +2120,7 @@ export const initializeVideoUpload = async (videoUploadInput: VideoUploadInput, 
 
 
 
-export const getInitializeVideoUploadMutationOptions = <TError = ErrorType<unknown>,
+export const getInitializeVideoUploadMutationOptions = <TError = ErrorType<ErrorResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof initializeVideoUpload>>, TError,{data: BodyType<VideoUploadInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof initializeVideoUpload>>, TError,{data: BodyType<VideoUploadInput>}, TContext> => {
 
@@ -2140,9 +2149,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type InitializeVideoUploadMutationResult = NonNullable<Awaited<ReturnType<typeof initializeVideoUpload>>>
     export type InitializeVideoUploadMutationBody = BodyType<VideoUploadInput>
-    export type InitializeVideoUploadMutationError = ErrorType<unknown>
+    export type InitializeVideoUploadMutationError = ErrorType<ErrorResponse>
 
-    export const useInitializeVideoUpload = <TError = ErrorType<unknown>,
+    export const useInitializeVideoUpload = <TError = ErrorType<ErrorResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof initializeVideoUpload>>, TError,{data: BodyType<VideoUploadInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof initializeVideoUpload>>,
@@ -2456,7 +2465,7 @@ export const getGetMasterStorageStatusQueryKey = (videoId: string,) => {
     }
 
 
-export const getGetMasterStorageStatusQueryOptions = <TData = Awaited<ReturnType<typeof getMasterStorageStatus>>, TError = ErrorType<void>>(videoId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMasterStorageStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetMasterStorageStatusQueryOptions = <TData = Awaited<ReturnType<typeof getMasterStorageStatus>>, TError = ErrorType<ErrorResponse | AuthenticationRequiredResponse | PermissionRequiredResponse>>(videoId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMasterStorageStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -2475,11 +2484,11 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetMasterStorageStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getMasterStorageStatus>>>
-export type GetMasterStorageStatusQueryError = ErrorType<void>
+export type GetMasterStorageStatusQueryError = ErrorType<ErrorResponse | AuthenticationRequiredResponse | PermissionRequiredResponse>
 
 
 
-export function useGetMasterStorageStatus<TData = Awaited<ReturnType<typeof getMasterStorageStatus>>, TError = ErrorType<void>>(
+export function useGetMasterStorageStatus<TData = Awaited<ReturnType<typeof getMasterStorageStatus>>, TError = ErrorType<ErrorResponse | AuthenticationRequiredResponse | PermissionRequiredResponse>>(
  videoId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMasterStorageStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
@@ -2520,7 +2529,7 @@ export const archiveVideoMaster = async (videoId: string, options?: Parameters<t
 
 
 
-export const getArchiveVideoMasterMutationOptions = <TError = ErrorType<void>,
+export const getArchiveVideoMasterMutationOptions = <TError = ErrorType<ErrorResponse | AuthenticationRequiredResponse | PermissionRequiredResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof archiveVideoMaster>>, TError,{videoId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof archiveVideoMaster>>, TError,{videoId: string}, TContext> => {
 
@@ -2549,9 +2558,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type ArchiveVideoMasterMutationResult = NonNullable<Awaited<ReturnType<typeof archiveVideoMaster>>>
 
-    export type ArchiveVideoMasterMutationError = ErrorType<void>
+    export type ArchiveVideoMasterMutationError = ErrorType<ErrorResponse | AuthenticationRequiredResponse | PermissionRequiredResponse>
 
-    export const useArchiveVideoMaster = <TError = ErrorType<void>,
+    export const useArchiveVideoMaster = <TError = ErrorType<ErrorResponse | AuthenticationRequiredResponse | PermissionRequiredResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof archiveVideoMaster>>, TError,{videoId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof archiveVideoMaster>>,
@@ -2585,7 +2594,7 @@ export const restoreVideoMaster = async (videoId: string, options?: Parameters<t
 
 
 
-export const getRestoreVideoMasterMutationOptions = <TError = ErrorType<void>,
+export const getRestoreVideoMasterMutationOptions = <TError = ErrorType<ErrorResponse | AuthenticationRequiredResponse | PermissionRequiredResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restoreVideoMaster>>, TError,{videoId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof restoreVideoMaster>>, TError,{videoId: string}, TContext> => {
 
@@ -2614,9 +2623,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type RestoreVideoMasterMutationResult = NonNullable<Awaited<ReturnType<typeof restoreVideoMaster>>>
 
-    export type RestoreVideoMasterMutationError = ErrorType<void>
+    export type RestoreVideoMasterMutationError = ErrorType<ErrorResponse | AuthenticationRequiredResponse | PermissionRequiredResponse>
 
-    export const useRestoreVideoMaster = <TError = ErrorType<void>,
+    export const useRestoreVideoMaster = <TError = ErrorType<ErrorResponse | AuthenticationRequiredResponse | PermissionRequiredResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof restoreVideoMaster>>, TError,{videoId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof restoreVideoMaster>>,
@@ -2651,7 +2660,7 @@ export const createThumbnailUploadIntent = async (videoId: string,
 
 
 
-export const getCreateThumbnailUploadIntentMutationOptions = <TError = ErrorType<unknown>,
+export const getCreateThumbnailUploadIntentMutationOptions = <TError = ErrorType<ErrorResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createThumbnailUploadIntent>>, TError,{videoId: string;data: BodyType<ThumbnailUploadIntentInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createThumbnailUploadIntent>>, TError,{videoId: string;data: BodyType<ThumbnailUploadIntentInput>}, TContext> => {
 
@@ -2680,9 +2689,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CreateThumbnailUploadIntentMutationResult = NonNullable<Awaited<ReturnType<typeof createThumbnailUploadIntent>>>
     export type CreateThumbnailUploadIntentMutationBody = BodyType<ThumbnailUploadIntentInput>
-    export type CreateThumbnailUploadIntentMutationError = ErrorType<unknown>
+    export type CreateThumbnailUploadIntentMutationError = ErrorType<ErrorResponse>
 
-    export const useCreateThumbnailUploadIntent = <TError = ErrorType<unknown>,
+    export const useCreateThumbnailUploadIntent = <TError = ErrorType<ErrorResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createThumbnailUploadIntent>>, TError,{videoId: string;data: BodyType<ThumbnailUploadIntentInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof createThumbnailUploadIntent>>,
@@ -2717,7 +2726,7 @@ export const finalizeThumbnail = async (videoId: string,
 
 
 
-export const getFinalizeThumbnailMutationOptions = <TError = ErrorType<unknown>,
+export const getFinalizeThumbnailMutationOptions = <TError = ErrorType<ErrorResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof finalizeThumbnail>>, TError,{videoId: string;data: BodyType<ThumbnailFinalizeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof finalizeThumbnail>>, TError,{videoId: string;data: BodyType<ThumbnailFinalizeInput>}, TContext> => {
 
@@ -2746,9 +2755,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type FinalizeThumbnailMutationResult = NonNullable<Awaited<ReturnType<typeof finalizeThumbnail>>>
     export type FinalizeThumbnailMutationBody = BodyType<ThumbnailFinalizeInput>
-    export type FinalizeThumbnailMutationError = ErrorType<unknown>
+    export type FinalizeThumbnailMutationError = ErrorType<ErrorResponse>
 
-    export const useFinalizeThumbnail = <TError = ErrorType<unknown>,
+    export const useFinalizeThumbnail = <TError = ErrorType<ErrorResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof finalizeThumbnail>>, TError,{videoId: string;data: BodyType<ThumbnailFinalizeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof finalizeThumbnail>>,
@@ -2759,20 +2768,29 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       return useMutation(getFinalizeThumbnailMutationOptions(options));
     }
 
-export const getGetVideoThumbnailUrl = (videoId: string,) => {
+export const getGetVideoThumbnailUrl = (videoId: string,
+    params: GetVideoThumbnailParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/videos/${videoId}/thumbnail`
+  return stringifiedParams.length > 0 ? `/api/videos/${videoId}/thumbnail?${stringifiedParams}` : `/api/videos/${videoId}/thumbnail`
 }
 
 /**
  * Requires the opaque current `v` query value returned in thumbnailUrl.
  */
-export const getVideoThumbnail = async (videoId: string, options?: Parameters<typeof customFetch>[1]): Promise<Blob> => {
+export const getVideoThumbnail = async (videoId: string,
+    params: GetVideoThumbnailParams, options?: Parameters<typeof customFetch>[1]): Promise<Blob> => {
 
-  return customFetch<Blob>(getGetVideoThumbnailUrl(videoId),
+  return customFetch<Blob>(getGetVideoThumbnailUrl(videoId,params),
   {
     ...options,
     method: 'GET'
@@ -2785,23 +2803,25 @@ export const getVideoThumbnail = async (videoId: string, options?: Parameters<ty
 
 
 
-export const getGetVideoThumbnailQueryKey = (videoId: string,) => {
+export const getGetVideoThumbnailQueryKey = (videoId: string,
+    params?: GetVideoThumbnailParams,) => {
     return [
-    `/api/videos/${videoId}/thumbnail`
+    `/api/videos/${videoId}/thumbnail`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetVideoThumbnailQueryOptions = <TData = Awaited<ReturnType<typeof getVideoThumbnail>>, TError = ErrorType<unknown>>(videoId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVideoThumbnail>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetVideoThumbnailQueryOptions = <TData = Awaited<ReturnType<typeof getVideoThumbnail>>, TError = ErrorType<ErrorResponse>>(videoId: string,
+    params: GetVideoThumbnailParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVideoThumbnail>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetVideoThumbnailQueryKey(videoId);
+  const queryKey =  queryOptions?.queryKey ?? getGetVideoThumbnailQueryKey(videoId,params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getVideoThumbnail>>> = ({ signal }) => getVideoThumbnail(videoId, { signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getVideoThumbnail>>> = ({ signal }) => getVideoThumbnail(videoId,params, { signal, ...requestOptions });
 
 
 
@@ -2811,16 +2831,17 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type GetVideoThumbnailQueryResult = NonNullable<Awaited<ReturnType<typeof getVideoThumbnail>>>
-export type GetVideoThumbnailQueryError = ErrorType<unknown>
+export type GetVideoThumbnailQueryError = ErrorType<ErrorResponse>
 
 
 
-export function useGetVideoThumbnail<TData = Awaited<ReturnType<typeof getVideoThumbnail>>, TError = ErrorType<unknown>>(
- videoId: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVideoThumbnail>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export function useGetVideoThumbnail<TData = Awaited<ReturnType<typeof getVideoThumbnail>>, TError = ErrorType<ErrorResponse>>(
+ videoId: string,
+    params: GetVideoThumbnailParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getVideoThumbnail>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetVideoThumbnailQueryOptions(videoId,options)
+  const queryOptions = getGetVideoThumbnailQueryOptions(videoId,params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -2856,7 +2877,7 @@ export const deleteVideoThumbnail = async (videoId: string, options?: Parameters
 
 
 
-export const getDeleteVideoThumbnailMutationOptions = <TError = ErrorType<unknown>,
+export const getDeleteVideoThumbnailMutationOptions = <TError = ErrorType<ErrorResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteVideoThumbnail>>, TError,{videoId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof deleteVideoThumbnail>>, TError,{videoId: string}, TContext> => {
 
@@ -2885,9 +2906,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type DeleteVideoThumbnailMutationResult = NonNullable<Awaited<ReturnType<typeof deleteVideoThumbnail>>>
 
-    export type DeleteVideoThumbnailMutationError = ErrorType<unknown>
+    export type DeleteVideoThumbnailMutationError = ErrorType<ErrorResponse>
 
-    export const useDeleteVideoThumbnail = <TError = ErrorType<unknown>,
+    export const useDeleteVideoThumbnail = <TError = ErrorType<ErrorResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteVideoThumbnail>>, TError,{videoId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof deleteVideoThumbnail>>,
@@ -2993,7 +3014,7 @@ export const completeVideoUpload = async (videoId: string,
 
 
 
-export const getCompleteVideoUploadMutationOptions = <TError = ErrorType<unknown>,
+export const getCompleteVideoUploadMutationOptions = <TError = ErrorType<ErrorResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeVideoUpload>>, TError,{videoId: string;data: BodyType<UploadSessionReference>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof completeVideoUpload>>, TError,{videoId: string;data: BodyType<UploadSessionReference>}, TContext> => {
 
@@ -3022,9 +3043,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CompleteVideoUploadMutationResult = NonNullable<Awaited<ReturnType<typeof completeVideoUpload>>>
     export type CompleteVideoUploadMutationBody = BodyType<UploadSessionReference>
-    export type CompleteVideoUploadMutationError = ErrorType<unknown>
+    export type CompleteVideoUploadMutationError = ErrorType<ErrorResponse>
 
-    export const useCompleteVideoUpload = <TError = ErrorType<unknown>,
+    export const useCompleteVideoUpload = <TError = ErrorType<ErrorResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeVideoUpload>>, TError,{videoId: string;data: BodyType<UploadSessionReference>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof completeVideoUpload>>,
@@ -3059,7 +3080,7 @@ export const cancelVideoUpload = async (videoId: string,
 
 
 
-export const getCancelVideoUploadMutationOptions = <TError = ErrorType<unknown>,
+export const getCancelVideoUploadMutationOptions = <TError = ErrorType<ErrorResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelVideoUpload>>, TError,{videoId: string;data: BodyType<UploadSessionReference>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof cancelVideoUpload>>, TError,{videoId: string;data: BodyType<UploadSessionReference>}, TContext> => {
 
@@ -3088,9 +3109,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CancelVideoUploadMutationResult = NonNullable<Awaited<ReturnType<typeof cancelVideoUpload>>>
     export type CancelVideoUploadMutationBody = BodyType<UploadSessionReference>
-    export type CancelVideoUploadMutationError = ErrorType<unknown>
+    export type CancelVideoUploadMutationError = ErrorType<ErrorResponse>
 
-    export const useCancelVideoUpload = <TError = ErrorType<unknown>,
+    export const useCancelVideoUpload = <TError = ErrorType<ErrorResponse>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelVideoUpload>>, TError,{videoId: string;data: BodyType<UploadSessionReference>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof cancelVideoUpload>>,
@@ -4414,6 +4435,72 @@ export function useGetPublicVideoThumbnail<TData = Awaited<ReturnType<typeof get
 
 
 
+
+export const getCreatePlaybackAnalyticsGrantUrl = (videoId: string,) => {
+
+
+
+
+  return `/api/public/videos/${videoId}/analytics-grant`
+}
+
+export const createPlaybackAnalyticsGrant = async (videoId: string,
+    playbackAnalyticsGrantInput: PlaybackAnalyticsGrantInput, options?: Parameters<typeof customFetch>[1]): Promise<PlaybackAnalyticsGrant> => {
+
+  return customFetch<PlaybackAnalyticsGrant>(getCreatePlaybackAnalyticsGrantUrl(videoId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(playbackAnalyticsGrantInput)
+  }
+);}
+
+
+
+
+
+export const getCreatePlaybackAnalyticsGrantMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPlaybackAnalyticsGrant>>, TError,{videoId: string;data: BodyType<PlaybackAnalyticsGrantInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createPlaybackAnalyticsGrant>>, TError,{videoId: string;data: BodyType<PlaybackAnalyticsGrantInput>}, TContext> => {
+
+const mutationKey = ['createPlaybackAnalyticsGrant'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createPlaybackAnalyticsGrant>>, {videoId: string;data: BodyType<PlaybackAnalyticsGrantInput>}> = (props) => {
+          const {videoId,data} = props ?? {};
+
+          return  createPlaybackAnalyticsGrant(videoId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreatePlaybackAnalyticsGrantMutationResult = NonNullable<Awaited<ReturnType<typeof createPlaybackAnalyticsGrant>>>
+    export type CreatePlaybackAnalyticsGrantMutationBody = BodyType<PlaybackAnalyticsGrantInput>
+    export type CreatePlaybackAnalyticsGrantMutationError = ErrorType<void>
+
+    export const useCreatePlaybackAnalyticsGrant = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPlaybackAnalyticsGrant>>, TError,{videoId: string;data: BodyType<PlaybackAnalyticsGrantInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createPlaybackAnalyticsGrant>>,
+        TError,
+        {videoId: string;data: BodyType<PlaybackAnalyticsGrantInput>},
+        TContext
+      > => {
+      return useMutation(getCreatePlaybackAnalyticsGrantMutationOptions(options));
+    }
 
 export const getCreatePlaybackEventsUrl = () => {
 

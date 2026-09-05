@@ -17,7 +17,90 @@ tags:
   - name: members
   - name: billing
   - name: audit
+  - name: webhooks
 paths:
+  /auth/{splat}:
+    summary: Provider-owned authentication boundary
+    description: Better Auth owns the methods, subpaths, request bodies, and responses below this path. It is intentionally excluded from generated product clients.
+    x-provider-owned: better-auth
+    parameters:
+      - in: path
+        name: splat
+        required: true
+        schema: { type: string }
+  /stripe/webhook:
+    post:
+      operationId: receiveStripeWebhook
+      tags: [webhooks]
+      x-internal: true
+      description: Provider-signed ingress. The raw request bytes are verified before JSON parsing and this operation is intentionally excluded from generated product clients.
+      security: []
+      parameters:
+        - in: header
+          name: Stripe-Signature
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: Verified event accepted
+          content: { application/json: { schema: { $ref: "#/components/schemas/WebhookReceived" } } }
+        "400":
+          description: Missing or invalid signature, malformed body, or rejected event
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+  /webhooks/bunny/encode:
+    post:
+      operationId: receiveBunnyEncodeWebhook
+      tags: [webhooks]
+      x-internal: true
+      description: Provider-signed ingress. The raw request bytes and provider-specific headers are verified before processing; this operation is intentionally excluded from generated product clients.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "202":
+          description: Verified encode event accepted
+          content: { application/json: { schema: { $ref: "#/components/schemas/WebhookAccepted" } } }
+        "400":
+          description: Malformed webhook body
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "401":
+          description: Webhook verification failed
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "403":
+          description: Webhook matched more than one provider tenant
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "503":
+          description: Webhook verification is temporarily unavailable
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+  /provider-tests/bunny/{token}:
+    post:
+      operationId: receiveBunnyProviderTestCallback
+      tags: [webhooks]
+      x-internal: true
+      description: Token-authenticated provider round-trip callback used by provider conformance tests. It is intentionally excluded from generated product clients.
+      security: []
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema: { type: string, writeOnly: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "204": { description: Callback accepted }
+        "400": { description: Malformed callback body }
+        "401": { description: Callback token or provider signature rejected }
   /onboarding:
     get:
       operationId: getOnboarding
@@ -63,6 +146,9 @@ paths:
         "200":
           description: Authoritative active billing catalog
           content: { application/json: { schema: { $ref: "#/components/schemas/BillingCatalog" } } }
+        "503":
+          description: Billing catalog is unavailable or does not match the configured provider catalog
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
   /billing/subscription:
     get:
       operationId: getBillingSubscription
@@ -71,6 +157,9 @@ paths:
         "200":
           description: Current tenant billing projection
           content: { application/json: { schema: { $ref: "#/components/schemas/BillingSubscription" } } }
+        "401":
+          description: Authentication required
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
   /billing/checkout:
     post:
       operationId: createBillingCheckout
@@ -82,6 +171,14 @@ paths:
         "201":
           description: Hosted Stripe Checkout session
           content: { application/json: { schema: { $ref: "#/components/schemas/BillingUrl" } } }
+        "200":
+          description: Previously completed checkout replayed for the same idempotency key
+          content: { application/json: { schema: { $ref: "#/components/schemas/BillingUrl" } } }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionRequired" }
+        "409": { $ref: "#/components/responses/BillingConflict" }
+        "422": { $ref: "#/components/responses/InvalidBillingRequest" }
+        "502": { $ref: "#/components/responses/BillingProviderUnavailable" }
   /billing/change-plan:
     post:
       operationId: changeBillingPlan
@@ -93,6 +190,11 @@ paths:
         "200":
           description: Immediate upgrade or scheduled downgrade
           content: { application/json: { schema: { $ref: "#/components/schemas/BillingChangeResult" } } }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionRequired" }
+        "409": { $ref: "#/components/responses/BillingConflict" }
+        "422": { $ref: "#/components/responses/InvalidBillingRequest" }
+        "502": { $ref: "#/components/responses/BillingProviderUnavailable" }
   /billing/cancel:
     post:
       operationId: cancelBillingSubscription
@@ -104,6 +206,11 @@ paths:
         "200":
           description: Cancellation scheduled at period end
           content: { application/json: { schema: { $ref: "#/components/schemas/BillingCancellation" } } }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionRequired" }
+        "409": { $ref: "#/components/responses/BillingConflict" }
+        "422": { $ref: "#/components/responses/InvalidBillingRequest" }
+        "502": { $ref: "#/components/responses/BillingProviderUnavailable" }
   /billing/resume:
     post:
       operationId: resumeBillingSubscription
@@ -115,6 +222,11 @@ paths:
         "200":
           description: Period-end cancellation removed
           content: { application/json: { schema: { $ref: "#/components/schemas/BillingCancellation" } } }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionRequired" }
+        "409": { $ref: "#/components/responses/BillingConflict" }
+        "422": { $ref: "#/components/responses/InvalidBillingRequest" }
+        "502": { $ref: "#/components/responses/BillingProviderUnavailable" }
   /billing/portal:
     post:
       operationId: createBillingPortal
@@ -126,17 +238,27 @@ paths:
         "200":
           description: Hosted Stripe customer portal
           content: { application/json: { schema: { $ref: "#/components/schemas/BillingUrl" } } }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionRequired" }
+        "409": { $ref: "#/components/responses/BillingConflict" }
+        "422": { $ref: "#/components/responses/InvalidBillingRequest" }
+        "502": { $ref: "#/components/responses/BillingProviderUnavailable" }
   /billing/invoices:
     get:
       operationId: listBillingInvoices
       tags: [billing]
       parameters:
         - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
-        - { in: query, name: cursor, schema: { type: string } }
+        - { in: query, name: cursor, schema: { type: string, pattern: "^in_[A-Za-z0-9]+$" } }
       responses:
         "200":
           description: Tenant customer invoices
           content: { application/json: { schema: { $ref: "#/components/schemas/BillingInvoiceList" } } }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionRequired" }
+        "409": { $ref: "#/components/responses/BillingConflict" }
+        "422": { $ref: "#/components/responses/InvalidBillingRequest" }
+        "502": { $ref: "#/components/responses/BillingProviderUnavailable" }
   /billing/reconcile:
     post:
       operationId: reconcileBillingSubscription
@@ -148,6 +270,10 @@ paths:
         "200":
           description: Reconciled billing status
           content: { application/json: { schema: { $ref: "#/components/schemas/BillingReconcileResult" } } }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionRequired" }
+        "422": { $ref: "#/components/responses/InvalidBillingRequest" }
+        "502": { $ref: "#/components/responses/BillingProviderUnavailable" }
   /healthz:
     get:
       operationId: healthCheck
@@ -181,6 +307,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Workspace"
+        "401": { description: Authentication required }
     patch:
       operationId: updateWorkspace
       tags: [workspace]
@@ -197,6 +324,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Workspace"
+        "400": { description: Invalid workspace branding or profile update }
+        "401": { description: Authentication required }
+        "403": { description: Workspace permission or entitlement required }
   /custom-domain:
     get:
       operationId: getCustomDomain
@@ -207,6 +337,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CustomDomainStatus" }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionRequired" }
     post:
       operationId: createCustomDomain
       tags: [custom-domain]
@@ -221,15 +353,21 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CustomDomainStatus" }
-        "400": { description: Invalid or unsafe hostname }
-        "403": { description: Workspace permission or entitlement required }
-        "409": { description: Hostname is claimed by another workspace }
+        "400":
+          description: Invalid or unsafe hostname
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionRequired" }
+        "409":
+          description: Hostname is claimed by another workspace
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
     delete:
       operationId: deleteCustomDomain
       tags: [custom-domain]
       responses:
         "204": { description: Local custom-domain ownership representation removed }
-        "403": { description: Workspace permission or entitlement required }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionRequired" }
   /custom-domain/verify:
     post:
       operationId: verifyCustomDomain
@@ -240,10 +378,14 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CustomDomainStatus" }
-        "403": { description: Workspace permission or entitlement required }
-        "409": { description: No retryable custom-domain verification is pending }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionRequired" }
+        "409":
+          description: No retryable custom-domain verification is pending
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
         "429":
           description: Verification request rate limited.
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
           headers:
             Retry-After:
               schema: { type: integer, minimum: 1 }
@@ -443,6 +585,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VideoUploadInitialization"
+        "400":
+          description: Invalid upload metadata or idempotency key
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "404":
+          description: Selected folder not found
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "409":
+          description: Workspace, provider, quota, or existing upload state conflicts with initialization
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "502":
+          description: Video provider rejected asset creation
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "503":
+          description: Upload initialization is temporarily unavailable or requires reconciliation
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
   /videos/{videoId}:
     get:
       operationId: getVideo
@@ -504,7 +661,14 @@ paths:
         "200":
           description: Tenant-scoped master archive status without provider or storage identity.
           content: { application/json: { schema: { $ref: "#/components/schemas/MasterStorageStatus" } } }
-        "404": { description: Video not found }
+        "400":
+          description: Invalid video identifier
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionRequired" }
+        "404":
+          description: Video not found
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
   /videos/{videoId}/master-archive:
     post:
       operationId: archiveVideoMaster
@@ -514,8 +678,20 @@ paths:
         "202":
           description: Durable archive operation accepted.
           content: { application/json: { schema: { $ref: "#/components/schemas/MasterStorageOperation" } } }
-        "409": { description: Video is not eligible for archive }
-        "503": { description: Master archive adapters are not configured }
+        "400":
+          description: Invalid video identifier
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionRequired" }
+        "404":
+          description: Video not found
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "409":
+          description: Video is not eligible for archive
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "503":
+          description: Master storage or provider-transfer adapter is unavailable
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
   /videos/{videoId}/master-restore:
     post:
       operationId: restoreVideoMaster
@@ -525,8 +701,20 @@ paths:
         "202":
           description: Durable restore operation accepted.
           content: { application/json: { schema: { $ref: "#/components/schemas/MasterStorageOperation" } } }
-        "409": { description: Video has no archived master or is busy }
-        "503": { description: Master archive adapters are not configured }
+        "400":
+          description: Invalid video identifier
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "401": { $ref: "#/components/responses/AuthenticationRequired" }
+        "403": { $ref: "#/components/responses/PermissionRequired" }
+        "404":
+          description: Video not found
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "409":
+          description: Video has no archived master or is busy
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "503":
+          description: Master storage or provider-transfer adapter is unavailable
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
   /videos/{videoId}/thumbnail-upload-intent:
     post:
       operationId: createThumbnailUploadIntent
@@ -546,6 +734,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ThumbnailUploadIntent"
+        "400":
+          description: Invalid video identifier or thumbnail metadata
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "404":
+          description: Video not found
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "409":
+          description: Thumbnail upload intent conflicts with current video or thumbnail state
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "503":
+          description: Thumbnail storage is temporarily unavailable
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
   /videos/{videoId}/thumbnail-finalize:
     post:
       operationId: finalizeThumbnail
@@ -565,12 +765,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Thumbnail"
+        "400":
+          description: Invalid video identifier, intent, or finalized object metadata
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "404":
+          description: Video or thumbnail object not found
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "409":
+          description: Thumbnail finalization conflicts with current intent state
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "503":
+          description: Thumbnail storage is temporarily unavailable
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
   /videos/{videoId}/thumbnail:
     get:
       operationId: getVideoThumbnail
       tags: [videos]
       parameters:
         - $ref: "#/components/parameters/VideoId"
+        - in: query
+          name: v
+          required: true
+          description: Opaque current thumbnail version from thumbnailUrl.
+          schema: { type: string, minLength: 1, maxLength: 128 }
       description: Requires the opaque current `v` query value returned in thumbnailUrl.
       responses:
         "200":
@@ -579,6 +796,12 @@ paths:
             image/jpeg: {}
             image/png: {}
             image/webp: {}
+        "404":
+          description: Video, current thumbnail version, or stored object not found
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "503":
+          description: Thumbnail storage is temporarily unavailable
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
     delete:
       operationId: deleteVideoThumbnail
       tags: [videos]
@@ -587,6 +810,12 @@ paths:
       responses:
         "204":
           description: Thumbnail removed
+        "404":
+          description: Video not found
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "409":
+          description: Thumbnail mutation is already in progress
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
   /videos/{videoId}/playback/source:
     get:
       operationId: getAuthenticatedVideoPlaybackSource
@@ -618,6 +847,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Video"
+        "400":
+          description: Invalid upload session reference
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "404":
+          description: Video not found
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "409":
+          description: Upload cannot be acknowledged in its current state
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
   /videos/{videoId}/upload-cancel:
     post:
       operationId: cancelVideoUpload
@@ -637,6 +875,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Video"
+        "400":
+          description: Invalid upload session reference
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "404":
+          description: Video not found
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "409":
+          description: Upload cannot be cancelled safely in its current state
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+        "503":
+          description: Provider cancellation is temporarily unavailable or requires reconciliation
+          content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
   /activity:
     get:
       operationId: listActivity
@@ -905,6 +1155,32 @@ paths:
             image/jpeg: {}
             image/png: {}
             image/webp: {}
+  /public/videos/{videoId}/analytics-grant:
+    post:
+      operationId: createPlaybackAnalyticsGrant
+      tags: [videos]
+      parameters:
+        - $ref: "#/components/parameters/VideoId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaybackAnalyticsGrantInput"
+      responses:
+        "201":
+          description: Short-lived analytics grant bound to one playback session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaybackAnalyticsGrant"
+        "400": { description: Invalid playback session }
+        "404": { description: Public video is unavailable }
+        "429":
+          description: Analytics grant rate limit exceeded
+          headers:
+            Retry-After:
+              schema: { type: integer }
   /public/playback-events:
     post:
       operationId: createPlaybackEvents
@@ -937,6 +1213,22 @@ paths:
             Retry-After:
               schema: { type: integer }
 components:
+  responses:
+    AuthenticationRequired:
+      description: Authentication required
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    PermissionRequired:
+      description: Workspace permission required
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    BillingConflict:
+      description: Billing state conflicts with the requested mutation
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    InvalidBillingRequest:
+      description: Billing request validation failed
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
+    BillingProviderUnavailable:
+      description: Billing provider operation is temporarily unavailable
+      content: { application/json: { schema: { $ref: "#/components/schemas/ErrorResponse" } } }
   parameters:
     VideoId:
       in: path
@@ -970,6 +1262,25 @@ components:
       schema:
         type: string
   schemas:
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error: { type: string }
+        code: { type: string }
+    WebhookReceived:
+      type: object
+      additionalProperties: false
+      required: [received]
+      properties:
+        received: { type: boolean, const: true }
+    WebhookAccepted:
+      type: object
+      additionalProperties: false
+      required: [accepted]
+      properties:
+        accepted: { type: boolean, const: true }
     MasterStorageOperation:
       type: object
       additionalProperties: false
@@ -1036,6 +1347,7 @@ components:
         provisioning: { $ref: "#/components/schemas/WorkspaceProvisioningSummary" }
     BillingPrice:
       type: object
+      additionalProperties: false
       required: [interval, amount, currency]
       properties:
         interval: { type: string, enum: [month, year] }
@@ -1043,6 +1355,7 @@ components:
         currency: { type: string, enum: [usd] }
     BillingCatalogPlan:
       type: object
+      additionalProperties: false
       required: [code, name, description, entitlements, prices]
       properties:
         code: { type: string, enum: [starter, growth, scale] }
@@ -1052,6 +1365,7 @@ components:
         prices: { type: array, minItems: 2, maxItems: 2, items: { $ref: "#/components/schemas/BillingPrice" } }
     BillingCatalog:
       type: object
+      additionalProperties: false
       required: [plans]
       properties:
         plans: { type: array, items: { $ref: "#/components/schemas/BillingCatalogPlan" } }
@@ -1075,15 +1389,17 @@ components:
           pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
     BillingUrl:
       type: object
+      additionalProperties: false
       required: [url]
-      properties: { url: { type: string } }
+      properties: { url: { type: string, format: uri } }
     BillingSubscription:
       type: object
+      additionalProperties: false
       required: [status, cancelAtPeriodEnd, capabilities]
       properties:
         status: { type: string, enum: [unmanaged, incomplete, active, trialing, past_due, unpaid, canceled, restricted, quarantined] }
-        plan: { type: ["string", "null"] }
-        pendingPlan: { type: ["string", "null"] }
+        plan: { type: ["string", "null"], enum: [starter, growth, scale, null] }
+        pendingPlan: { type: ["string", "null"], enum: [starter, growth, scale, null] }
         pendingEffectiveAt: { type: ["string", "null"], format: date-time }
         interval: { type: ["string", "null"], enum: [month, year, null] }
         periodStart: { type: ["string", "null"], format: date-time }
@@ -1092,41 +1408,57 @@ components:
         cancelAtPeriodEnd: { type: boolean }
         capabilities:
           type: object
+          additionalProperties: false
           required: [canManage, canSubscribe]
           properties:
             canManage: { type: boolean }
             canSubscribe: { type: boolean }
     BillingChangeResult:
       type: object
-      required: [scheduled, effectiveAt, reference]
+      additionalProperties: false
+      required: [scheduled, effectiveAt]
       properties:
         scheduled: { type: boolean }
         effectiveAt: { type: ["string", "null"], format: date-time }
-        reference: { type: string }
     BillingCancellation:
       type: object
+      additionalProperties: false
       required: [cancelAtPeriodEnd]
       properties: { cancelAtPeriodEnd: { type: boolean } }
     BillingInvoice:
       type: object
+      additionalProperties: false
       required: [id, createdAt, amountDue, amountPaid, currency]
       properties:
-        id: { type: string }
+        id:
+          type: string
+          description: Opaque invoice reference intentionally exposed for stable client rendering; it is not an authorization credential.
         status: { type: ["string", "null"] }
         createdAt: { type: string, format: date-time }
         amountDue: { type: number }
         amountPaid: { type: number }
         currency: { type: string }
-        hostedInvoiceUrl: { type: ["string", "null"] }
-        invoicePdf: { type: ["string", "null"] }
+        hostedInvoiceUrl:
+          type: ["string", "null"]
+          format: uri
+          description: Validated HTTPS URL on a Stripe-owned host.
+        invoicePdf:
+          type: ["string", "null"]
+          format: uri
+          description: Validated HTTPS URL on a Stripe-owned host.
     BillingInvoiceList:
       type: object
+      additionalProperties: false
       required: [items, nextCursor]
       properties:
         items: { type: array, items: { $ref: "#/components/schemas/BillingInvoice" } }
-        nextCursor: { type: ["string", "null"] }
+        nextCursor:
+          type: ["string", "null"]
+          pattern: "^in_[A-Za-z0-9]+$"
+          description: Opaque provider pagination reference; it is not an authorization credential.
     BillingReconcileResult:
       type: object
+      additionalProperties: false
       required: [status, reconciledAt]
       properties:
         status: { type: string }
@@ -1145,7 +1477,7 @@ components:
         appDomain: { type: string }
     Workspace:
       type: object
-      required: [id, name, slug, plan, memberCount, storageUsedGb, storageLimitGb, entitlements, billingAccess, permissions, playerAccent, playerControlForeground, playerControlBackground, logoInitials, logoObjectKey, watermarkObjectKey, posterTreatment, customDomain, customDomainVerified]
+      required: [id, name, slug, plan, memberCount, storageUsedGb, storageLimitGb, entitlements, billingAccess, permissions, playerAccent, playerControlForeground, playerControlBackground, logoInitials, hasLogoAsset, hasWatermarkAsset, posterTreatment, customDomain, customDomainVerified]
       properties:
         id: { type: string }
         name: { type: string }
@@ -1175,8 +1507,8 @@ components:
         playerControlForeground: { type: string }
         playerControlBackground: { type: string }
         logoInitials: { type: string }
-        logoObjectKey: { type: ["string", "null"] }
-        watermarkObjectKey: { type: ["string", "null"] }
+        hasLogoAsset: { type: boolean }
+        hasWatermarkAsset: { type: boolean }
         posterTreatment:
           type: string
           enum: [default, darken, gradient]
@@ -1192,13 +1524,20 @@ components:
         slug: { type: string }
         current: { type: boolean }
     WorkspaceSelectionInput:
+      oneOf:
+        - $ref: "#/components/schemas/WorkspaceSelectionById"
+        - $ref: "#/components/schemas/WorkspaceSelectionBySlug"
+    WorkspaceSelectionById:
       type: object
       additionalProperties: false
-      oneOf:
-        - required: [id]
-        - required: [slug]
+      required: [id]
       properties:
         id: { type: string, format: uuid }
+    WorkspaceSelectionBySlug:
+      type: object
+      additionalProperties: false
+      required: [slug]
+      properties:
         slug:
           type: string
           minLength: 2
@@ -1211,9 +1550,7 @@ components:
         playerAccent: { type: string, pattern: "^#[0-9A-Fa-f]{6}$" }
         playerControlForeground: { type: string, pattern: "^#[0-9A-Fa-f]{6}$" }
         playerControlBackground: { type: string, pattern: "^#[0-9A-Fa-f]{6}$" }
-        logoInitials: { type: string, minLength: 1, maxLength: 3 }
-        logoObjectKey: { type: ["string", "null"], maxLength: 1024 }
-        watermarkObjectKey: { type: ["string", "null"], maxLength: 1024 }
+        logoInitials: { type: string, minLength: 1, maxLength: 3, pattern: "^[A-Za-z0-9]{1,3}$" }
         posterTreatment:
           type: string
           enum: [default, darken, gradient]
@@ -1222,7 +1559,11 @@ components:
       additionalProperties: false
       required: [hostname]
       properties:
-        hostname: { type: string, minLength: 1, maxLength: 253 }
+        hostname:
+          type: string
+          minLength: 3
+          maxLength: 253
+          pattern: "^(?!.*\\.\\.)[^\\s/:@*]+\\.[^\\s/:@*]+$"
     CustomDomainStatus:
       type: object
       additionalProperties: false
@@ -1232,8 +1573,12 @@ components:
         lifecycleState:
           type: ["string", "null"]
           enum: [pending_verification, verifying, verified, failed, suspended, removed, reconciliation_required, null]
-        txtRecordName: { type: ["string", "null"] }
-        txtRecordValue: { type: ["string", "null"] }
+        txtRecordName:
+          type: ["string", "null"]
+          description: Returned only while an entitled manager must configure an unverified ownership challenge.
+        txtRecordValue:
+          type: ["string", "null"]
+          description: Returned only while an entitled manager must configure an unverified ownership challenge; never returned after verification or plan downgrade.
         lastCheckedAt: { type: ["string", "null"], format: date-time }
         verifiedAt: { type: ["string", "null"], format: date-time }
         retryable: { type: boolean }
@@ -1727,6 +2072,19 @@ components:
         errorCategory:
           type: string
           enum: [network, media, decode, source, unknown]
+    PlaybackAnalyticsGrantInput:
+      type: object
+      additionalProperties: false
+      required: [sessionId]
+      properties:
+        sessionId: { type: string, pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$" }
+    PlaybackAnalyticsGrant:
+      type: object
+      additionalProperties: false
+      required: [grant, expiresAt]
+      properties:
+        grant: { type: string }
+        expiresAt: { type: string, format: date-time }
     PlaybackEventBatch:
       type: object
       additionalProperties: false

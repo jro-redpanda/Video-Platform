@@ -16,12 +16,16 @@ const signingKey = Buffer.from(hkdfSync("sha256", Buffer.from(secret), Buffer.fr
 const hashingKey = Buffer.from(hkdfSync("sha256", Buffer.from(secret), Buffer.from("vid-analytics"), Buffer.from("rate-dimensions:v1"), 32));
 const encoder = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
 const grantLifetimeMs = 30 * 60_000;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const eventTypes = new Set<PlaybackInput["type"]>(["load", "play", "progress", "pause", "ended", "error"]);
+const errorCategories = new Set<NonNullable<PlaybackInput["errorCategory"]>>(["network", "media", "decode", "source", "unknown"]);
 
 type GrantClaims = {
   v: 1;
   organizationId: string;
   videoId: string;
   embedId: string;
+  sessionId: string;
   generation: number;
   issuedAt: number;
   expiresAt: number;
@@ -56,8 +60,8 @@ export function verifyAnalyticsGrant(token: string, now = new Date()): GrantClai
       || claims.expiresAt <= Math.floor(now.getTime() / 1000) || claims.issuedAt > Math.floor(now.getTime() / 1000) + 60) {
     throw new AnalyticsHttpError(401, "expired_or_invalid_analytics_grant");
   }
-  for (const value of [claims.organizationId, claims.videoId, claims.embedId, claims.jti]) {
-    if (typeof value !== "string" || !/^[0-9a-f-]{36}$/i.test(value)) throw new AnalyticsHttpError(401, "invalid_analytics_grant");
+  for (const value of [claims.organizationId, claims.videoId, claims.embedId, claims.sessionId, claims.jti]) {
+    if (typeof value !== "string" || !uuidPattern.test(value)) throw new AnalyticsHttpError(401, "invalid_analytics_grant");
   }
   return claims;
 }
@@ -134,6 +138,9 @@ export async function ingestPlaybackEvents(input: {
   const now = input.now ?? new Date();
   const claims = verifyAnalyticsGrant(input.grant, now);
   const limits = input.limits ?? defaultAnalyticsLimits;
+  if (input.events.length < 1 || input.events.length > 50) {
+    throw new AnalyticsHttpError(400, "invalid_event_batch_size");
+  }
   return withOrganizationDb(claims.organizationId, async (tx) => {
     await tx.delete(analyticsRateWindowsTable).where(sql`${analyticsRateWindowsTable.expiresAt} < ${now}`);
     const [active] = await tx.select({
@@ -151,6 +158,17 @@ export async function ingestPlaybackEvents(input: {
     for (const event of input.events) {
       const occurred = new Date(event.occurredAt).getTime();
       if (!Number.isFinite(occurred) || occurred < earliest || occurred > latest) throw new AnalyticsHttpError(400, "event_timestamp_out_of_range");
+      if (!uuidPattern.test(event.eventId) || !uuidPattern.test(event.sessionId)) {
+        throw new AnalyticsHttpError(400, "invalid_event_identifier");
+      }
+      if (!eventTypes.has(event.type)
+          || (event.errorCategory !== undefined && !errorCategories.has(event.errorCategory))) {
+        throw new AnalyticsHttpError(400, "invalid_event_type");
+      }
+      if ((event.positionSeconds !== undefined && (!Number.isFinite(event.positionSeconds) || event.positionSeconds < 0 || event.positionSeconds > 86_400))
+          || (event.durationSeconds !== undefined && (!Number.isFinite(event.durationSeconds) || event.durationSeconds < 0 || event.durationSeconds > 86_400))) {
+        throw new AnalyticsHttpError(400, "invalid_event_timing");
+      }
       if ((event.type === "progress" || event.type === "pause" || event.type === "ended") && event.positionSeconds === undefined) {
         throw new AnalyticsHttpError(400, "event_position_required");
       }
@@ -165,12 +183,13 @@ export async function ingestPlaybackEvents(input: {
     const sessionIds = [...new Set(input.events.map((event) => event.sessionId))];
     if (sessionIds.length !== 1) throw new AnalyticsHttpError(400, "batch_must_contain_one_session");
     const sessionId = sessionIds[0]!;
+    if (sessionId !== claims.sessionId) throw new AnalyticsHttpError(403, "analytics_grant_session_mismatch");
     const grantJtiHash = hashDimension(`grant-jti:${claims.jti}`);
     const [attested] = await tx.select().from(analyticsPlaybackSessionsTable).where(and(
       eq(analyticsPlaybackSessionsTable.organizationId, claims.organizationId),
       eq(analyticsPlaybackSessionsTable.videoId, claims.videoId),
       eq(analyticsPlaybackSessionsTable.clientSessionId, sessionId),
-    )).limit(1);
+    )).limit(1).for("update");
     if (!attested) {
       const load = [...input.events].sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime())
         .find((event) => event.type === "load");
@@ -191,8 +210,29 @@ export async function ingestPlaybackEvents(input: {
         }
         throw error;
       }
-    } else if (attested.grantJtiHash !== grantJtiHash || attested.embedId !== claims.embedId) {
+    } else if (attested.embedId !== claims.embedId) {
       throw new AnalyticsHttpError(409, "analytics_grant_session_collision");
+    } else if (attested.grantJtiHash !== grantJtiHash) {
+      try {
+        const rebound = await tx.update(analyticsPlaybackSessionsTable).set({
+          grantJtiHash,
+          lastReceivedAt: now,
+          expiresAt: new Date(claims.expiresAt * 1000),
+        }).where(and(
+          eq(analyticsPlaybackSessionsTable.organizationId, claims.organizationId),
+          eq(analyticsPlaybackSessionsTable.videoId, claims.videoId),
+          eq(analyticsPlaybackSessionsTable.clientSessionId, sessionId),
+          eq(analyticsPlaybackSessionsTable.grantJtiHash, attested.grantJtiHash),
+        )).returning({ sessionId: analyticsPlaybackSessionsTable.clientSessionId });
+        if (rebound.length !== 1) throw new AnalyticsHttpError(409, "analytics_grant_session_collision");
+      } catch (error) {
+        if (error instanceof AnalyticsHttpError) throw error;
+        if ((error as { code?: string; cause?: { code?: string } }).code === "23505"
+          || (error as { cause?: { code?: string } }).cause?.code === "23505") {
+          throw new AnalyticsHttpError(409, "analytics_grant_session_collision");
+        }
+        throw error;
+      }
     } else {
       await tx.update(analyticsPlaybackSessionsTable).set({ lastReceivedAt: now }).where(and(
         eq(analyticsPlaybackSessionsTable.organizationId, claims.organizationId),
@@ -200,11 +240,6 @@ export async function ingestPlaybackEvents(input: {
         eq(analyticsPlaybackSessionsTable.clientSessionId, sessionId),
       ));
     }
-    await consumeLimit(tx, claims, "ip", hashDimension(normalizeClientIp(input.ip)), input.events.length,
-      limits.ipRequests, limits.ipEvents, now, limits.windowMs);
-    await consumeLimit(tx, claims, "grant_video", hashDimension(`${claims.videoId}:${input.grant}`), input.events.length,
-      limits.grantRequests, limits.grantEvents, now, limits.windowMs);
-
     let accepted = 0;
     let duplicates = 0;
     for (const event of input.events) {
@@ -223,7 +258,13 @@ export async function ingestPlaybackEvents(input: {
           organizationId: claims.organizationId, videoId: claims.videoId, day,
         }).onConflictDoUpdate({
           target: [analyticsDirtyDaysTable.organizationId, analyticsDirtyDaysTable.videoId, analyticsDirtyDaysTable.day],
-          set: { version: sql`${analyticsDirtyDaysTable.version} + 1`, availableAt: now, claimedAt: null, lastError: null },
+          set: {
+            version: sql`${analyticsDirtyDaysTable.version} + 1`,
+            availableAt: now,
+            attempts: 0,
+            claimedAt: null,
+            lastError: null,
+          },
         });
       } else {
         const [existing] = await tx.select().from(playbackEventsTable).where(and(
@@ -233,6 +274,12 @@ export async function ingestPlaybackEvents(input: {
         duplicates++;
       }
     }
+    // Requests remain bounded, but immutable retries only consume event quota
+    // for records newly accepted by this transaction.
+    await consumeLimit(tx, claims, "ip", hashDimension(normalizeClientIp(input.ip)), accepted,
+      limits.ipRequests, limits.ipEvents, now, limits.windowMs);
+    await consumeLimit(tx, claims, "grant_video", hashDimension(`${claims.videoId}:${input.grant}`), accepted,
+      limits.grantRequests, limits.grantEvents, now, limits.windowMs);
     return { accepted, duplicates };
   });
 }

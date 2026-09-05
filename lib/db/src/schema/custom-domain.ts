@@ -33,9 +33,35 @@ export const customDomainsTable = pgTable("custom_domains", {
     .where(sql`${table.lifecycleState} not in ('removed')`),
   index("custom_domains_worker_idx").on(table.lifecycleState, table.retryAfterAt, table.createdAt),
   check("custom_domains_attempts_check", sql`${table.attempts} >= 0 and ${table.attempts} <= 8`),
-  check("custom_domains_active_fields", sql`(
-    ${table.lifecycleState} = 'removed' and ${table.removedAt} is not null and ${table.retryable} = false
-  ) or ${table.lifecycleState} <> 'removed'`),
+  check("custom_domains_removed_fields", sql`(
+    ${table.lifecycleState} = 'removed'
+    and ${table.removedAt} is not null
+    and ${table.retryable} = false
+    and ${table.challengeValue} = 'revoked'
+  ) or (
+    ${table.lifecycleState} <> 'removed'
+    and ${table.removedAt} is null
+    and ${table.challengeValue} <> 'revoked'
+  )`),
+  check("custom_domains_claim_fields", sql`(
+    ${table.lifecycleState} = 'verifying'
+    and ${table.claimToken} is not null
+    and ${table.claimedAt} is not null
+  ) or (
+    ${table.lifecycleState} <> 'verifying'
+    and ${table.claimToken} is null
+    and ${table.claimedAt} is null
+  )`),
+  check("custom_domains_verified_fields", sql`
+    (${table.lifecycleState} = 'verified' and ${table.verifiedAt} is not null and ${table.retryable} = false)
+    or (${table.lifecycleState} in ('pending_verification', 'verifying', 'failed', 'suspended') and ${table.verifiedAt} is null)
+    or ${table.lifecycleState} in ('removed', 'reconciliation_required')
+  `),
+  check("custom_domains_retry_state", sql`
+    (${table.lifecycleState} in ('pending_verification', 'verifying') and ${table.retryable} = true)
+    or (${table.lifecycleState} in ('verified', 'suspended', 'removed', 'reconciliation_required') and ${table.retryable} = false)
+    or ${table.lifecycleState} = 'failed'
+  `),
 ]);
 
 export type CustomDomain = typeof customDomainsTable.$inferSelect;

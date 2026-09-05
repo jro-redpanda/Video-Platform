@@ -7,14 +7,16 @@
  */
 import type { BillingSubscriptionCapabilities } from './billingSubscriptionCapabilities';
 import type { BillingSubscriptionInterval } from './billingSubscriptionInterval';
+import type { BillingSubscriptionPendingPlan } from './billingSubscriptionPendingPlan';
+import type { BillingSubscriptionPlan } from './billingSubscriptionPlan';
 import type { BillingSubscriptionStatus } from './billingSubscriptionStatus';
 
 export interface BillingSubscription {
   status: BillingSubscriptionStatus;
   /** @nullable */
-  plan?: string | null;
+  plan?: BillingSubscriptionPlan;
   /** @nullable */
-  pendingPlan?: string | null;
+  pendingPlan?: BillingSubscriptionPendingPlan;
   /** @nullable */
   pendingEffectiveAt?: Date | null;
   /** @nullable */

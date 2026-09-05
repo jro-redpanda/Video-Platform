@@ -15,6 +15,33 @@ Treat archive and restore completion as verified byte-transfer outcomes. Count a
 
 **How to apply:** Keep provider/storage calls outside database transactions, compare every attested value before the atomic completion update, and terminalize integrity mismatches instead of publishing success.
 
+Treat retryable failure as outstanding work, and bind each operation to the
+full organization/video/provider snapshot. Block video deletion while work is
+outstanding, then recheck the exact provider identity and deletion state before
+I/O and again under the completion transaction.
+
+**Why:** Active-only uniqueness lets a changed provider identity create a
+second operation while an earlier retry is still eligible; deletion or relink
+during external I/O can otherwise attach old-provider bytes or falsely report
+a restore complete.
+
+**How to apply:** Include organization, provider account, tenant space, asset,
+and restore key in idempotency; permit one active-or-retryable operation per
+video; quarantine completion when the captured video snapshot no longer
+matches, preserving private result evidence for reconciliation.
+
+Once a restore target write begins, unknown outcomes and incorrect target
+attestation require reconciliation rather than automatic retry.
+
+**Why:** The provider may have accepted the write even when the response,
+stream verification, or returned target identity is missing or wrong. Replaying
+could overwrite or duplicate provider state.
+
+**How to apply:** Let transfer adapters use transient/unavailable/definitive
+errors after write start only when they prove no write was accepted. Close
+source iterators on early downstream termination, and require exact,
+safe-integer metadata before starting storage I/O.
+
 Preserve legacy key/time-only archive rows as visible but unverified and non-restorable until a verified archive is produced.
 
 **Why:** Migration backfills cannot reconstruct a historical object's content identity safely.

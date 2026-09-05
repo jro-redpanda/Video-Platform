@@ -1,15 +1,43 @@
 import pg from "pg";
 import { runMigrations } from "stripe-replit-sync";
 import { getStripeMode, getStripeSync, getUncachableStripeClient } from "./stripe-client";
-
-const definitions = [
-  { code: "starter", name: "Starter", description: "For small video libraries", month: 4900, year: 49000 },
-  { code: "growth", name: "Growth", description: "For growing video teams", month: 14900, year: 149000 },
-  { code: "scale", name: "Scale", description: "For high-volume video operations", month: 39900, year: 399000 },
-] as const;
+import { formatOperationalError } from "./safe-error";
 
 async function main() {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("Refusing Stripe catalog writes from a production runtime");
+  }
+  if (process.env.STRIPE_CATALOG_WRITE_CONFIRMATION !== "authorized-test-account") {
+    throw new Error("Set STRIPE_CATALOG_WRITE_CONFIRMATION=authorized-test-account after approval");
+  }
+  if (!process.env.SMOKE_DATABASE_URL || process.env.DATABASE_URL !== process.env.SMOKE_DATABASE_URL) {
+    throw new Error("Stripe test catalog writes require the dedicated SMOKE_DATABASE_URL");
+  }
+  if (process.env.SMOKE_DATABASE_CONFIRMATION !== "isolated-non-production") {
+    throw new Error("SMOKE_DATABASE_CONFIRMATION=isolated-non-production is required");
+  }
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
+  const policyClient = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  await policyClient.connect();
+  const policy = await policyClient.query<{
+    code: string;
+    name: string;
+    description: string;
+    month: number;
+    year: number;
+  }>(`
+    select code, name, description,
+      monthly_amount_cents as month,
+      annual_amount_cents as year
+    from plans
+    where active
+      and monthly_amount_cents is not null
+      and annual_amount_cents is not null
+    order by sort_order
+  `);
+  await policyClient.end();
+  if (policy.rows.length !== 3) throw new Error("Expected exactly three configured commercial billing plans");
+  const definitions = policy.rows;
   const mode = await getStripeMode();
   if (mode !== "test") throw new Error("Refusing catalog writes: connected Stripe account is live mode");
   const stripe = await getUncachableStripeClient();
@@ -67,4 +95,7 @@ async function main() {
   await (await getStripeSync()).syncBackfill({ object: "all" });
   console.log(`Stripe test catalog reconciled: ${relationships.map((item) => item.code).join(", ")} (3 products, 6 prices)`);
 }
-void main().catch((error: unknown) => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });
+void main().catch((error: unknown) => {
+  console.error(formatOperationalError(error));
+  process.exitCode = 1;
+});

@@ -16,7 +16,11 @@ async function current(req: Request) {
 }
 
 router.get("/custom-domain", requirePermission("workspace.manage"), async (req, res): Promise<void> => {
-  res.json(GetCustomDomainResponse.parse(publicDomainStatus(await current(req))));
+  res.setHeader("Cache-Control", "private, no-store");
+  res.json(GetCustomDomainResponse.parse(publicDomainStatus(
+    await current(req),
+    { includeChallenge: await entitled(req) },
+  )));
 });
 router.post("/custom-domain", requirePermission("workspace.manage"), async (req, res): Promise<void> => {
   if (!await entitled(req)) { res.status(403).json({ error: "This workspace plan does not include branding.custom_domain" }); return; }
@@ -24,7 +28,8 @@ router.post("/custom-domain", requirePermission("workspace.manage"), async (req,
   if (!parsed.success) { res.status(400).json({ error: "hostname is required." }); return; }
   try {
     const row = await withTenantDb(req.tenant, (tx) => createDomain(tx, req.tenant.organizationId, req.tenant.userId, parsed.data.hostname, String(req.id)));
-    res.status(202).json(CreateCustomDomainResponse.parse(publicDomainStatus(row)));
+    res.setHeader("Cache-Control", "private, no-store");
+    res.status(202).json(CreateCustomDomainResponse.parse(publicDomainStatus(row, { includeChallenge: true })));
   } catch (error) {
     if (error instanceof DomainInputError) { res.status(400).json({ error: "Hostname is invalid or not eligible for custom domains." }); return; }
     if (error instanceof DomainConflictError) { res.status(409).json({ error: "Hostname is already claimed." }); return; }
@@ -43,7 +48,8 @@ router.post("/custom-domain/verify", requirePermission("workspace.manage"), asyn
   void enqueueCustomDomainVerification(result.row.id).catch(() => {
     req.log.warn("Custom-domain queue wake-up failed; durable repair will retry");
   });
-  res.status(202).json(VerifyCustomDomainResponse.parse(publicDomainStatus(result.row)));
+  res.setHeader("Cache-Control", "private, no-store");
+  res.status(202).json(VerifyCustomDomainResponse.parse(publicDomainStatus(result.row, { includeChallenge: true })));
 });
 router.delete("/custom-domain", requirePermission("workspace.manage"), async (req, res): Promise<void> => {
   await withTenantDb(req.tenant, (tx) => removeDomain(tx, req.tenant.organizationId, req.tenant.userId, String(req.id)));

@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { Player } from "@/components/player"
 import { usePlaybackAnalytics } from "@/hooks/use-playback-analytics"
 import { serializeJsonForHtmlScript } from "@/lib/safe-json-script"
+import { getSafeMediaUrl, getSafePosterUrl } from "@/lib/frontend-safety"
 import { createPlaybackSessionId } from "@/lib/playback-session"
 
 export default function EmbedPlayer() {
@@ -170,6 +171,8 @@ export default function EmbedPlayer() {
   }
 
   const item = video.data
+  const posterUrl = getSafePosterUrl(item.posterUrl)
+  const trustedSourceUrl = getSafeMediaUrl(item.sourceUrl)
 
   const videoObjectJsonLd: any = {
     "@context": "https://schema.org",
@@ -178,15 +181,19 @@ export default function EmbedPlayer() {
     "description": item.description,
     "duration": `PT${item.durationSeconds}S`
   }
-  if (item.posterUrl) {
-    videoObjectJsonLd.thumbnailUrl = item.posterUrl
+  if (posterUrl) {
+    videoObjectJsonLd.thumbnailUrl = posterUrl
   }
-  if (item.sourceUrl) {
-    videoObjectJsonLd.contentUrl = item.sourceUrl
+  if (trustedSourceUrl) {
+    videoObjectJsonLd.contentUrl = trustedSourceUrl
   }
 
-  const sourceUrl = item.sourceUrl
-    ? `${item.sourceUrl}${item.sourceUrl.includes("?") ? "&" : "?"}attempt=${sourceAttempt}`
+  const sourceUrl = trustedSourceUrl
+    ? (() => {
+        const url = new URL(trustedSourceUrl)
+        url.searchParams.set("attempt", String(sourceAttempt))
+        return url.toString()
+      })()
     : null
   const src = sourceUrl
     ? {
@@ -213,7 +220,7 @@ export default function EmbedPlayer() {
       <Player
         title={item.title}
         src={isPlayable ? src : null}
-        poster={item.posterUrl}
+        poster={posterUrl}
         accentColor={item.playerAccent}
         controlForegroundColor={item.playerControlForeground}
         controlBackgroundColor={item.playerControlBackground}

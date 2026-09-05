@@ -7,9 +7,13 @@
 2. Run `pnpm --filter @workspace/db run migrate`, followed by
    `pnpm --filter @workspace/db run verify-schema`.
 3. Confirm the existing active `growth` plan and at least one provider account
-   with available capacity. Production has no fake or in-memory provider
-   fallback.
-4. Start the API worker. It owns the periodic
+   with available capacity using approved provider-side evidence. A configured
+   row or present credential is not a health or capacity result. Production has
+   no fake or in-memory provider fallback.
+4. Deploy/start the API artifact with the production build/run commands in
+   `artifacts/api-server/.replit-artifact/artifact.toml`, then verify
+   `/api/healthz` through the deployment's approved health signal. The API
+   process starts its workers after initialization; those workers own the periodic
    `vid.tenant.onboarding-dispatch` scan and `vid.tenant.provision` work.
 
 The HTTP create route commits the organization, owner membership, permission
@@ -43,7 +47,9 @@ clear an external-call claim merely to force replay.
 ## Verification and incident checks
 
 Run `pnpm --filter @workspace/api-server run onboarding:smoke` in a test
-environment. The smoke uses only an injected fake provider and fake queue seam.
+environment using the isolated smoke variables documented in
+[LAUNCH_CHECKLIST.md](LAUNCH_CHECKLIST.md). The smoke uses only an injected fake
+provider and fake queue seam, but it creates temporary database records.
 Useful database checks are counts by intent state, intents at five attempts,
 and stale `dispatching` claims. Logs should contain IDs and safe diagnostic
 codes only; request bodies and provider credentials must not be logged.

@@ -5,6 +5,21 @@
  * Multi-tenant video platform API
  * OpenAPI spec version: 0.1.0
  */
+export interface ErrorResponse {
+  error: string;
+  code?: string;
+}
+
+export const WebhookReceivedValue = {
+  received: true,
+} as const;
+export type WebhookReceived = typeof WebhookReceivedValue;
+
+export const WebhookAcceptedValue = {
+  accepted: true,
+} as const;
+export type WebhookAccepted = typeof WebhookAcceptedValue;
+
 export type MasterStorageOperationOperation = typeof MasterStorageOperationOperation[keyof typeof MasterStorageOperationOperation];
 
 
@@ -215,6 +230,30 @@ export const BillingSubscriptionStatus = {
 /**
  * @nullable
  */
+export type BillingSubscriptionPlan = typeof BillingSubscriptionPlan[keyof typeof BillingSubscriptionPlan] | null;
+
+
+export const BillingSubscriptionPlan = {
+  starter: 'starter',
+  growth: 'growth',
+  scale: 'scale',
+} as const;
+
+/**
+ * @nullable
+ */
+export type BillingSubscriptionPendingPlan = typeof BillingSubscriptionPendingPlan[keyof typeof BillingSubscriptionPendingPlan] | null;
+
+
+export const BillingSubscriptionPendingPlan = {
+  starter: 'starter',
+  growth: 'growth',
+  scale: 'scale',
+} as const;
+
+/**
+ * @nullable
+ */
 export type BillingSubscriptionInterval = typeof BillingSubscriptionInterval[keyof typeof BillingSubscriptionInterval] | null;
 
 
@@ -231,9 +270,9 @@ export type BillingSubscriptionCapabilities = {
 export interface BillingSubscription {
   status: BillingSubscriptionStatus;
   /** @nullable */
-  plan?: string | null;
+  plan?: BillingSubscriptionPlan;
   /** @nullable */
-  pendingPlan?: string | null;
+  pendingPlan?: BillingSubscriptionPendingPlan;
   /** @nullable */
   pendingEffectiveAt?: string | null;
   /** @nullable */
@@ -252,7 +291,6 @@ export interface BillingChangeResult {
   scheduled: boolean;
   /** @nullable */
   effectiveAt: string | null;
-  reference: string;
 }
 
 export interface BillingCancellation {
@@ -260,6 +298,7 @@ export interface BillingCancellation {
 }
 
 export interface BillingInvoice {
+  /** Opaque invoice reference intentionally exposed for stable client rendering; it is not an authorization credential. */
   id: string;
   /** @nullable */
   status?: string | null;
@@ -267,15 +306,25 @@ export interface BillingInvoice {
   amountDue: number;
   amountPaid: number;
   currency: string;
-  /** @nullable */
+  /**
+     * Validated HTTPS URL on a Stripe-owned host.
+     * @nullable
+     */
   hostedInvoiceUrl?: string | null;
-  /** @nullable */
+  /**
+     * Validated HTTPS URL on a Stripe-owned host.
+     * @nullable
+     */
   invoicePdf?: string | null;
 }
 
 export interface BillingInvoiceList {
   items: BillingInvoice[];
-  /** @nullable */
+  /**
+     * Opaque provider pagination reference; it is not an authorization credential.
+     * @nullable
+     * @pattern ^in_[A-Za-z0-9]+$
+     */
   nextCursor: string | null;
 }
 
@@ -326,10 +375,8 @@ export interface Workspace {
   playerControlForeground: string;
   playerControlBackground: string;
   logoInitials: string;
-  /** @nullable */
-  logoObjectKey: string | null;
-  /** @nullable */
-  watermarkObjectKey: string | null;
+  hasLogoAsset: boolean;
+  hasWatermarkAsset: boolean;
   posterTreatment: WorkspacePosterTreatment;
   /** @nullable */
   customDomain: string | null;
@@ -343,15 +390,20 @@ export interface WorkspaceSelector {
   current: boolean;
 }
 
-export type WorkspaceSelectionInput = (unknown & {
-  id?: string;
+export interface WorkspaceSelectionById {
+  id: string;
+}
+
+export interface WorkspaceSelectionBySlug {
   /**
      * @minLength 2
      * @maxLength 63
      * @pattern ^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$
      */
-  slug?: string;
-});
+  slug: string;
+}
+
+export type WorkspaceSelectionInput = WorkspaceSelectionById | WorkspaceSelectionBySlug;
 
 export type WorkspaceUpdatePosterTreatment = typeof WorkspaceUpdatePosterTreatment[keyof typeof WorkspaceUpdatePosterTreatment];
 
@@ -374,25 +426,17 @@ export interface WorkspaceUpdate {
   /**
      * @minLength 1
      * @maxLength 3
+     * @pattern ^[A-Za-z0-9]{1,3}$
      */
   logoInitials?: string;
-  /**
-     * @maxLength 1024
-     * @nullable
-     */
-  logoObjectKey?: string | null;
-  /**
-     * @maxLength 1024
-     * @nullable
-     */
-  watermarkObjectKey?: string | null;
   posterTreatment?: WorkspaceUpdatePosterTreatment;
 }
 
 export interface CustomDomainInput {
   /**
-     * @minLength 1
+     * @minLength 3
      * @maxLength 253
+     * @pattern ^(?!.*\.\.)[^\s/:@*]+\.[^\s/:@*]+$
      */
   hostname: string;
 }
@@ -426,9 +470,15 @@ export interface CustomDomainStatus {
   hostname: string | null;
   /** @nullable */
   lifecycleState: CustomDomainStatusLifecycleState;
-  /** @nullable */
+  /**
+     * Returned only while an entitled manager must configure an unverified ownership challenge.
+     * @nullable
+     */
   txtRecordName: string | null;
-  /** @nullable */
+  /**
+     * Returned only while an entitled manager must configure an unverified ownership challenge; never returned after verification or plan downgrade.
+     * @nullable
+     */
   txtRecordValue: string | null;
   /** @nullable */
   lastCheckedAt: string | null;
@@ -1121,6 +1171,16 @@ export interface PlaybackEventInput {
   errorCategory?: PlaybackEventInputErrorCategory;
 }
 
+export interface PlaybackAnalyticsGrantInput {
+  /** @pattern ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ */
+  sessionId: string;
+}
+
+export interface PlaybackAnalyticsGrant {
+  grant: string;
+  expiresAt: string;
+}
+
 export interface PlaybackEventBatch {
   /**
      * @minLength 20
@@ -1134,12 +1194,40 @@ export interface PlaybackEventBatch {
   events: PlaybackEventInput[];
 }
 
+/**
+ * Authentication required
+ */
+export type AuthenticationRequiredResponse = ErrorResponse;
+
+/**
+ * Workspace permission required
+ */
+export type PermissionRequiredResponse = ErrorResponse;
+
+/**
+ * Billing state conflicts with the requested mutation
+ */
+export type BillingConflictResponse = ErrorResponse;
+
+/**
+ * Billing request validation failed
+ */
+export type InvalidBillingRequestResponse = ErrorResponse;
+
+/**
+ * Billing provider operation is temporarily unavailable
+ */
+export type BillingProviderUnavailableResponse = ErrorResponse;
+
 export type ListBillingInvoicesParams = {
 /**
  * @minimum 1
  * @maximum 100
  */
 limit?: number;
+/**
+ * @pattern ^in_[A-Za-z0-9]+$
+ */
 cursor?: string;
 };
 
@@ -1203,6 +1291,15 @@ export type ListFoldersParams = {
  * A folder UUID, or root for top-level folders.
  */
 parentId: string;
+};
+
+export type GetVideoThumbnailParams = {
+/**
+ * Opaque current thumbnail version from thumbnailUrl.
+ * @minLength 1
+ * @maxLength 128
+ */
+v: string;
 };
 
 export type ListAuditEventsParams = {

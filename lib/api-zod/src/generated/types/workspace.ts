@@ -24,10 +24,8 @@ export interface Workspace {
   playerControlForeground: string;
   playerControlBackground: string;
   logoInitials: string;
-  /** @nullable */
-  logoObjectKey: string | null;
-  /** @nullable */
-  watermarkObjectKey: string | null;
+  hasLogoAsset: boolean;
+  hasWatermarkAsset: boolean;
   posterTreatment: WorkspacePosterTreatment;
   /** @nullable */
   customDomain: string | null;

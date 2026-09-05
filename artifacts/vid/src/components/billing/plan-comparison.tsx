@@ -58,7 +58,14 @@ export function PlanComparison({ catalog, subscription }: { catalog: BillingCata
       checkout.mutate({ data: { plan: planCode, interval, idempotencyKey } }, {
         onSuccess: (res) => {
           clearIntentKey(intentId);
-          safeRedirect(res.url);
+          if (!safeRedirect(res.url)) {
+            setPendingPlan(null);
+            toast({
+              title: "Checkout could not be opened",
+              description: "The billing provider returned an invalid checkout address. Please try again.",
+              variant: "destructive",
+            });
+          }
         },
         onError: () => {
            setPendingPlan(null);

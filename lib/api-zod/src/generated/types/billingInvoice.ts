@@ -7,6 +7,7 @@
  */
 
 export interface BillingInvoice {
+  /** Opaque invoice reference intentionally exposed for stable client rendering; it is not an authorization credential. */
   id: string;
   /** @nullable */
   status?: string | null;
@@ -14,8 +15,14 @@ export interface BillingInvoice {
   amountDue: number;
   amountPaid: number;
   currency: string;
-  /** @nullable */
+  /**
+     * Validated HTTPS URL on a Stripe-owned host.
+     * @nullable
+     */
   hostedInvoiceUrl?: string | null;
-  /** @nullable */
+  /**
+     * Validated HTTPS URL on a Stripe-owned host.
+     * @nullable
+     */
   invoicePdf?: string | null;
 }

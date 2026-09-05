@@ -95,8 +95,8 @@ export const GetBillingCatalogResponse = zod.object({
 
 export const GetBillingSubscriptionResponse = zod.object({
   "status": zod.enum(['unmanaged', 'incomplete', 'active', 'trialing', 'past_due', 'unpaid', 'canceled', 'restricted', 'quarantined']),
-  "plan": zod.string().nullish(),
-  "pendingPlan": zod.string().nullish(),
+  "plan": zod.union([zod.literal('starter'),zod.literal('growth'),zod.literal('scale'),zod.literal(null)]).nullish(),
+  "pendingPlan": zod.union([zod.literal('starter'),zod.literal('growth'),zod.literal('scale'),zod.literal(null)]).nullish(),
   "pendingEffectiveAt": zod.coerce.date().nullish(),
   "interval": zod.union([zod.literal('month'),zod.literal('year'),zod.literal(null)]).nullish(),
   "periodStart": zod.coerce.date().nullish(),
@@ -120,7 +120,7 @@ export const CreateBillingCheckoutBody = zod.object({
 })
 
 export const CreateBillingCheckoutResponse = zod.object({
-  "url": zod.string()
+  "url": zod.string().url()
 })
 
 
@@ -135,8 +135,7 @@ export const ChangeBillingPlanBody = zod.object({
 
 export const ChangeBillingPlanResponse = zod.object({
   "scheduled": zod.boolean(),
-  "effectiveAt": zod.coerce.date().nullable(),
-  "reference": zod.string()
+  "effectiveAt": zod.coerce.date().nullable()
 })
 
 
@@ -172,32 +171,36 @@ export const CreateBillingPortalBody = zod.object({
 })
 
 export const CreateBillingPortalResponse = zod.object({
-  "url": zod.string()
+  "url": zod.string().url()
 })
 
 
 export const listBillingInvoicesQueryLimitDefault = 20;
 export const listBillingInvoicesQueryLimitMax = 100;
 
+export const listBillingInvoicesQueryCursorRegExp = new RegExp('^in_[A-Za-z0-9]+$');
 
 
 export const ListBillingInvoicesQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(listBillingInvoicesQueryLimitMax).default(listBillingInvoicesQueryLimitDefault),
-  "cursor": zod.coerce.string().optional()
+  "cursor": zod.coerce.string().regex(listBillingInvoicesQueryCursorRegExp).optional()
 })
+
+export const listBillingInvoicesResponseNextCursorRegExp = new RegExp('^in_[A-Za-z0-9]+$');
+
 
 export const ListBillingInvoicesResponse = zod.object({
   "items": zod.array(zod.object({
-  "id": zod.string(),
+  "id": zod.string().describe('Opaque invoice reference intentionally exposed for stable client rendering; it is not an authorization credential.'),
   "status": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "amountDue": zod.number(),
   "amountPaid": zod.number(),
   "currency": zod.string(),
-  "hostedInvoiceUrl": zod.string().nullish(),
-  "invoicePdf": zod.string().nullish()
+  "hostedInvoiceUrl": zod.string().url().nullish().describe('Validated HTTPS URL on a Stripe-owned host.'),
+  "invoicePdf": zod.string().url().nullish().describe('Validated HTTPS URL on a Stripe-owned host.')
 })),
-  "nextCursor": zod.string().nullable()
+  "nextCursor": zod.string().regex(listBillingInvoicesResponseNextCursorRegExp).nullable().describe('Opaque provider pagination reference; it is not an authorization credential.')
 })
 
 
@@ -244,8 +247,8 @@ export const GetWorkspaceResponse = zod.object({
   "playerControlForeground": zod.string(),
   "playerControlBackground": zod.string(),
   "logoInitials": zod.string(),
-  "logoObjectKey": zod.string().nullable(),
-  "watermarkObjectKey": zod.string().nullable(),
+  "hasLogoAsset": zod.boolean(),
+  "hasWatermarkAsset": zod.boolean(),
   "posterTreatment": zod.enum(['default', 'darken', 'gradient']),
   "customDomain": zod.string().nullable(),
   "customDomainVerified": zod.boolean()
@@ -258,10 +261,8 @@ export const updateWorkspaceBodyPlayerControlForegroundRegExp = new RegExp('^#[0
 export const updateWorkspaceBodyPlayerControlBackgroundRegExp = new RegExp('^#[0-9A-Fa-f]{6}$');
 export const updateWorkspaceBodyLogoInitialsMax = 3;
 
-export const updateWorkspaceBodyLogoObjectKeyMax = 1024;
 
-export const updateWorkspaceBodyWatermarkObjectKeyMax = 1024;
-
+export const updateWorkspaceBodyLogoInitialsRegExp = new RegExp('^[A-Za-z0-9]{1,3}$');
 
 
 export const UpdateWorkspaceBody = zod.object({
@@ -269,9 +270,7 @@ export const UpdateWorkspaceBody = zod.object({
   "playerAccent": zod.string().regex(updateWorkspaceBodyPlayerAccentRegExp).optional(),
   "playerControlForeground": zod.string().regex(updateWorkspaceBodyPlayerControlForegroundRegExp).optional(),
   "playerControlBackground": zod.string().regex(updateWorkspaceBodyPlayerControlBackgroundRegExp).optional(),
-  "logoInitials": zod.string().min(1).max(updateWorkspaceBodyLogoInitialsMax).optional(),
-  "logoObjectKey": zod.string().max(updateWorkspaceBodyLogoObjectKeyMax).nullish(),
-  "watermarkObjectKey": zod.string().max(updateWorkspaceBodyWatermarkObjectKeyMax).nullish(),
+  "logoInitials": zod.string().min(1).max(updateWorkspaceBodyLogoInitialsMax).regex(updateWorkspaceBodyLogoInitialsRegExp).optional(),
   "posterTreatment": zod.enum(['default', 'darken', 'gradient']).optional()
 })
 
@@ -294,8 +293,8 @@ export const UpdateWorkspaceResponse = zod.object({
   "playerControlForeground": zod.string(),
   "playerControlBackground": zod.string(),
   "logoInitials": zod.string(),
-  "logoObjectKey": zod.string().nullable(),
-  "watermarkObjectKey": zod.string().nullable(),
+  "hasLogoAsset": zod.boolean(),
+  "hasWatermarkAsset": zod.boolean(),
   "posterTreatment": zod.enum(['default', 'darken', 'gradient']),
   "customDomain": zod.string().nullable(),
   "customDomainVerified": zod.boolean()
@@ -305,8 +304,8 @@ export const UpdateWorkspaceResponse = zod.object({
 export const GetCustomDomainResponse = zod.object({
   "hostname": zod.string().nullable(),
   "lifecycleState": zod.union([zod.literal('pending_verification'),zod.literal('verifying'),zod.literal('verified'),zod.literal('failed'),zod.literal('suspended'),zod.literal('removed'),zod.literal('reconciliation_required'),zod.literal(null)]).nullable(),
-  "txtRecordName": zod.string().nullable(),
-  "txtRecordValue": zod.string().nullable(),
+  "txtRecordName": zod.string().nullable().describe('Returned only while an entitled manager must configure an unverified ownership challenge.'),
+  "txtRecordValue": zod.string().nullable().describe('Returned only while an entitled manager must configure an unverified ownership challenge; never returned after verification or plan downgrade.'),
   "lastCheckedAt": zod.coerce.date().nullable(),
   "verifiedAt": zod.coerce.date().nullable(),
   "retryable": zod.boolean(),
@@ -315,19 +314,22 @@ export const GetCustomDomainResponse = zod.object({
 })
 
 
+export const createCustomDomainBodyHostnameMin = 3;
 export const createCustomDomainBodyHostnameMax = 253;
 
 
+export const createCustomDomainBodyHostnameRegExp = new RegExp('^(?!.*\\.\\.)[^\\s/:@*]+\\.[^\\s/:@*]+$');
+
 
 export const CreateCustomDomainBody = zod.object({
-  "hostname": zod.string().min(1).max(createCustomDomainBodyHostnameMax)
+  "hostname": zod.string().min(createCustomDomainBodyHostnameMin).max(createCustomDomainBodyHostnameMax).regex(createCustomDomainBodyHostnameRegExp)
 })
 
 export const CreateCustomDomainResponse = zod.object({
   "hostname": zod.string().nullable(),
   "lifecycleState": zod.union([zod.literal('pending_verification'),zod.literal('verifying'),zod.literal('verified'),zod.literal('failed'),zod.literal('suspended'),zod.literal('removed'),zod.literal('reconciliation_required'),zod.literal(null)]).nullable(),
-  "txtRecordName": zod.string().nullable(),
-  "txtRecordValue": zod.string().nullable(),
+  "txtRecordName": zod.string().nullable().describe('Returned only while an entitled manager must configure an unverified ownership challenge.'),
+  "txtRecordValue": zod.string().nullable().describe('Returned only while an entitled manager must configure an unverified ownership challenge; never returned after verification or plan downgrade.'),
   "lastCheckedAt": zod.coerce.date().nullable(),
   "verifiedAt": zod.coerce.date().nullable(),
   "retryable": zod.boolean(),
@@ -342,8 +344,8 @@ export const DeleteCustomDomainResponse = zod.void()
 export const VerifyCustomDomainResponse = zod.object({
   "hostname": zod.string().nullable(),
   "lifecycleState": zod.union([zod.literal('pending_verification'),zod.literal('verifying'),zod.literal('verified'),zod.literal('failed'),zod.literal('suspended'),zod.literal('removed'),zod.literal('reconciliation_required'),zod.literal(null)]).nullable(),
-  "txtRecordName": zod.string().nullable(),
-  "txtRecordValue": zod.string().nullable(),
+  "txtRecordName": zod.string().nullable().describe('Returned only while an entitled manager must configure an unverified ownership challenge.'),
+  "txtRecordValue": zod.string().nullable().describe('Returned only while an entitled manager must configure an unverified ownership challenge; never returned after verification or plan downgrade.'),
   "lastCheckedAt": zod.coerce.date().nullable(),
   "verifiedAt": zod.coerce.date().nullable(),
   "retryable": zod.boolean(),
@@ -878,6 +880,14 @@ export const GetVideoThumbnailParams = zod.object({
   "videoId": zod.coerce.string().uuid()
 })
 
+export const getVideoThumbnailQueryVMax = 128;
+
+
+
+export const GetVideoThumbnailQueryParams = zod.object({
+  "v": zod.coerce.string().min(1).max(getVideoThumbnailQueryVMax).describe('Opaque current thumbnail version from thumbnailUrl.')
+})
+
 export const GetVideoThumbnailResponse = zod.unknown()
 
 
@@ -1103,17 +1113,18 @@ export const ListWorkspacesResponseItem = zod.object({
 export const ListWorkspacesResponse = zod.array(ListWorkspacesResponseItem)
 
 
-export const selectWorkspaceBodyThreeSlugMin = 2;
-export const selectWorkspaceBodyThreeSlugMax = 63;
+export const selectWorkspaceBodyTwoSlugMin = 2;
+export const selectWorkspaceBodyTwoSlugMax = 63;
 
 
-export const selectWorkspaceBodyThreeSlugRegExp = new RegExp('^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$');
+export const selectWorkspaceBodyTwoSlugRegExp = new RegExp('^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$');
 
 
-export const SelectWorkspaceBody = zod.union([zod.unknown(),zod.unknown()]).and(zod.object({
-  "id": zod.string().uuid().optional(),
-  "slug": zod.string().min(selectWorkspaceBodyThreeSlugMin).max(selectWorkspaceBodyThreeSlugMax).regex(selectWorkspaceBodyThreeSlugRegExp).optional()
-}))
+export const SelectWorkspaceBody = zod.union([zod.object({
+  "id": zod.string().uuid()
+}),zod.object({
+  "slug": zod.string().min(selectWorkspaceBodyTwoSlugMin).max(selectWorkspaceBodyTwoSlugMax).regex(selectWorkspaceBodyTwoSlugRegExp)
+})])
 
 export const SelectWorkspaceResponse = zod.object({
   "id": zod.string().uuid(),
@@ -1302,6 +1313,23 @@ export const GetPublicVideoThumbnailParams = zod.object({
 })
 
 export const GetPublicVideoThumbnailResponse = zod.unknown()
+
+
+export const CreatePlaybackAnalyticsGrantParams = zod.object({
+  "videoId": zod.coerce.string().uuid()
+})
+
+export const createPlaybackAnalyticsGrantBodySessionIdRegExp = new RegExp('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$');
+
+
+export const CreatePlaybackAnalyticsGrantBody = zod.object({
+  "sessionId": zod.string().regex(createPlaybackAnalyticsGrantBodySessionIdRegExp)
+})
+
+export const CreatePlaybackAnalyticsGrantResponse = zod.object({
+  "grant": zod.string(),
+  "expiresAt": zod.coerce.date()
+})
 
 
 export const createPlaybackEventsBodyGrantMin = 20;

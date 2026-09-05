@@ -9,6 +9,10 @@ import type { BillingInvoice } from './billingInvoice';
 
 export interface BillingInvoiceList {
   items: BillingInvoice[];
-  /** @nullable */
+  /**
+     * Opaque provider pagination reference; it is not an authorization credential.
+     * @nullable
+     * @pattern ^in_[A-Za-z0-9]+$
+     */
   nextCursor: string | null;
 }

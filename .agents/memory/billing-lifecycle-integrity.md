@@ -14,3 +14,15 @@ Stripe Customer creation idempotency must be scoped to a durable, monotonically 
 **Why:** Stripe may replay the original Customer for a cached idempotency key even after that Customer was deleted, trapping the tenant on a stale ID.
 
 **How to apply:** Never reuse one eternal customer-create key per organization. Persist the generation/claim before the provider call, reuse it for same-attempt retries, and advance it exactly once after authoritative deletion.
+
+Verified webhook delivery must be represented by payload-free, leased receipts that retain normalized provider object/customer/subscription/Checkout Session IDs. A receipt may select a tenant only through current application-owned bindings; metadata is only a consistency assertion. Every delivery, including duplicates and older events, reconciles current provider authority rather than applying payload state.
+
+**Why:** Concurrent duplicates can steal unfinished work without token-conditioned leases, and events may arrive before Checkout/subscription bindings commit. Retaining only the event’s primary object also makes invoice recovery impossible because its tenant binding lives on customer/subscription IDs.
+
+**How to apply:** Use short claim leases and token-conditioned completion; retry temporarily unbound receipts for a bounded window; quarantine ambiguous, changed, or disappeared bindings; never persist full provider payloads.
+
+Provider availability failures and billing-integrity failures require different outcomes. Availability failures must preserve the last authoritative access projection and reach queue retry/dead-letter handling. Unknown prices/statuses, ambiguous objects, or tenant/customer mismatches must commit quarantine before the original error leaves the transaction.
+
+**Why:** Revoking access during an outage harms valid subscribers, while throwing from inside the diagnostic transaction silently rolls back the quarantine that operators depend on.
+
+**How to apply:** Classify failures before projection changes, commit safe diagnostics first, and throw retryable failures only after the transaction commits. Persist and verify downgrade schedule identity, but a missing schedule alone must not revoke otherwise-authoritative paid access.

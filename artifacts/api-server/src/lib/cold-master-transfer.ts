@@ -28,6 +28,8 @@ export interface ColdMasterProviderAssetSnapshot {
 export interface ColdMasterRestoreTargetSnapshot extends ColdMasterProviderAssetSnapshot {}
 
 export interface OpenColdMasterSourceResult {
+  /** Exact provider identity from which these bytes were opened. */
+  readonly source: ColdMasterProviderAssetSnapshot;
   readonly contentLength: number;
   readonly contentType: string;
   readonly sha256: string;
@@ -46,6 +48,8 @@ export interface RestoreColdMasterTargetInput {
 
 /** Evidence returned only after a target has durably accepted the whole stream. */
 export interface RestoreColdMasterTargetResult {
+  /** Exact provider target that accepted or previously accepted this write. */
+  readonly target: ColdMasterRestoreTargetSnapshot;
   /** Must equal the input's durable idempotency key, including on a replay. */
   readonly idempotencyKey: string;
   readonly contentLength: number;
@@ -86,6 +90,20 @@ export class ColdMasterTransferTransientError extends Error {
   constructor() {
     super("Master transfer could not be completed");
     this.name = "ColdMasterTransferTransientError";
+  }
+}
+
+/**
+ * The target may have accepted bytes, but the adapter cannot yet prove the
+ * durable result. The control plane must reconcile rather than retry a write.
+ */
+export class ColdMasterTransferAmbiguousError extends Error {
+  static readonly code = "COLD_MASTER_TRANSFER_AMBIGUOUS";
+  readonly code = ColdMasterTransferAmbiguousError.code;
+
+  constructor() {
+    super("Master transfer outcome requires reconciliation");
+    this.name = "ColdMasterTransferAmbiguousError";
   }
 }
 

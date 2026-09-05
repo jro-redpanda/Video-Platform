@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
@@ -25,12 +25,62 @@ import Login from "@/pages/login";
 import OnboardingFlow from "@/pages/onboarding";
 import AcceptInvitation from "@/pages/invitations/accept";
 import { authClient } from "@/lib/auth-client";
-import { useGetOnboarding, getGetOnboardingQueryKey } from "@workspace/api-client-react";
+import {
+  useGetOnboarding,
+  getGetOnboardingQueryKey,
+  useGetRuntimeConfig,
+} from "@workspace/api-client-react";
+import { shouldRetryQuery } from "@/lib/frontend-safety";
+import {
+  TenantTransitionProvider,
+  useTenantTransition,
+} from "@/lib/tenant-transition";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      gcTime: 5 * 60 * 1000,
+      refetchOnWindowFocus: true,
+      retry: shouldRetryQuery,
+      staleTime: 30 * 1000,
+    },
+  },
+});
+
+function ProductMetadata() {
+  const { data: runtimeConfig } = useGetRuntimeConfig();
+
+  useEffect(() => {
+    if (!runtimeConfig?.productName) return;
+    const title = runtimeConfig.productName;
+    const description = `${title} is a secure workspace for managing and sharing video.`;
+    document.title = title;
+    document.querySelector('meta[name="description"]')?.setAttribute("content", description);
+    document.querySelector('meta[property="og:title"]')?.setAttribute("content", title);
+    document.querySelector('meta[property="og:description"]')?.setAttribute("content", description);
+    document.querySelector('meta[name="twitter:title"]')?.setAttribute("content", title);
+    document.querySelector('meta[name="twitter:description"]')?.setAttribute("content", description);
+  }, [runtimeConfig?.productName]);
+
+  return null;
+}
 
 function Router() {
   const [location] = useLocation();
+  const { isTransitioning } = useTenantTransition();
+
+  if (isTransitioning) {
+    return (
+      <div
+        className="min-h-screen grid place-items-center text-muted-foreground"
+        role="status"
+        aria-live="polite"
+      >
+        Switching workspace…
+      </div>
+    );
+  }
+
   if (location.startsWith("/v/")) {
     return (
       <RoutedErrorBoundary>
@@ -48,9 +98,41 @@ function Router() {
 function AuthenticatedRouter() {
   const session = authClient.useSession();
   const [location] = useLocation();
+  const queryClient = useQueryClient();
+  const userId = session.data?.user.id ?? null;
+  const [cacheIdentity, setCacheIdentity] = useState<string | null | undefined>();
+
+  useEffect(() => {
+    if (session.isPending || session.error || cacheIdentity === userId) return;
+    let active = true;
+
+    void queryClient.cancelQueries()
+      .catch(() => undefined)
+      .then(() => {
+        queryClient.clear();
+        if (active) setCacheIdentity(userId);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [cacheIdentity, queryClient, session.error, session.isPending, userId]);
 
   if (session.isPending) {
-    return <div className="min-h-screen grid place-items-center text-muted-foreground">Loading workspace…</div>;
+    return <div className="min-h-screen grid place-items-center text-muted-foreground" role="status">Loading workspace…</div>;
+  }
+
+  if (session.error) {
+    return (
+      <FullScreenError
+        message="We could not verify your session."
+        onRetry={() => void session.refetch()}
+      />
+    );
+  }
+
+  if (cacheIdentity !== userId) {
+    return <div className="min-h-screen grid place-items-center text-muted-foreground" role="status">Securing workspace data…</div>;
   }
 
   const isInvitationRoute = location === '/invitations/accept';
@@ -63,7 +145,7 @@ function AuthenticatedRouter() {
     return <AcceptInvitation />;
   }
 
-  return <OnboardingGate />;
+  return <OnboardingGate key={userId} />;
 }
 
 function OnboardingGate() {
@@ -99,16 +181,11 @@ function OnboardingGate() {
   }, [onboarding?.state, location, isLoading, isError, setLocation]);
 
   if (isLoading) {
-    return <div className="min-h-screen grid place-items-center text-muted-foreground">Loading workspace state…</div>;
+    return <div className="min-h-screen grid place-items-center text-muted-foreground" role="status">Loading workspace state…</div>;
   }
 
   if (isError) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center space-y-4">
-        <p className="text-destructive font-medium">Failed to load workspace state.</p>
-        <button onClick={() => window.location.reload()} className="text-sm underline hover:text-foreground text-muted-foreground transition-colors">Retry</button>
-      </div>
-    );
+    return <FullScreenError message="Failed to load workspace state." onRetry={() => void queryClient.refetchQueries({ queryKey: getGetOnboardingQueryKey() })} />;
   }
 
   if (!onboarding) return null;
@@ -142,13 +219,32 @@ function RoutedErrorBoundary({ children }: { children: ReactNode }) {
   return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
 }
 
+function FullScreenError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-6 text-center" role="alert">
+      <p className="text-destructive font-medium">{message}</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="rounded-md border px-4 py-2 text-sm text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        data-testid="button-retry-shell"
+      >
+        Try again
+      </button>
+    </div>
+  );
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-          <Router />
-        </WouterRouter>
+        <TenantTransitionProvider>
+          <ProductMetadata />
+          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+            <Router />
+          </WouterRouter>
+        </TenantTransitionProvider>
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>

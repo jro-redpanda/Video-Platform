@@ -17,9 +17,9 @@ errors must be treated as client errors; clients should restart from page one.
 `GET /audit-events/export` requires `audit.export`, defaults to the last 30 days,
 allows at most 90 days, and caps output at 10,000 rows. Check
 `X-Audit-Export-Truncated`; CSV cells are quoted and formula-prefixed cells are
-neutralized.
+neutralized. Exports use repeatable-read keyset batches and also stop at 16 MiB,
+so large structured event state cannot force an unbounded in-memory response.
 
-Current instrumentation gap: existing mutation call sites still use legacy direct
-`auditLogsTable` inserts. They receive safe defaults from migration 0027, but do
-not yet supply structured before/after state, request IDs, or the shared
-sanitizer. New and migrated call sites should use `writeAuditEvent`.
+All production mutation call sites must use `writeAuditEvent`; direct
+`auditLogsTable` inserts are reserved for bootstrap/fixture data. Review new
+mutations for a same-transaction audit write before merging them.

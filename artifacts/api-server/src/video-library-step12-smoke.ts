@@ -5,7 +5,7 @@ if (process.env.NODE_ENV !== "test") throw new Error("Step 12 smoke requires NOD
 if (!process.env.SESSION_SECRET) throw new Error("SESSION_SECRET is required");
 
 const {
-  db, pool, embedGenerationOutboxTable, groupPermissionsTable, membershipsTable,
+  auditLogsTable, db, pool, embedGenerationOutboxTable, groupPermissionsTable, membershipsTable,
   organizationCustomizationTable, organizationsTable, permissionGroupsTable, permissionsTable,
   plansTable, providerAccountsTable, providerTenantSpacesTable, videoAnalyticsRollupsTable,
   videoEmbedsTable, videoLibrarySnapshotsTable, videosTable, webhookEventsTable, usersTable,
@@ -31,6 +31,9 @@ const credential = `private-step12-credential-${marker}`;
 const localDeleteId = randomUUID();
 const providerDeleteId = randomUUID();
 const ambiguousDeleteId = randomUUID();
+const staleDeleteId = randomUUID();
+const incompleteDeleteId = randomUUID();
+const staleAssetCreationDeleteId = randomUUID();
 const foreignVideoId = randomUUID();
 const webhookId = randomUUID();
 const outboxId = randomUUID();
@@ -95,6 +98,18 @@ await db.transaction(async (tx) => {
       id: ambiguousDeleteId, organizationId, title: "Ambiguous delete", status: "ready" as const,
       providerAccountId: accountId, providerTenantSpaceId: providerSpaceId,
       providerAssetId: `private-ambiguous-asset-${marker}`,
+    },
+    {
+      id: staleDeleteId, organizationId, title: "Stale deletion", status: "ready" as const,
+      deletionClaim: randomUUID(), deletionClaimedAt: new Date(Date.now() - 16 * 60_000),
+    },
+    {
+      id: incompleteDeleteId, organizationId, title: "Incomplete linkage", status: "ready" as const,
+      providerAssetId: `private-incomplete-asset-${marker}`,
+    },
+    {
+      id: staleAssetCreationDeleteId, organizationId, title: "Stale asset creation", status: "ready" as const,
+      assetCreationClaim: randomUUID(), assetCreationClaimedAt: new Date(Date.now() - 16 * 60_000),
     },
     { id: foreignVideoId, organizationId: foreignOrganizationId, title: "Foreign secret video", status: "ready" as const },
   ]);
@@ -332,6 +347,23 @@ try {
   assert.equal((await fetch(`${root}/api/videos/${localDeleteId}`, {
     method: "DELETE", headers: { cookie: viewer.cookie },
   })).status, 403);
+  for (const videoId of [staleDeleteId, incompleteDeleteId, staleAssetCreationDeleteId]) {
+    assert.equal((await fetch(`${root}/api/videos/${videoId}`, {
+      method: "DELETE", headers: { cookie: owner.cookie },
+    })).status, 409);
+  }
+  const reconciliationAudits = await db.select().from(auditLogsTable).where(and(
+    eq(auditLogsTable.organizationId, organizationId),
+    eq(auditLogsTable.action, "video.deletion_reconciliation_required"),
+  ));
+  assert.deepEqual(
+    new Set(reconciliationAudits.map((event) => (event.metadata as { code?: string }).code)),
+    new Set(["stale_deletion_claim", "incomplete_provider_linkage", "stale_asset_creation_claim"]),
+  );
+  const [ownerUser] = await db.select({ id: usersTable.id }).from(usersTable)
+    .where(eq(usersTable.email, owner.email));
+  assert(ownerUser);
+  assert(reconciliationAudits.every((event) => event.actorUserId === ownerUser.id));
 
   assert.equal((await fetch(`${root}/api/videos/${localDeleteId}`, {
     method: "DELETE", headers: { cookie: owner.cookie },

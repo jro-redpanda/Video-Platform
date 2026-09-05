@@ -47,6 +47,7 @@ const postDomain = (hostname: string, cookie?: string) => request("/api/custom-d
   method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ hostname }),
 }, cookie);
 const verify = (cookie?: string) => request("/api/custom-domain/verify", { method: "POST" }, cookie);
+const resolver = (resolveTxt: DomainDnsResolver["resolveTxt"]): DomainDnsResolver => ({ resolveTxt });
 
 try {
   setCustomDomainVerificationEnqueuerForTest(async (id) => { queued.push(id); return id; });
@@ -76,6 +77,17 @@ try {
   const member = await user("member", orgA, memberGroup);
   const managerB = await user("manager-b", orgB, managerBGroup);
   const managerNo = await user("manager-no", orgNo, managerNoGroup);
+  await db.update(organizationCustomizationTable).set({
+    logoObjectKey: `branding-internal/${orgA}/logo`,
+    watermarkObjectKey: `branding-internal/${orgA}/watermark`,
+  }).where(eq(organizationCustomizationTable.organizationId, orgA));
+  const workspaceResponse = await request("/api/workspace", {}, manager.cookie);
+  assert.equal(workspaceResponse.status, 200);
+  const workspaceBody = await workspaceResponse.json() as Record<string, unknown>;
+  assert.equal(workspaceBody.hasLogoAsset, true);
+  assert.equal(workspaceBody.hasWatermarkAsset, true);
+  assert(!("logoObjectKey" in workspaceBody));
+  assert(!("watermarkObjectKey" in workspaceBody), "internal branding object keys are not API capabilities");
 
   for (const path of ["/api/custom-domain", "/api/custom-domain/verify"]) {
     assert.equal((await request(path, { method: path.endsWith("verify") ? "POST" : "GET" })).status, 401);
@@ -85,8 +97,26 @@ try {
   assert.equal((await request("/api/custom-domain", {}, member.cookie)).status, 403);
   assert.equal((await postDomain("member.customer-host.net", member.cookie)).status, 403);
   assert.equal((await postDomain("no-plan.customer-host.net", managerNo.cookie)).status, 403);
+  const [downgradedDomain] = await db.insert(customDomainsTable).values({
+    organizationId: orgNo,
+    hostname: "retained.customer-host.net",
+    challengeName: "_video-verify.retained.customer-host.net",
+    challengeValue: "video-domain-verify=must-not-leak",
+  }).returning();
+  await db.update(organizationCustomizationTable).set({
+    customDomain: downgradedDomain!.hostname,
+    customDomainVerified: false,
+  }).where(eq(organizationCustomizationTable.organizationId, orgNo));
+  const downgradedStatus = await request("/api/custom-domain", {}, managerNo.cookie);
+  assert.equal(downgradedStatus.status, 200);
+  const downgradedBody = await downgradedStatus.json() as { hostname: string; txtRecordName: string | null; txtRecordValue: string | null };
+  assert.equal(downgradedBody.hostname, downgradedDomain!.hostname);
+  assert.equal(downgradedBody.txtRecordName, null);
+  assert.equal(downgradedBody.txtRecordValue, null, "plan downgrade redacts ownership challenges");
+  assert.equal((await verify(managerNo.cookie)).status, 403);
+  assert.equal((await request("/api/custom-domain", { method: "DELETE" }, managerNo.cookie)).status, 204, "downgraded workspaces retain cleanup access");
 
-  for (const hostile of ["example.com", "127.0.0.1", "localhost", "foo.internal", "https://x.com", "x.com:443", "*.x.com", "bad..x.com", "-bad.x.com", "bad-.x.com", "bad\u0000.x.com"]) {
+  for (const hostile of ["example.com", "127.0.0.1", "localhost", "foo.internal", "foo.intranet", "foo.corp", "foo.home.arpa", "https://x.com", "x.com:443", "*.x.com", "bad..x.com", "-bad.x.com", "bad-.x.com", "bad\u0000.x.com"]) {
     assert.equal((await postDomain(hostile, manager.cookie)).status, 400, hostile);
   }
   assert.equal(normalizeHostname("BÜCHER.customer-host.net."), "xn--bcher-kva.customer-host.net");
@@ -105,6 +135,10 @@ try {
 
   assert.equal((await postDomain("replacement.customer-host.net", managerB.cookie)).status, 409);
   assert.equal((await request("/api/custom-domain", { method: "DELETE" }, manager.cookie)).status, 204);
+  assert.equal((await verify(manager.cookie)).status, 409, "missing domains do not consume verification budget");
+  const [missingDomainWindow] = await db.select().from(customDomainVerificationWindowsTable)
+    .where(eq(customDomainVerificationWindowsTable.organizationId, orgA));
+  assert.equal(missingDomainWindow, undefined);
   assert.equal((await postDomain("replacement.customer-host.net", managerB.cookie)).status, 202);
 
   // The request only persists/enqueues: injected DNS is never called by HTTP.
@@ -113,16 +147,38 @@ try {
   assert.equal((await verify(managerB.cookie)).status, 202);
   assert.equal(resolverCalls, 0); assert.deepEqual(queued, [bCurrent.id]);
   const perRow = await verify(managerB.cookie); assert.equal(perRow.status, 429); assert.equal(perRow.headers.get("retry-after"), "60");
-  await db.update(customDomainsTable).set({ verifyRequestedAt: new Date(Date.now() - 61_000) }).where(eq(customDomainsTable.id, bCurrent.id));
-  for (let i = 0; i < 4; i++) {
+  const liveDispatchClaim = randomUUID();
+  await db.update(customDomainsTable).set({
+    lifecycleState: "verifying",
+    claimToken: liveDispatchClaim,
+    claimedAt: new Date(Date.now() - 61_000),
+    verifyRequestedAt: new Date(Date.now() - 61_000),
+    retryAfterAt: new Date(0),
+  }).where(eq(customDomainsTable.id, bCurrent.id));
+  const delayedWorkerRetry = await verify(managerB.cookie);
+  assert.equal(delayedWorkerRetry.status, 429);
+  const [stillClaimed] = await db.select().from(customDomainsTable).where(eq(customDomainsTable.id, bCurrent.id));
+  assert.equal(stillClaimed?.lifecycleState, "verifying");
+  assert.equal(stillClaimed?.claimToken, liveDispatchClaim, "requests cannot steal an in-flight worker claim");
+  await db.update(customDomainsTable).set({
+    lifecycleState: "pending_verification",
+    claimToken: null,
+    claimedAt: null,
+    verifyRequestedAt: new Date(Date.now() - 61_000),
+  }).where(eq(customDomainsTable.id, bCurrent.id));
+  for (let i = 0; i < 5; i++) {
     const response = await verify(managerB.cookie);
-    if (i < 3) { assert.equal(response.status, 202); await db.update(customDomainsTable).set({ verifyRequestedAt: new Date(Date.now() - 61_000) }).where(eq(customDomainsTable.id, bCurrent.id)); }
+    if (i < 4) { assert.equal(response.status, 202); await db.update(customDomainsTable).set({ verifyRequestedAt: new Date(Date.now() - 61_000) }).where(eq(customDomainsTable.id, bCurrent.id)); }
     else { assert.equal(response.status, 429); assert(response.headers.get("retry-after")); }
   }
 
   // Worker result is exact-TXT only, and the conditional claim makes concurrent calls single-flight.
   await db.update(customDomainVerificationWindowsTable).set({ attempts: 1, windowStartedAt: new Date(Date.now() - 16 * 60_000) }).where(eq(customDomainVerificationWindowsTable.organizationId, orgB));
-  const exact: DomainDnsResolver = { async resolveTxt(name) { resolverCalls++; assert.equal(name, bCurrent.challengeName); return [[bCurrent.challengeValue], ["wrong"]]; } };
+  const exact = resolver(async (name) => {
+    resolverCalls++;
+    assert.equal(name, bCurrent.challengeName);
+    return [[bCurrent.challengeValue], ["wrong"]];
+  });
   await assert.rejects(() => processCustomDomainVerification(bCurrent.id, exact, async () => {
     throw new Error("forced audit transaction rollback");
   }));
@@ -137,9 +193,35 @@ try {
   assert.equal(verified?.lifecycleState, "verified");
   const [customization] = await db.select().from(organizationCustomizationTable).where(eq(organizationCustomizationTable.organizationId, orgB));
   assert.equal(customization?.customDomainVerified, true);
+  const verifiedStatus = await request("/api/custom-domain", {}, managerB.cookie);
+  const verifiedBody = await verifiedStatus.json() as { txtRecordName: string | null; txtRecordValue: string | null };
+  assert.equal(verifiedBody.txtRecordName, null);
+  assert.equal(verifiedBody.txtRecordValue, null, "verified challenges are never returned");
   const verifiedAudits = await db.select().from(auditLogsTable).where(and(eq(auditLogsTable.organizationId, orgB), eq(auditLogsTable.action, "custom_domain.verified")));
   assert.equal(verifiedAudits.length, 1); assert.equal(verifiedAudits[0]!.category, "workspace");
   assert(!JSON.stringify(verifiedAudits[0]).includes(bCurrent.challengeValue));
+
+  // A stale verification claim cannot overwrite a newer customization binding.
+  assert.equal((await postDomain("stale.customer-host.net", manager.cookie)).status, 202);
+  const [staleDomain] = await db.select().from(customDomainsTable).where(and(
+    eq(customDomainsTable.organizationId, orgA),
+    eq(customDomainsTable.lifecycleState, "pending_verification"),
+  ));
+  assert(staleDomain);
+  await db.update(organizationCustomizationTable).set({
+    customDomain: "newer.customer-host.net",
+    customDomainVerified: false,
+  }).where(eq(organizationCustomizationTable.organizationId, orgA));
+  const staleResult = await processCustomDomainVerification(
+    staleDomain.id,
+    resolver(async () => [[staleDomain.challengeValue]]),
+  );
+  assert("verified" in staleResult);
+  assert.equal(staleResult.verified, false);
+  const [staleRejected] = await db.select().from(customDomainsTable).where(eq(customDomainsTable.id, staleDomain.id));
+  assert.equal(staleRejected?.lifecycleState, "reconciliation_required");
+  assert.equal(staleRejected?.diagnosticCode, "stale_domain_binding");
+  assert.equal((await request("/api/custom-domain", { method: "DELETE" }, manager.cookie)).status, 204);
 
   // Failure is retryable until capped; only the initial failure and terminal suspension audit.
   assert.equal((await postDomain("failure.customer-host.net", manager.cookie)).status, 202);
@@ -149,10 +231,18 @@ try {
   ));
   assert(failureDomain, "failure fixture must use the current active claim, never retained history");
   await db.update(customDomainsTable).set({ lifecycleState: "pending_verification", attempts: 0, retryable: true, verifyRequestedAt: null }).where(eq(customDomainsTable.id, failureDomain.id));
-  const mismatch: DomainDnsResolver = { async resolveTxt() { return [["video-domain-verify=wrong"]]; } };
-  const dnsError: DomainDnsResolver = { async resolveTxt() { throw new Error("ENOTFOUND"); } };
+  const mismatch = resolver(async () => [["video-domain-verify=wrong"]]);
+  const dnsError = resolver(async () => { throw new Error("ENOTFOUND"); });
   await processCustomDomainVerification(failureDomain.id, dnsError);
-  for (let i = 0; i < 7; i++) { await db.update(customDomainsTable).set({ lifecycleState: "pending_verification" }).where(eq(customDomainsTable.id, failureDomain.id)); await processCustomDomainVerification(failureDomain.id, mismatch); }
+  await db.update(customDomainsTable).set({ verifyRequestedAt: new Date(0) }).where(eq(customDomainsTable.id, failureDomain.id));
+  assert.equal((await verify(manager.cookie)).status, 429, "worker backoff cannot be bypassed by the request route");
+  for (let i = 0; i < 7; i++) {
+    await db.update(customDomainsTable).set({
+      lifecycleState: "pending_verification",
+      retryAfterAt: new Date(0),
+    }).where(eq(customDomainsTable.id, failureDomain.id));
+    await processCustomDomainVerification(failureDomain.id, mismatch);
+  }
   const [suspended] = await db.select().from(customDomainsTable).where(eq(customDomainsTable.id, failureDomain.id));
   assert.equal(suspended?.lifecycleState, "suspended"); assert.equal(suspended?.retryable, false);
   const failedAudits = await db.select().from(auditLogsTable).where(and(eq(auditLogsTable.organizationId, orgA), eq(auditLogsTable.action, "custom_domain.verification_failed")));
@@ -189,7 +279,20 @@ try {
     return tx.select({ organizationId: customDomainsTable.organizationId }).from(customDomainsTable);
   });
   assert(rlsRows.every((row) => row.organizationId === orgA));
-  await db.update(customDomainsTable).set({ lifecycleState: "pending_verification", retryable: true }).where(eq(customDomainsTable.id, failureDomain.id));
+  const forgedWorkerRows = await db.transaction(async (tx) => {
+    await tx.execute(sql.raw("set local role vid_app"));
+    await tx.execute(sql`select set_config('app.organization_id', ${orgA}, true)`);
+    await tx.execute(sql`select set_config('app.custom_domain_worker', 'on', true)`);
+    return tx.select({ organizationId: customDomainsTable.organizationId }).from(customDomainsTable);
+  });
+  assert(forgedWorkerRows.every((row) => row.organizationId === orgA), "tenant role cannot opt into worker RLS");
+  await db.update(customDomainsTable).set({
+    lifecycleState: "pending_verification",
+    retryable: true,
+    claimToken: null,
+    claimedAt: null,
+    retryAfterAt: new Date(0),
+  }).where(eq(customDomainsTable.id, failureDomain.id));
   assert.equal((await request("/api/custom-domain", { method: "DELETE" }, manager.cookie)).status, 204);
   assert.equal((await request("/api/custom-domain", { method: "DELETE" }, manager.cookie)).status, 204);
   const [removed] = await db.select().from(customDomainsTable).where(eq(customDomainsTable.id, failureDomain.id));

@@ -19,17 +19,8 @@ export interface WorkspaceUpdate {
   /**
      * @minLength 1
      * @maxLength 3
+     * @pattern ^[A-Za-z0-9]{1,3}$
      */
   logoInitials?: string;
-  /**
-     * @maxLength 1024
-     * @nullable
-     */
-  logoObjectKey?: string | null;
-  /**
-     * @maxLength 1024
-     * @nullable
-     */
-  watermarkObjectKey?: string | null;
   posterTreatment?: WorkspaceUpdatePosterTreatment;
 }

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type pg from "pg";
 
-export type CatalogStage = "pre15" | "step15" | "thumbnailIntegrity" | "final" | "billingBase" | "billingCheckoutBase" | "billingProviderBase" | "billing" | "analyticsBase" | "analytics" | "audit" | "auditExport" | "onboarding" | "customDomain" | "masterStorage" | "masterArchiveIntegrity" | "g1Identity" | "g3Hardening";
+export type CatalogStage = "pre15" | "step15" | "thumbnailIntegrity" | "final" | "billingBase" | "billingCheckoutBase" | "billingProviderBase" | "billing" | "analyticsBase" | "analytics" | "audit" | "auditExport" | "onboarding" | "customDomain" | "masterStorage" | "masterArchiveIntegrity" | "g1Identity" | "g3Hardening" | "videoLibrarySnapshots" | "billingReliability" | "customDomainIntegrity" | "masterStorageIntegrity";
 const pre = ["accounts","audit_logs","embed_generation_outbox","folders","group_permissions","invitations","memberships","organization_customization","organization_entitlement_overrides","organizations","permission_groups","permissions","plans","playback_events","provider_accounts","provider_tenant_spaces","sessions","users","verifications","video_analytics_rollups","video_embeds","videos","webhook_events"];
 const step15 = [...pre, "thumbnail_upload_intents", "object_cleanup_outbox"];
 const billing = [...step15, "organization_billing", "billing_operations", "billing_event_receipts"];
@@ -11,6 +11,7 @@ const onboarding = [...analytics, "onboarding_provisioning_intents"];
 const customDomain = [...onboarding, "custom_domains", "custom_domain_verification_windows"];
 const masterStorage = [...customDomain, "master_storage_operations"];
 const g3Tables = [...masterStorage, "schema_migrations"];
+const postG3Tables = [...g3Tables, "video_library_snapshots", "video_library_snapshot_items"];
 const enums = ["membership_status","organization_status","provider_tenant_space_state","video_status","video_visibility"];
 const billingEnums = [...enums, "billing_status","billing_interval","billing_operation_state"];
 const onboardingEnums = [...billingEnums, "onboarding_intent_state"];
@@ -19,25 +20,29 @@ const masterStorageEnums = [...customDomainEnums, "master_storage_operation_kind
 const compact = (value: string | null) => value?.replace(/\s+/g, " ").trim() ?? null;
 
 export async function catalogFingerprint(client: pg.Client, stage: CatalogStage) {
-  const analyticsStage = stage === "analytics" || stage === "audit" || stage === "auditExport" || stage === "onboarding" || stage === "customDomain" || stage === "masterStorage" || stage === "masterArchiveIntegrity" || stage === "g1Identity" || stage === "g3Hardening";
+  const postG3Stage = stage === "videoLibrarySnapshots"
+    || stage === "billingReliability"
+    || stage === "customDomainIntegrity"
+    || stage === "masterStorageIntegrity";
+  const analyticsStage = stage === "analytics" || stage === "audit" || stage === "auditExport" || stage === "onboarding" || stage === "customDomain" || stage === "masterStorage" || stage === "masterArchiveIntegrity" || stage === "g1Identity" || stage === "g3Hardening" || postG3Stage;
   const billingStage = stage === "billing" || stage === "billingBase" || stage === "billingCheckoutBase" || stage === "billingProviderBase" || analyticsStage;
-  const tables = stage === "pre15" ? pre : stage === "g3Hardening" ? g3Tables : (stage === "masterStorage" || stage === "masterArchiveIntegrity" || stage === "g1Identity") ? masterStorage : stage === "customDomain" ? customDomain : stage === "onboarding" ? onboarding : analyticsStage ? analytics : stage === "analyticsBase" ? analyticsBase : billingStage ? billing : step15;
-  const enumRows = await client.query(`select t.typname as name,e.enumsortorder::int as position,e.enumlabel as label from pg_type t join pg_enum e on e.enumtypid=t.oid join pg_namespace n on n.oid=t.typnamespace where n.nspname='public' and t.typname=any($1) order by 1,2`, [(stage === "masterStorage" || stage === "masterArchiveIntegrity" || stage === "g1Identity" || stage === "g3Hardening") ? masterStorageEnums : stage === "customDomain" ? customDomainEnums : stage === "onboarding" ? onboardingEnums : billingStage ? billingEnums : enums]);
+  const tables = stage === "pre15" ? pre : postG3Stage ? postG3Tables : stage === "g3Hardening" ? g3Tables : (stage === "masterStorage" || stage === "masterArchiveIntegrity" || stage === "g1Identity") ? masterStorage : stage === "customDomain" ? customDomain : stage === "onboarding" ? onboarding : analyticsStage ? analytics : stage === "analyticsBase" ? analyticsBase : billingStage ? billing : step15;
+  const enumRows = await client.query(`select t.typname as name,e.enumsortorder::int as position,e.enumlabel as label from pg_type t join pg_enum e on e.enumtypid=t.oid join pg_namespace n on n.oid=t.typnamespace where n.nspname='public' and t.typname=any($1) order by 1,2`, [(stage === "masterStorage" || stage === "masterArchiveIntegrity" || stage === "g1Identity" || stage === "g3Hardening" || postG3Stage) ? masterStorageEnums : stage === "customDomain" ? customDomainEnums : stage === "onboarding" ? onboardingEnums : billingStage ? billingEnums : enums]);
   const relations = await client.query(`select c.relname as name,c.relkind as kind,c.relrowsecurity as rls,c.relforcerowsecurity as forced from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname=any($1) order by 1`, [tables]);
   const columns = await client.query(`select c.relname as relation,a.attname as name,format_type(a.atttypid,a.atttypmod) as type,a.attnotnull as not_null,pg_get_expr(d.adbin,d.adrelid) as default,a.attidentity as identity,a.attgenerated as generated,coll.collname as collation from pg_class c join pg_namespace n on n.oid=c.relnamespace join pg_attribute a on a.attrelid=c.oid and a.attnum>0 and not a.attisdropped left join pg_attrdef d on d.adrelid=c.oid and d.adnum=a.attnum left join pg_collation coll on coll.oid=a.attcollation where n.nspname='public' and c.relname=any($1) order by 1,2`, [tables]);
   const constraints = await client.query(`select c.relname as relation,x.contype as type,pg_get_constraintdef(x.oid,true) as definition,x.confupdtype as update_action,x.confdeltype as delete_action from pg_constraint x join pg_class c on c.oid=x.conrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname=any($1) order by 1,3`, [tables]);
   const indexes = await client.query(`select t.relname as relation,x.indisunique as unique,regexp_replace(pg_get_indexdef(i.oid),'^(CREATE (UNIQUE )?INDEX) [^ ]+ (ON )','\\1 \\3') as definition,pg_get_expr(x.indpred,x.indrelid) as predicate from pg_index x join pg_class i on i.oid=x.indexrelid join pg_class t on t.oid=x.indrelid join pg_namespace n on n.oid=t.relnamespace where n.nspname='public' and t.relname=any($1) order by 1,3`, [tables]);
   const policies = await client.query(`select tablename,policyname,permissive,roles,cmd,qual,with_check from pg_policies where schemaname='public' and tablename=any($1) order by 1,2`, [tables]);
-  const grants = await client.query(`select table_name,grantee,privilege_type from information_schema.role_table_grants where table_schema='public' and table_name=any($1) and grantee=any($2) order by 1,2,3`, [tables, stage === "g3Hardening" ? ["vid_app", "vid_worker"] : ["vid_app"]]);
+  const grants = await client.query(`select table_name,grantee,privilege_type from information_schema.role_table_grants where table_schema='public' and table_name=any($1) and grantee=any($2) order by 1,2,3`, [tables, stage === "g3Hardening" || postG3Stage ? ["vid_app", "vid_worker"] : ["vid_app"]]);
   const projectedColumns = stage === "pre15" ? columns.rows.filter((row) => row.relation !== "videos" || !["thumbnail_object_key","thumbnail_content_type","thumbnail_size_bytes","thumbnail_version"].includes(row.name)) : columns.rows;
   const projectedConstraints = stage === "pre15" ? constraints.rows.filter((row) => row.relation !== "videos" || !String(row.definition).includes("thumbnail_")) : constraints.rows;
   const out: Record<string, unknown> = { enums: enumRows.rows, relations: relations.rows, columns: projectedColumns, constraints: projectedConstraints, indexes: indexes.rows, policies: policies.rows, grants: grants.rows };
-  if (stage === "g1Identity" || stage === "g3Hardening") {
+  if (stage === "g1Identity" || stage === "g3Hardening" || postG3Stage) {
     const functions = await client.query(`select p.proname as name,pg_get_function_identity_arguments(p.oid) as arguments,pg_get_function_result(p.oid) as result,pg_get_functiondef(p.oid) as definition from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='lookup_acceptable_invitation' order by 1,2`);
     const functionGrants = await client.query(`select routine_name,grantee,privilege_type from information_schema.role_routine_grants where routine_schema='public' and routine_name='lookup_acceptable_invitation' and grantee='vid_app' order by 1,2,3`);
     out.g1Functions = { functions: functions.rows, grants: functionGrants.rows };
   }
-  if (stage === "g3Hardening") {
+  if (stage === "g3Hardening" || postG3Stage) {
     const roles = await client.query(`select rolname as name,rolsuper as superuser,rolinherit as inherit,rolcreaterole as create_role,rolcreatedb as create_database,rolcanlogin as login,rolreplication as replication,rolbypassrls as bypass_rls from pg_roles where rolname in ('vid_app','vid_worker') order by 1`);
     const memberships = await client.query(`select parent.rolname as role,member.rolname as member from pg_auth_members m join pg_roles parent on parent.oid=m.roleid join pg_roles member on member.oid=m.member where parent.rolname='vid_worker' and member.rolname='vid_app' order by 1,2`);
     const owners = await client.query(`select c.relname as relation,c.relowner=any(select oid from pg_roles where rolname in ('vid_app','vid_worker')) as owned_by_runtime_role from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname=any($1) order by 1`, [tables]);
@@ -50,7 +55,7 @@ export async function catalogFingerprint(client: pg.Client, stage: CatalogStage)
     const bossSequences = await client.query(`select c.relname as object_name,pg_get_userbyid(a.grantee) as grantee,a.privilege_type from pg_class c join pg_namespace n on n.oid=c.relnamespace cross join lateral aclexplode(c.relacl) a where n.nspname='vid_jobs' and c.relkind='S' and pg_get_userbyid(a.grantee) in ('vid_app','vid_worker') order by 1,2,3`);
     out.g3Security = { roles: roles.rows, memberships: memberships.rows, owners: owners.rows, columnGrants: columnGrants.rows, functions: functions.rows, functionGrants: functionGrants.rows, defaults: defaults.rows, schemas: schemas.rows, bossSchemas: bossSchemas.rows, bossSequences: bossSequences.rows };
   }
-  if (stage === "final" || stage === "g3Hardening") {
+  if (stage === "final" || stage === "g3Hardening" || postG3Stage) {
     const boss = await client.query(`select n.nspname as schema,c.relname as name,c.relkind as kind from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='vid_jobs' and not c.relispartition order by 2,3`);
     const functions = await client.query(`select p.proname as name,pg_get_function_identity_arguments(p.oid) as arguments,pg_get_function_result(p.oid) as result,pg_get_functiondef(p.oid) as definition from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='vid_jobs' order by 1,2`);
     const constraints = await client.query(`select c.relname as relation,x.contype as type,pg_get_constraintdef(x.oid,true) as definition,x.confupdtype as update_action,x.confdeltype as delete_action from pg_constraint x join pg_class c on c.oid=x.conrelid where x.connamespace='vid_jobs'::regnamespace and not c.relispartition order by 1,3`);
@@ -85,4 +90,8 @@ export const EXPECTED_CATALOG_HASHES: Record<CatalogStage, string> = {
   masterArchiveIntegrity: "0bf60707a959e43ed58da9ccc3d3d939121b5f5c2f6b8508d36151069f94eb98",
   g1Identity: "a0223c189f937c60e7a55da6a2552962d94ef82f3575081274cb01f5d39bdd3b",
   g3Hardening: "796260bfa658301d2be21fe446efea2a31ab5f9cd8cc18cdc99539668a20c481",
+  videoLibrarySnapshots: "REPLACE_FROM_ISOLATED_0035_CATALOG",
+  billingReliability: "REPLACE_FROM_ISOLATED_0036_CATALOG",
+  customDomainIntegrity: "REPLACE_FROM_ISOLATED_0037_CATALOG",
+  masterStorageIntegrity: "REPLACE_FROM_ISOLATED_0038_CATALOG",
 };

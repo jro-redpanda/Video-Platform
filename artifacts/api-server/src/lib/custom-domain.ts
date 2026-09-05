@@ -1,7 +1,7 @@
 import { domainToASCII } from "node:url";
 import { isIP } from "node:net";
 import { randomBytes, randomUUID } from "node:crypto";
-import { and, eq, inArray, lt, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import {
   customDomainsTable,
   customDomainVerificationWindowsTable,
@@ -34,7 +34,7 @@ export function normalizeHostname(input: string) {
   if (!hostname || hostname.length > 253 || hostname.endsWith(".") || !hostname.includes(".") || isIP(hostname) !== 0
     || /^\d+(?:\.\d+)+$/.test(hostname)
     || hostname.includes(":") || hostname.split(".").some((part) => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(part))) throw new DomainInputError();
-  const reserved = /(^|\.)(localhost|local|internal|test|dev|onion|invalid|example|home|lan|localdomain|arpa)$/;
+  const reserved = /(^|\.)(localhost|local|internal|intranet|corp|private|test|dev|onion|invalid|example|home|lan|localdomain|arpa)$/;
   const documentationDomain = /(^|\.)(example\.(com|net|org))$/;
   const app = domainToASCII(runtimeConfig.appDomain.replace(/\.$/, "")).toLowerCase();
   if (reserved.test(hostname) || documentationDomain.test(hostname)
@@ -42,13 +42,18 @@ export function normalizeHostname(input: string) {
   return hostname;
 }
 
-export function publicDomainStatus(row?: typeof customDomainsTable.$inferSelect) {
+export function publicDomainStatus(
+  row?: typeof customDomainsTable.$inferSelect,
+  options: { includeChallenge?: boolean } = {},
+) {
   if (!row) return { hostname: null, lifecycleState: null, txtRecordName: null, txtRecordValue: null, lastCheckedAt: null, verifiedAt: null, retryable: false, message: "No custom domain is configured.", activationState: "not_ready" as const };
+  const exposeChallenge = options.includeChallenge === true
+    && ["pending_verification", "verifying", "failed"].includes(row.lifecycleState);
   const message = row.lifecycleState === "verified" ? "DNS ownership verified. External TLS and edge activation is still required."
     : row.lifecycleState === "reconciliation_required" ? "Verification requires operator reconciliation."
       : row.lifecycleState === "failed" ? "DNS verification did not find the required TXT record."
         : row.lifecycleState === "suspended" ? "Verification is temporarily suspended." : "Publish the TXT record, then request verification.";
-  return { hostname: row.hostname, lifecycleState: row.lifecycleState, txtRecordName: row.challengeName, txtRecordValue: row.challengeValue,
+  return { hostname: row.hostname, lifecycleState: row.lifecycleState, txtRecordName: exposeChallenge ? row.challengeName : null, txtRecordValue: exposeChallenge ? row.challengeValue : null,
     lastCheckedAt: row.lastCheckedAt, verifiedAt: row.verifiedAt, retryable: row.retryable, message,
     activationState: row.lifecycleState === "verified" ? "external_setup_required" as const : "not_ready" as const };
 }
@@ -59,7 +64,14 @@ export async function createDomain(tx: TenantTransaction, organizationId: string
   if (existing?.hostname === hostname && existing.lifecycleState !== "removed") return existing;
   const challengeValue = `video-domain-verify=${randomBytes(24).toString("base64url")}`;
   try {
-    if (existing) await tx.update(customDomainsTable).set({ lifecycleState: "removed", removedAt: new Date(), retryable: false, claimToken: null }).where(eq(customDomainsTable.id, existing.id));
+    if (existing) await tx.update(customDomainsTable).set({
+      lifecycleState: "removed",
+      removedAt: new Date(),
+      retryable: false,
+      claimToken: null,
+      claimedAt: null,
+      challengeValue: "revoked",
+    }).where(eq(customDomainsTable.id, existing.id));
     const [created] = await tx.insert(customDomainsTable).values({ organizationId, hostname, challengeName: `_video-verify.${hostname}`, challengeValue }).returning();
     await tx.update(organizationCustomizationTable).set({ customDomain: hostname, customDomainVerified: false }).where(eq(organizationCustomizationTable.organizationId, organizationId));
     await writeAuditEvent(tx, { organizationId, actor: auditUser(userId), action: existing ? "custom_domain.replaced" : "custom_domain.requested", category: "workspace", subject: { type: "custom_domain", id: created!.id, label: hostname }, afterState: { hostname, state: "pending_verification" }, requestId });
@@ -71,6 +83,29 @@ export async function createDomain(tx: TenantTransaction, organizationId: string
 }
 
 export async function requestVerification(tx: TenantTransaction, organizationId: string, userId: string, requestId?: string) {
+  const [row] = await tx.select().from(customDomainsTable).where(and(
+    eq(customDomainsTable.organizationId, organizationId),
+    inArray(customDomainsTable.lifecycleState, active),
+  )).for("update").limit(1);
+  if (!row || !row.retryable) return { rateLimited: false as const, row: undefined };
+  const now = new Date();
+  if (row.lifecycleState === "verifying") {
+    const claimRepairAt = (row.claimedAt?.getTime() ?? now.getTime()) + 10 * 60_000;
+    return {
+      rateLimited: true as const,
+      retryAfter: Math.max(1, Math.ceil((claimRepairAt - now.getTime()) / 1000)),
+    };
+  }
+  const nextEligibleAt = Math.max(
+    row.verifyRequestedAt?.getTime() ? row.verifyRequestedAt.getTime() + retryDelayMs : 0,
+    row.retryAfterAt?.getTime() ?? 0,
+  );
+  if (nextEligibleAt > now.getTime()) {
+    return {
+      rateLimited: true as const,
+      retryAfter: Math.max(1, Math.ceil((nextEligibleAt - now.getTime()) / 1000)),
+    };
+  }
   const rateResult = await tx.execute(sql`
     insert into ${customDomainVerificationWindowsTable}
       (organization_id, window_started_at, attempts, updated_at)
@@ -94,15 +129,6 @@ export async function requestVerification(tx: TenantTransaction, organizationId:
   if (!rate || rate.attempts > maxVerificationRequests) {
     return { rateLimited: true as const, retryAfter: rate?.retry_after ?? Math.ceil(verificationWindowMs / 1000) };
   }
-  const [row] = await tx.select().from(customDomainsTable).where(and(eq(customDomainsTable.organizationId, organizationId), inArray(customDomainsTable.lifecycleState, active))).limit(1);
-  if (!row || !row.retryable) return { rateLimited: false as const, row: undefined };
-  const now = new Date();
-  if (row.verifyRequestedAt && now.getTime() - row.verifyRequestedAt.getTime() < retryDelayMs) {
-    return {
-      rateLimited: true as const,
-      retryAfter: Math.ceil((retryDelayMs - (now.getTime() - row.verifyRequestedAt.getTime())) / 1000),
-    };
-  }
   const [updated] = await tx.update(customDomainsTable).set({ verifyRequestedAt: now, retryAfterAt: now, lifecycleState: "pending_verification" }).where(eq(customDomainsTable.id, row.id)).returning();
   if (!row.verifyRequestedAt) await writeAuditEvent(tx, { organizationId, actor: auditUser(userId), action: "custom_domain.verification_requested", category: "workspace", subject: { type: "custom_domain", id: row.id, label: row.hostname }, afterState: { state: "pending_verification" }, requestId });
   return { rateLimited: false as const, row: updated! };
@@ -112,7 +138,14 @@ export async function removeDomain(tx: TenantTransaction, organizationId: string
   const [row] = await tx.select().from(customDomainsTable).where(and(eq(customDomainsTable.organizationId, organizationId), inArray(customDomainsTable.lifecycleState, active))).limit(1);
   if (!row) return;
   await tx.update(organizationCustomizationTable).set({ customDomain: null, customDomainVerified: false }).where(eq(organizationCustomizationTable.organizationId, organizationId));
-  await tx.update(customDomainsTable).set({ lifecycleState: "removed", removedAt: new Date(), retryable: false, claimToken: null, challengeValue: "revoked" }).where(eq(customDomainsTable.id, row.id));
+  await tx.update(customDomainsTable).set({
+    lifecycleState: "removed",
+    removedAt: new Date(),
+    retryable: false,
+    claimToken: null,
+    claimedAt: null,
+    challengeValue: "revoked",
+  }).where(eq(customDomainsTable.id, row.id));
   await writeAuditEvent(tx, { organizationId, actor: auditUser(userId), action: "custom_domain.removed", category: "workspace", subject: { type: "custom_domain", id: row.id, label: row.hostname }, afterState: { state: "removed" }, requestId });
 }
 
@@ -129,7 +162,11 @@ export async function processCustomDomainVerification(
         eq(customDomainsTable.lifecycleState, "verifying"),
         eq(customDomainsTable.claimToken, dispatchClaim),
       )
-      : inArray(customDomainsTable.lifecycleState, ["pending_verification", "failed"]);
+      : and(
+        inArray(customDomainsTable.lifecycleState, ["pending_verification", "failed"]),
+        eq(customDomainsTable.retryable, true),
+        or(lte(customDomainsTable.retryAfterAt, new Date()), isNull(customDomainsTable.retryAfterAt)),
+      );
     const [claimed] = await tx.update(customDomainsTable).set({ lifecycleState: "verifying", claimToken: claim, claimedAt: new Date() })
       .where(and(eq(customDomainsTable.id, domainId), ownsDispatch)).returning();
     return claimed;
@@ -137,7 +174,14 @@ export async function processCustomDomainVerification(
   if (!row) return { skipped: true };
 
   let matched = false, diagnostic = "dns_lookup_failed";
-  try { matched = await resolveExactTxt(resolver, row.challengeName, row.challengeValue); diagnostic = matched ? "" : "txt_not_found"; } catch (error) { diagnostic = error instanceof Error && error.message === "dns_timeout" ? "dns_timeout" : "dns_lookup_failed"; }
+  try {
+    matched = await resolveExactTxt(resolver, row.challengeName, row.challengeValue);
+    diagnostic = matched ? "" : "txt_not_found";
+  } catch (error) {
+    diagnostic = error instanceof Error && error.message === "dns_timeout"
+      ? "dns_timeout"
+      : "dns_lookup_failed";
+  }
 
   return withWorkerDb("custom_domain", async (tx) => {
     const attempts = row.attempts + 1, retryable = !matched && attempts < maxAttempts;
@@ -145,10 +189,29 @@ export async function processCustomDomainVerification(
     const [changed] = await tx.update(customDomainsTable).set({ lifecycleState: state, attempts, retryable, lastCheckedAt: new Date(), verifiedAt: matched ? new Date() : null, retryAfterAt: retryable ? new Date(Date.now() + retryDelayMs * attempts) : null, claimToken: null, claimedAt: null, diagnosticCode: diagnostic || null })
       .where(and(eq(customDomainsTable.id, row.id), eq(customDomainsTable.lifecycleState, "verifying"), eq(customDomainsTable.claimToken, claim))).returning();
     if (!changed) return { skipped: true };
-    if (matched) await tx.update(organizationCustomizationTable).set({ customDomain: row.hostname, customDomainVerified: true }).where(eq(organizationCustomizationTable.organizationId, row.organizationId));
-    if (matched || state === "suspended" || row.attempts === 0) {
-      await auditWriter(tx, { organizationId: row.organizationId, actor: auditJob(), action: matched ? "custom_domain.verified" : state === "suspended" ? "custom_domain.suspended" : "custom_domain.verification_failed", category: "workspace", subject: { type: "custom_domain", id: row.id, label: row.hostname }, beforeState: { state: "verifying" }, afterState: { state, retryable }, metadata: diagnostic ? { code: diagnostic } : {} });
+    let finalState: typeof state | "reconciliation_required" = state;
+    if (matched) {
+      const [applied] = await tx.update(organizationCustomizationTable)
+        .set({ customDomainVerified: true })
+        .where(and(
+          eq(organizationCustomizationTable.organizationId, row.organizationId),
+          eq(organizationCustomizationTable.customDomain, row.hostname),
+        ))
+        .returning({ organizationId: organizationCustomizationTable.organizationId });
+      if (!applied) {
+        finalState = "reconciliation_required";
+        diagnostic = "stale_domain_binding";
+        await tx.update(customDomainsTable).set({
+          lifecycleState: finalState,
+          retryable: false,
+          verifiedAt: null,
+          diagnosticCode: diagnostic,
+        }).where(eq(customDomainsTable.id, row.id));
+      }
     }
-    return { verified: matched };
+    if (matched || finalState === "suspended" || row.attempts === 0) {
+      await auditWriter(tx, { organizationId: row.organizationId, actor: auditJob(), action: finalState === "verified" ? "custom_domain.verified" : finalState === "suspended" ? "custom_domain.suspended" : finalState === "reconciliation_required" ? "custom_domain.reconciliation_required" : "custom_domain.verification_failed", category: "workspace", subject: { type: "custom_domain", id: row.id, label: row.hostname }, beforeState: { state: "verifying" }, afterState: { state: finalState, retryable: finalState === "failed" && retryable }, metadata: diagnostic ? { code: diagnostic } : {} });
+    }
+    return { verified: finalState === "verified" };
   });
 }

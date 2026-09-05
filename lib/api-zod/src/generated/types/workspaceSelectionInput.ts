@@ -5,13 +5,7 @@
  * Multi-tenant video platform API
  * OpenAPI spec version: 0.1.0
  */
+import type { WorkspaceSelectionById } from './workspaceSelectionById';
+import type { WorkspaceSelectionBySlug } from './workspaceSelectionBySlug';
 
-export type WorkspaceSelectionInput = (unknown & {
-  id?: string;
-  /**
-     * @minLength 2
-     * @maxLength 63
-     * @pattern ^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$
-     */
-  slug?: string;
-});
+export type WorkspaceSelectionInput = WorkspaceSelectionById | WorkspaceSelectionBySlug;

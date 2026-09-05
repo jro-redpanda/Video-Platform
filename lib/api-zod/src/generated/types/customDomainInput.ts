@@ -8,8 +8,9 @@
 
 export interface CustomDomainInput {
   /**
-     * @minLength 1
+     * @minLength 3
      * @maxLength 253
+     * @pattern ^(?!.*\.\.)[^\s/:@*]+\.[^\s/:@*]+$
      */
   hostname: string;
 }

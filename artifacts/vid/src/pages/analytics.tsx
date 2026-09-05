@@ -3,13 +3,15 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Skeleton } from "@/components/ui/skeleton"
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts'
 import { formatNumber } from "@/lib/utils"
-import { PlayCircle, Clock, Video, TrendingUp } from "lucide-react"
+import { PlayCircle, Clock, Video, TrendingUp, RefreshCw } from "lucide-react"
+import { Button } from "@/components/ui/button"
 
 export default function Analytics() {
-  const { data: dashboard, isLoading, isError } = useGetDashboard()
+  const { data: dashboard, isLoading, isError, refetch, isFetching } = useGetDashboard()
 
   const formatShortDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    const [year, month, day] = dateStr.split('-').map(Number)
+    return new Date(year, month - 1, day).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
   }
 
   if (isError) {
@@ -17,6 +19,10 @@ export default function Analytics() {
       <div className="flex-1 p-8 overflow-y-auto flex items-center justify-center">
         <div className="text-center">
           <p className="text-muted-foreground">Failed to load analytics dashboard.</p>
+          <Button className="mt-4" variant="outline" onClick={() => void refetch()} disabled={isFetching}>
+            <RefreshCw className="mr-2 h-4 w-4" />
+            {isFetching ? "Retrying…" : "Try again"}
+          </Button>
         </div>
       </div>
     )
@@ -80,7 +86,7 @@ export default function Analytics() {
             {isLoading ? (
               <Skeleton className="h-8 w-16" />
             ) : (
-              <div className="text-2xl font-bold">{Math.round((dashboard?.completionRate ?? 0) * 100)}%</div>
+              <div className="text-2xl font-bold">{Math.round(Math.min(1, Math.max(0, dashboard?.completionRate ?? 0)) * 100)}%</div>
             )}
           </CardContent>
         </Card>
@@ -147,7 +153,7 @@ export default function Analytics() {
         <Card>
           <CardHeader>
             <CardTitle>Top Engagement</CardTitle>
-            <CardDescription>Highest completion rates</CardDescription>
+            <CardDescription>Most played in the last 30 days</CardDescription>
           </CardHeader>
           <CardContent>
             {isLoading ? (
@@ -156,19 +162,19 @@ export default function Analytics() {
               <div className="h-[300px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
-                    data={dashboard.topVideos.slice(0, 5).map(v => ({ ...v, completionRateDisplay: Math.round((v.completionRate ?? 0) * 100) }))}
+                    data={dashboard.topVideos.slice(0, 5)}
                     layout="vertical"
                     margin={{ top: 0, right: 20, left: 0, bottom: 0 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="hsl(var(--border))" />
-                    <XAxis type="number" domain={[0, 100]} hide />
-                    <YAxis dataKey="title" type="category" hide />
+                    <XAxis type="number" domain={[0, 'dataMax']} hide />
+                    <YAxis dataKey="title" type="category" width={90} tick={{ fontSize: 11 }} />
                     <Tooltip
                       cursor={{fill: 'hsl(var(--muted))'}}
                       contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }}
-                      formatter={(val: number) => [`${val}%`, 'Completion']}
+                      formatter={(val: number) => [formatNumber(val), 'Plays']}
                     />
-                    <Bar dataKey="completionRateDisplay" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]}>
+                    <Bar dataKey="plays" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]}>
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
@@ -205,7 +211,7 @@ export default function Analytics() {
                   <tr key={video.id} className="border-b last:border-0 hover:bg-muted/50 transition-colors">
                     <td className="p-4 font-medium">{video.title}</td>
                     <td className="p-4 text-right font-mono">{formatNumber(video.plays)}</td>
-                    <td className="p-4 text-right font-mono">{Math.round((video.completionRate ?? 0) * 100)}%</td>
+                    <td className="p-4 text-right font-mono">{Math.round(Math.min(1, Math.max(0, video.completionRate ?? 0)) * 100)}%</td>
                   </tr>
                 ))
               ) : (

@@ -2,14 +2,32 @@ import { useGetDashboard, useListActivity } from "@workspace/api-client-react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { formatNumber, formatDuration } from "@/lib/utils"
-import { PlayCircle, Clock, CheckCircle2, TrendingUp, Activity } from "lucide-react"
+import { PlayCircle, Clock, CheckCircle2, TrendingUp, Activity, RefreshCw } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { getHttpStatus } from "@/lib/frontend-safety"
 
 export default function Dashboard() {
-  const { data: dashboard, isLoading: isLoadingDash } = useGetDashboard()
-  const { data: activity, isLoading: isLoadingActivity, isError: activityDenied } = useListActivity()
+  const dashboardQuery = useGetDashboard()
+  const activityQuery = useListActivity()
+  const {
+    data: dashboard,
+    isLoading: isLoadingDash,
+    isError: isDashboardError,
+    isFetching: isDashboardFetching,
+    refetch: refetchDashboard,
+  } = dashboardQuery
+  const {
+    data: activity,
+    error: activityError,
+    isLoading: isLoadingActivity,
+    isError: isActivityError,
+    isFetching: isActivityFetching,
+    refetch: refetchActivity,
+  } = activityQuery
+  const activityDenied = getHttpStatus(activityError) === 403
 
   return (
-    <div className="flex-1 p-8 overflow-y-auto">
+    <div className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
       <div className="flex justify-between items-center mb-8">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Overview</h1>
@@ -17,36 +35,44 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <MetricCard
-          title="Total Videos"
-          value={dashboard?.totalVideos}
-          isLoading={isLoadingDash}
-          icon={PlayCircle}
+      {isDashboardError ? (
+        <QueryError
+          message="Dashboard metrics could not be loaded."
+          isRetrying={isDashboardFetching}
+          onRetry={() => void refetchDashboard()}
         />
-        <MetricCard
-          title="Total Plays"
-          value={dashboard?.totalPlays}
-          formatter={formatNumber}
-          isLoading={isLoadingDash}
-          icon={TrendingUp}
-        />
-        <MetricCard
-          title="Watch Time"
-          value={dashboard?.watchTimeHours}
-          suffix=" hrs"
-          formatter={formatNumber}
-          isLoading={isLoadingDash}
-          icon={Clock}
-        />
-        <MetricCard
-          title="Avg Completion"
-          value={dashboard?.completionRate}
-          suffix="%"
-          isLoading={isLoadingDash}
-          icon={CheckCircle2}
-        />
-      </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <MetricCard
+            title="Total Videos"
+            value={dashboard?.totalVideos}
+            isLoading={isLoadingDash}
+            icon={PlayCircle}
+          />
+          <MetricCard
+            title="Total Plays"
+            value={dashboard?.totalPlays}
+            formatter={formatNumber}
+            isLoading={isLoadingDash}
+            icon={TrendingUp}
+          />
+          <MetricCard
+            title="Watch Time"
+            value={dashboard?.watchTimeHours}
+            suffix=" hrs"
+            formatter={formatNumber}
+            isLoading={isLoadingDash}
+            icon={Clock}
+          />
+          <MetricCard
+            title="Avg Completion"
+            value={dashboard?.completionRate}
+            suffix="%"
+            isLoading={isLoadingDash}
+            icon={CheckCircle2}
+          />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card className="lg:col-span-2">
@@ -55,18 +81,20 @@ export default function Dashboard() {
             <CardDescription>Videos with the highest engagement.</CardDescription>
           </CardHeader>
           <CardContent>
-            {isLoadingDash ? (
+            {isDashboardError ? (
+              <div className="py-8 text-center text-muted-foreground">Top content is unavailable.</div>
+            ) : isLoadingDash ? (
               <div className="space-y-4">
                 {[1, 2, 3].map(i => <Skeleton key={i} className="h-12 w-full" />)}
               </div>
             ) : dashboard?.topVideos.length ? (
               <div className="space-y-4">
                 {dashboard.topVideos.map((video) => (
-                  <div key={video.id} className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors">
-                    <div className="font-medium truncate pr-4">{video.title}</div>
-                    <div className="flex items-center gap-6 text-sm text-muted-foreground flex-shrink-0">
-                      <div className="w-20 text-right">{formatNumber(video.plays)} plays</div>
-                      <div className="w-16 text-right">{video.completionRate}%</div>
+                  <div key={video.id} className="flex flex-col gap-2 p-3 rounded-lg border bg-card hover:bg-accent/50 transition-colors sm:flex-row sm:items-center sm:justify-between">
+                    <div className="font-medium truncate sm:pr-4">{video.title}</div>
+                    <div className="flex items-center justify-between gap-4 text-sm text-muted-foreground sm:justify-end sm:flex-shrink-0">
+                      <div>{formatNumber(video.plays)} plays</div>
+                      <div>{video.completionRate}%</div>
                     </div>
                   </div>
                 ))}
@@ -90,6 +118,22 @@ export default function Dashboard() {
                </div>
             ) : activityDenied ? (
               <div className="py-8 text-center text-muted-foreground">Activity is not available for your role.</div>
+            ) : isActivityError ? (
+              <div className="py-8 text-center">
+                <p className="text-muted-foreground">Recent activity could not be loaded.</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => void refetchActivity()}
+                  disabled={isActivityFetching}
+                  data-testid="button-retry-activity"
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  {isActivityFetching ? "Retrying…" : "Try again"}
+                </Button>
+              </div>
             ) : activity?.length ? (
               <div className="space-y-5 relative before:absolute before:left-2 before:top-2 before:bottom-2 before:w-px before:bg-border">
                 {activity.map((item) => (
@@ -116,6 +160,35 @@ export default function Dashboard() {
         </Card>
       </div>
     </div>
+  )
+}
+
+function QueryError({
+  message,
+  isRetrying,
+  onRetry,
+}: {
+  message: string
+  isRetrying: boolean
+  onRetry: () => void
+}) {
+  return (
+    <Card className="mb-8 border-destructive/30">
+      <CardContent className="py-8 text-center">
+        <p className="text-destructive font-medium">{message}</p>
+        <Button
+          type="button"
+          variant="outline"
+          className="mt-3"
+          onClick={onRetry}
+          disabled={isRetrying}
+          data-testid="button-retry-dashboard"
+        >
+          <RefreshCw className="mr-2 h-4 w-4" />
+          {isRetrying ? "Retrying…" : "Try again"}
+        </Button>
+      </CardContent>
+    </Card>
   )
 }
 

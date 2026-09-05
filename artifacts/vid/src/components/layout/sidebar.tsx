@@ -45,6 +45,8 @@ export function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
+              aria-current={isActive ? "page" : undefined}
+              data-testid={`link-navigation-${item.label.toLowerCase().replace(/\s+/g, "-")}`}
               className={cn(
                 "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
                 isActive
@@ -74,7 +76,7 @@ export function Sidebar() {
             <div className="h-1.5 w-full bg-sidebar-accent rounded-full overflow-hidden">
               <div
                 className="h-full bg-primary"
-                style={{ width: `${Math.min(100, (workspace.storageUsedGb / workspace.storageLimitGb) * 100)}%` }}
+                style={{ width: `${workspace.storageLimitGb > 0 ? Math.min(100, (workspace.storageUsedGb / workspace.storageLimitGb) * 100) : 0}%` }}
               />
             </div>
           </div>

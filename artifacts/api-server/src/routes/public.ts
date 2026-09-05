@@ -11,6 +11,9 @@ import {
   videoEmbedsTable,
 } from "@workspace/db";
 import {
+  CreatePlaybackAnalyticsGrantBody,
+  CreatePlaybackAnalyticsGrantParams,
+  CreatePlaybackAnalyticsGrantResponse,
   CreatePlaybackEventsBody,
   CreatePlaybackEventsResponse,
   GetPublicVideoParams,
@@ -83,7 +86,8 @@ router.get("/videos/:videoId/source", async (req, res): Promise<void> => {
       res.status(404).json({ error: "Video not found" });
       return;
     }
-    res.status(307).setHeader("Location", source.sourceUrl).end();
+    // The provider attests this asset-bound URL above, then eligibility is rechecked after I/O.
+    res.status(307).setHeader("Location", source.sourceUrl).end(); // nosemgrep: javascript.express.web.tainted-redirect-express.tainted-redirect-express
   } catch (error) {
     req.log.error({ err: error, videoId }, "Playback source redirect resolution failed");
     res.status(503).json({ error: "Playback source is unavailable" });
@@ -195,28 +199,10 @@ router.get("/videos/:videoId", async (req, res): Promise<void> => {
   const thumbnailUrl = thumbnailObjectKey && thumbnailVersion
     && (!thumbnailMutableUntil || thumbnailMutableUntil.getTime() <= Date.now())
     ? `/api/public/videos/${videoId}/thumbnail?v=${thumbnailVersion}` : null;
-  let analytics: ReturnType<typeof issueAnalyticsGrant> | undefined;
-  if (video.status === "ready" && embedId && embedGeneration && embedStatus === "generated") {
-    try {
-      await consumeGrantIssueLimit(organizationId, videoId, req.ip ?? "unknown");
-      analytics = issueAnalyticsGrant({ organizationId, videoId, embedId, generation: embedGeneration });
-    } catch (error) {
-      if (error instanceof AnalyticsHttpError) {
-        if (error.retryAfter) res.setHeader("Retry-After", String(error.retryAfter));
-        res.status(error.status).json({ error: "Playback analytics request rejected", code: error.code });
-        return;
-      }
-      throw error;
-    }
-  }
   const metadata = {
     ...rest,
     thumbnailUrl,
     posterUrl: thumbnailUrl,
-    ...(analytics ? {
-      analyticsGrant: analytics.grant,
-      analyticsGrantExpiresAt: analytics.expiresAt.toISOString(),
-    } : {}),
   };
   if (video.status !== "ready") {
     res.json(GetPublicVideoResponse.parse(metadata));
@@ -258,6 +244,53 @@ router.get("/videos/:videoId", async (req, res): Promise<void> => {
   } catch (error) {
     req.log.error({ err: error, videoId }, "Playback source resolution failed");
     res.status(503).json({ error: "Playback source is unavailable" });
+  }
+});
+
+router.post("/videos/:videoId/analytics-grant", async (req, res): Promise<void> => {
+  const params = CreatePlaybackAnalyticsGrantParams.safeParse(req.params);
+  const body = CreatePlaybackAnalyticsGrantBody.safeParse(req.body);
+  if (!params.success || !body.success) {
+    res.status(400).json({ error: "Invalid playback analytics grant request" });
+    return;
+  }
+  const [active] = await db.select({
+    organizationId: videosTable.organizationId,
+    embedId: videoEmbedsTable.videoId,
+    generation: videoEmbedsTable.generationVersion,
+  }).from(videosTable)
+    .innerJoin(videoEmbedsTable, eq(videoEmbedsTable.videoId, videosTable.id))
+    .where(and(
+      eq(videosTable.id, params.data.videoId),
+      eq(videosTable.status, "ready"),
+      ne(videosTable.visibility, "private"),
+      eq(videoEmbedsTable.generationStatus, "generated"),
+    ))
+    .limit(1);
+  if (!active) {
+    res.status(404).json({ error: "Video not found" });
+    return;
+  }
+  try {
+    await consumeGrantIssueLimit(active.organizationId, params.data.videoId, req.ip ?? "unknown");
+    const issued = issueAnalyticsGrant({
+      organizationId: active.organizationId,
+      videoId: params.data.videoId,
+      embedId: active.embedId,
+      generation: active.generation,
+      sessionId: body.data.sessionId,
+    });
+    res.status(201).json(CreatePlaybackAnalyticsGrantResponse.parse({
+      grant: issued.grant,
+      expiresAt: issued.expiresAt.toISOString(),
+    }));
+  } catch (error) {
+    if (error instanceof AnalyticsHttpError) {
+      if (error.retryAfter) res.setHeader("Retry-After", String(error.retryAfter));
+      res.status(error.status).json({ error: "Playback analytics grant rejected", code: error.code });
+      return;
+    }
+    throw error;
   }
 });
 

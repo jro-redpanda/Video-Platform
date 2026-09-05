@@ -1,5 +1,11 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { createPlaybackEvents, PublicVideo, PlaybackEventInput, PlaybackEventBatch } from '@workspace/api-client-react';
+import {
+  createPlaybackAnalyticsGrant,
+  createPlaybackEvents,
+  PublicVideo,
+  PlaybackEventInput,
+  PlaybackEventBatch,
+} from '@workspace/api-client-react';
 
 const MAX_BATCH_SIZE = 50;
 const MAX_QUEUE_SIZE = 500;
@@ -92,46 +98,55 @@ export function usePlaybackAnalytics({ video, sessionId, refetchVideo }: UsePlay
   const flushTimeoutRef = useRef<number | null>(null);
   const isFlushingRef = useRef(false);
   const retryAfterRef = useRef<number>(0);
+  const isolateCollisionsRef = useRef(false);
+  const grantRef = useRef<{ token: string; expiresAt: number; sessionId: string } | null>(null);
   const videoRef = useRef(video);
   videoRef.current = video;
 
   const flushQueue = useCallback(async () => {
     if (isFlushingRef.current) return;
     const currentVideo = videoRef.current;
-    if (!currentVideo || !currentVideo.analyticsGrant) return;
+    if (!currentVideo) return;
 
-    // Check if grant is expired
-    if (currentVideo.analyticsGrantExpiresAt) {
-      const expiresAt = new Date(currentVideo.analyticsGrantExpiresAt).getTime();
-      if (Date.now() >= expiresAt) {
-        refetchVideo();
-        return; // Will flush when new video data comes in
-      }
+    if (Date.now() < retryAfterRef.current) {
+      scheduleFlush(retryAfterRef.current - Date.now());
+      return;
     }
-
-    if (Date.now() < retryAfterRef.current) return;
 
     const queue = getQueue(currentVideo.id);
     if (queue.length === 0) return;
 
-    const batchEvents = queue.slice(0, MAX_BATCH_SIZE);
-    const batch: PlaybackEventBatch = {
-      grant: currentVideo.analyticsGrant,
-      events: batchEvents,
-    };
+    // Persisted sessions are drained independently. Each receives a
+    // cryptographically session-bound grant, including after a remount.
+    const boundSessionId = queue[0].sessionId;
+    const sessionQueue = queue.filter(event => event.sessionId === boundSessionId);
+    const batchEvents = sessionQueue.slice(0, isolateCollisionsRef.current ? 1 : MAX_BATCH_SIZE);
 
     try {
       isFlushingRef.current = true;
-      const response = await createPlaybackEvents(batch);
-      
+      let activeGrant = grantRef.current;
+      if (!activeGrant || activeGrant.sessionId !== boundSessionId || Date.now() >= activeGrant.expiresAt) {
+        const issued = await createPlaybackAnalyticsGrant(currentVideo.id, { sessionId: boundSessionId });
+        activeGrant = {
+          token: issued.grant,
+          expiresAt: new Date(issued.expiresAt).getTime(),
+          sessionId: boundSessionId,
+        };
+        grantRef.current = activeGrant;
+      }
+      const batch: PlaybackEventBatch = { grant: activeGrant.token, events: batchEvents };
+      await createPlaybackEvents(batch);
+      retryAfterRef.current = 0;
       removeFromQueue(currentVideo.id, batchEvents.map(e => e.eventId));
       
       const remaining = getQueue(currentVideo.id);
-      if (remaining.length > 0) {
-        scheduleFlush(100);
+      if (!remaining.some(event => event.sessionId === boundSessionId)) {
+        isolateCollisionsRef.current = false;
+        grantRef.current = null;
       }
+      if (remaining.length > 0) scheduleFlush(100);
     } catch (error: any) {
-      if (error?.status === 429 || error?.status >= 500) {
+      if (error?.status === 429 || error?.status >= 500 || error?.status === undefined) {
         const retryAfterHeader = error?.headers?.get('Retry-After');
         let delay = 5000;
         if (retryAfterHeader) {
@@ -142,14 +157,39 @@ export function usePlaybackAnalytics({ video, sessionId, refetchVideo }: UsePlay
             delay = new Date(retryAfterHeader).getTime() - Date.now();
           }
         }
-        retryAfterRef.current = Date.now() + Math.max(delay, 1000);
+        delay = Number.isFinite(delay) ? Math.min(Math.max(delay, 1000), 60_000) : 5000;
+        retryAfterRef.current = Date.now() + delay;
+        scheduleFlush(delay);
       } else if (error?.status === 409) {
-        // Collision is terminal, drop the whole batch.
-        // Or if we can't tell which one collided, just drop all to avoid loops.
-        removeFromQueue(currentVideo.id, batchEvents.map(e => e.eventId));
-      } else if (error?.status === 401 || error?.status === 403) {
-        // Grant might be invalid, trigger refetch
+        const code = error?.data?.code;
+        if (code === 'event_id_collision' && batchEvents.length > 1) {
+          // Isolate the immutable-ID collision without discarding valid peers.
+          isolateCollisionsRef.current = true;
+          scheduleFlush(100);
+        } else if (code === 'event_id_collision') {
+          removeFromQueue(currentVideo.id, [batchEvents[0].eventId]);
+          scheduleFlush(100);
+        } else {
+          grantRef.current = null;
+          scheduleFlush(1000);
+        }
+      } else if (error?.status === 401) {
+        grantRef.current = null;
+        scheduleFlush(1000);
+      } else if (error?.status === 403) {
+        grantRef.current = null;
         refetchVideo();
+        scheduleFlush(5000);
+      } else if (error?.status === 404) {
+        removeFromQueue(currentVideo.id, queue.map(event => event.eventId));
+        grantRef.current = null;
+        refetchVideo();
+      } else if (error?.status === 400) {
+        // The batch is permanently invalid. Remove it so one corrupt persisted
+        // record cannot block all later telemetry for this video.
+        removeFromQueue(currentVideo.id, batchEvents.map(e => e.eventId));
+        grantRef.current = null;
+        if (getQueue(currentVideo.id).length > 0) scheduleFlush(100);
       }
     } finally {
       isFlushingRef.current = false;
@@ -162,6 +202,10 @@ export function usePlaybackAnalytics({ video, sessionId, refetchVideo }: UsePlay
     }
     flushTimeoutRef.current = window.setTimeout(flushQueue, delayMs);
   }, [flushQueue]);
+
+  useEffect(() => {
+    if (video?.id) scheduleFlush(0);
+  }, [video?.id, video?.status, scheduleFlush]);
 
   const emitEvent = useCallback((
     type: PlaybackEventInput['type'],

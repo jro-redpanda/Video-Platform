@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite --config vite.config.ts --host 0.0.0.0",
-    "build": "vite build --config vite.config.ts",
+    "build": "vite build --config vite.config.ts && node ./scripts/build-smoke.mjs",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "embed-ui:smoke": "node --experimental-strip-types ./src/lib/safe-json-script-smoke.ts"
+    "embed-ui:smoke": "node --experimental-strip-types ./src/lib/safe-json-script-smoke.ts",
+    "frontend:smoke": "node --experimental-strip-types ./src/lib/frontend-safety-smoke.ts"
   },
   "devDependencies": {
     "@hookform/resolvers": "^3.10.0",

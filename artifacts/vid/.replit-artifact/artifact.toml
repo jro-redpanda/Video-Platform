@@ -1,6 +1,6 @@
 kind = "web"
 previewPath = "/"
-title = "Video Platform"
+title = "Tenant Video App"
 description = "A multi-tenant video operations platform with provider-portable uploads, owned playback, workspace permissions, customization, and first-party analytics."
 version = "1.0.0"
 id = "artifacts/vid"

@@ -187,7 +187,7 @@ export default function AuditPage() {
         <Button 
           variant="outline" 
           onClick={handleExport} 
-          disabled={exporting || isLoading || !data?.items.length}
+          disabled={exporting}
           className="gap-2"
         >
           <Download className="w-4 h-4" />

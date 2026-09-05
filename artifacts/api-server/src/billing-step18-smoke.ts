@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
-  auditLogsTable, billingOperationsTable, db, organizationBillingTable,
+  auditLogsTable, billingEventReceiptsTable, billingOperationsTable, db, organizationBillingTable,
   organizationsTable, plansTable, usersTable, videosTable,
 } from "@workspace/db";
 import { injectBillingProviderForTest } from "./lib/billing-provider";
@@ -10,14 +10,30 @@ import { reconcileActiveBilling, reconcileOrganizationBilling } from "./lib/bill
 import { resolveBillingAccess, resolveEntitlements } from "./lib/entitlements";
 import { FakeBillingProvider } from "./lib/test-only-fake-billing-provider";
 import { checkoutSubscriptionConflict, withBillingLifecycleLock } from "./lib/billing-lifecycle-lock";
-import { validateExistingCustomerUnderLock } from "./routes/billing";
+import {
+  processVerifiedStripeEvent,
+  reconcilePendingBillingReceipts,
+} from "./lib/stripe-webhook";
+import { trustedStripeUrl, validateExistingCustomerUnderLock } from "./routes/billing";
 
 assert.equal(process.env.NODE_ENV, "test", "billing smoke must run with NODE_ENV=test");
 const suffix = randomUUID();
 const organizationId = randomUUID();
+const foreignOrganizationId = randomUUID();
 const userId = randomUUID();
+const stripeEventIds: string[] = [];
 const fake = new FakeBillingProvider();
 injectBillingProviderForTest(fake);
+try {
+  process.env.NODE_ENV = "production";
+  assert.throws(
+    () => injectBillingProviderForTest(new FakeBillingProvider()),
+    /test-only/,
+    "test adapters cannot be injected into a production process",
+  );
+} finally {
+  process.env.NODE_ENV = "test";
+}
 const plans = new Map((await db.select().from(plansTable).where(
   inArray(plansTable.code, ["starter", "growth", "scale"]),
 )).map((item) => [item.code, item]));
@@ -78,12 +94,206 @@ try {
   assert.equal((await reconcileOrganizationBilling(organizationId, userId))?.status, "restricted");
   assert.equal((await db.select({ count: videosTable.id }).from(videosTable).where(eq(videosTable.organizationId, organizationId))).length, 0, "restriction never deletes data");
   fake.subscriptions.set(`sub_fake_${suffix}`, subscription("active", "price_test_growth_month"));
-  assert.equal((await reconcileActiveBilling()).reconciled >= 1, true);
+  assert.equal((await reconcileActiveBilling(100, organizationId)).reconciled, 1);
   assert.equal(
     (await db.select().from(organizationBillingTable).where(eq(organizationBillingTable.organizationId, organizationId)))[0]!.status,
     "active",
     "periodic reconciliation repairs restricted tenants after payment recovery",
   );
+
+  // Transient provider failures preserve the last authoritative access state
+  // and remain retryable; integrity violations persist quarantine before throw.
+  fake.failNextRetrieve = true;
+  await assert.rejects(() => reconcileOrganizationBilling(organizationId, userId), /fake_transient_provider_failure/);
+  let [afterTransient] = await db.select().from(organizationBillingTable)
+    .where(eq(organizationBillingTable.organizationId, organizationId));
+  assert.equal(afterTransient!.status, "active");
+  assert.equal(afterTransient!.lastErrorCode, "billing_reconciliation_retryable");
+  assert.equal((await reconcileOrganizationBilling(organizationId, userId))?.lastErrorCode, null);
+  fake.failNextRetrieve = true;
+  await assert.rejects(
+    () => reconcileActiveBilling(100, organizationId),
+    /billing_reconciliation_retryable/,
+    "periodic transient failures must reach queue retry/dead-letter handling",
+  );
+  assert.equal((await db.select().from(organizationBillingTable)
+    .where(eq(organizationBillingTable.organizationId, organizationId)))[0]!.status, "active");
+  await reconcileOrganizationBilling(organizationId, userId);
+  const authoritative = fake.subscriptions.get(`sub_fake_${suffix}`)!;
+  fake.subscriptions.set(`sub_fake_${suffix}`, {
+    ...authoritative,
+    metadata: { organization_id: foreignOrganizationId },
+  });
+  await assert.rejects(() => reconcileOrganizationBilling(organizationId, userId), /stripe_customer_organization_mismatch/);
+  let [afterIntegrityFailure] = await db.select().from(organizationBillingTable)
+    .where(eq(organizationBillingTable.organizationId, organizationId));
+  assert.equal(afterIntegrityFailure!.status, "quarantined");
+  assert.equal(afterIntegrityFailure!.lastErrorCode, "stripe_customer_organization_mismatch");
+  fake.subscriptions.set(`sub_fake_${suffix}`, authoritative);
+  assert.equal((await reconcileOrganizationBilling(organizationId, userId))?.status, "active");
+
+  // Verified application receipts bind only through application-controlled
+  // customer/subscription/session references and always reconcile authority.
+  const eventBase = Math.floor(Date.now() / 1000);
+  const verifiedEvent = {
+    id: `evt_${suffix.replaceAll("-", "")}_new`,
+    type: "customer.subscription.updated",
+    created: eventBase,
+    data: { object: {
+      id: `sub_fake_${suffix}`,
+      customer: `cus_fake_${suffix}`,
+      metadata: { organization_id: foreignOrganizationId },
+    } },
+  };
+  stripeEventIds.push(verifiedEvent.id);
+  fake.retrieveDelayMs = 25;
+  await Promise.all([
+    processVerifiedStripeEvent(verifiedEvent),
+    processVerifiedStripeEvent(verifiedEvent),
+  ]);
+  fake.retrieveDelayMs = 0;
+  assert.equal((await db.select().from(billingEventReceiptsTable)
+    .where(eq(billingEventReceiptsTable.stripeEventId, verifiedEvent.id))).length, 1);
+  const [processedReceipt] = await db.select().from(billingEventReceiptsTable)
+    .where(eq(billingEventReceiptsTable.stripeEventId, verifiedEvent.id));
+  assert.equal(processedReceipt?.processingState, "processed");
+  assert.equal(processedReceipt?.organizationId, organizationId);
+  assert.equal(processedReceipt?.attempts, 1, "a concurrent duplicate cannot steal a fresh receipt lease");
+
+  fake.subscriptions.set(`sub_fake_${suffix}`, subscription("active", "price_test_scale_year"));
+  const olderEvent = {
+    ...verifiedEvent,
+    id: `evt_${suffix.replaceAll("-", "")}_old`,
+    created: eventBase - 1,
+  };
+  stripeEventIds.push(olderEvent.id);
+  await processVerifiedStripeEvent(olderEvent);
+  const [afterOlderEvent] = await db.select().from(organizationBillingTable)
+    .where(eq(organizationBillingTable.organizationId, organizationId));
+  assert.equal(afterOlderEvent!.currentPlanId, scale.id, "older delivery reconciles current authority");
+  assert.equal(afterOlderEvent!.lastStripeEventId, verifiedEvent.id, "older delivery does not replace the event watermark");
+
+  const retryEvent = {
+    ...verifiedEvent,
+    id: `evt_${suffix.replaceAll("-", "")}_retry`,
+    created: eventBase + 1,
+  };
+  stripeEventIds.push(retryEvent.id);
+  fake.failNextRetrieve = true;
+  await assert.rejects(() => processVerifiedStripeEvent(retryEvent), /fake_transient_provider_failure/);
+  let [retryReceipt] = await db.select().from(billingEventReceiptsTable)
+    .where(eq(billingEventReceiptsTable.stripeEventId, retryEvent.id));
+  assert.equal(retryReceipt?.processingState, "failed");
+  assert.equal((await db.select().from(organizationBillingTable)
+    .where(eq(organizationBillingTable.organizationId, organizationId)))[0]!.status, "active");
+  await processVerifiedStripeEvent(retryEvent);
+  [retryReceipt] = await db.select().from(billingEventReceiptsTable)
+    .where(eq(billingEventReceiptsTable.stripeEventId, retryEvent.id));
+  assert.equal(retryReceipt?.processingState, "processed");
+
+  const unboundSubscriptionId = `sub_unbound_${suffix}`;
+  const unboundEvent = {
+    ...verifiedEvent,
+    id: `evt_${suffix.replaceAll("-", "")}_unbound`,
+    type: "invoice.payment_succeeded",
+    created: eventBase + 2,
+    data: { object: {
+      id: `in_unbound_${suffix}`,
+      customer: `cus_foreign_${suffix}`,
+      subscription: unboundSubscriptionId,
+    } },
+  };
+  stripeEventIds.push(unboundEvent.id);
+  await assert.rejects(
+    () => processVerifiedStripeEvent(unboundEvent),
+    /stripe_event_binding_pending/,
+  );
+  const [pendingReceipt] = await db.select().from(billingEventReceiptsTable)
+    .where(eq(billingEventReceiptsTable.stripeEventId, unboundEvent.id));
+  assert.equal(pendingReceipt?.processingState, "binding_pending");
+
+  await db.insert(organizationsTable).values({
+    id: foreignOrganizationId,
+    name: "Foreign billing smoke",
+    slug: `foreign-billing-${suffix}`,
+    status: "active",
+    planId: starter.id,
+  });
+  await db.insert(organizationBillingTable).values({
+    organizationId: foreignOrganizationId,
+    stripeCustomerId: `cus_foreign_${suffix}`,
+    stripeSubscriptionId: unboundSubscriptionId,
+  });
+  const foreignSubscription = {
+    ...subscription("active", "price_test_starter_month"),
+    id: unboundSubscriptionId,
+    customer: `cus_foreign_${suffix}`,
+    metadata: { organization_id: foreignOrganizationId },
+  };
+  fake.subscriptions.set(unboundSubscriptionId, foreignSubscription);
+  assert.equal((await reconcilePendingBillingReceipts()).reconciled, 1);
+  const [recoveredReceipt] = await db.select().from(billingEventReceiptsTable)
+    .where(eq(billingEventReceiptsTable.stripeEventId, unboundEvent.id));
+  assert.equal(recoveredReceipt?.processingState, "processed");
+  assert.equal(recoveredReceipt?.organizationId, foreignOrganizationId);
+
+  const removedBindingEventId = `evt_${suffix.replaceAll("-", "")}_removed_binding`;
+  stripeEventIds.push(removedBindingEventId);
+  await db.insert(billingEventReceiptsTable).values({
+    stripeEventId: removedBindingEventId,
+    eventType: "invoice.payment_succeeded",
+    stripeObjectId: `in_removed_${suffix}`,
+    stripeCustomerId: `cus_removed_${suffix}`,
+    stripeSubscriptionId: `sub_removed_${suffix}`,
+    stripeObjectVersion: String(eventBase + 3),
+    organizationId,
+    processingState: "failed",
+    diagnosticCode: "billing_reconciliation_retryable",
+  });
+  assert.equal((await reconcilePendingBillingReceipts()).reconciled, 0);
+  const [removedBindingReceipt] = await db.select().from(billingEventReceiptsTable)
+    .where(eq(billingEventReceiptsTable.stripeEventId, removedBindingEventId));
+  assert.equal(removedBindingReceipt?.processingState, "quarantined");
+  assert.equal(removedBindingReceipt?.diagnosticCode, "stripe_event_binding_changed");
+
+  const sweepAmbiguousEventId = `evt_${suffix.replaceAll("-", "")}_sweep_ambiguous`;
+  stripeEventIds.push(sweepAmbiguousEventId);
+  await db.insert(billingEventReceiptsTable).values({
+    stripeEventId: sweepAmbiguousEventId,
+    eventType: "invoice.payment_succeeded",
+    stripeObjectId: `in_ambiguous_${suffix}`,
+    stripeCustomerId: `cus_foreign_${suffix}`,
+    stripeSubscriptionId: `sub_fake_${suffix}`,
+    stripeObjectVersion: String(eventBase + 3),
+    processingState: "binding_pending",
+    diagnosticCode: "stripe_event_binding_pending",
+  });
+  assert.equal((await reconcilePendingBillingReceipts()).reconciled, 0);
+  const [sweepAmbiguousReceipt] = await db.select().from(billingEventReceiptsTable)
+    .where(eq(billingEventReceiptsTable.stripeEventId, sweepAmbiguousEventId));
+  assert.equal(sweepAmbiguousReceipt?.processingState, "quarantined");
+  assert.equal(sweepAmbiguousReceipt?.diagnosticCode, "stripe_event_binding_ambiguous");
+
+  const ambiguousBindingEvent = {
+    ...verifiedEvent,
+    id: `evt_${suffix.replaceAll("-", "")}_ambiguous`,
+    created: eventBase + 4,
+    data: { object: {
+      id: `sub_fake_${suffix}`,
+      customer: `cus_foreign_${suffix}`,
+    } },
+  };
+  stripeEventIds.push(ambiguousBindingEvent.id);
+  await processVerifiedStripeEvent(ambiguousBindingEvent);
+  const [ambiguousReceipt] = await db.select().from(billingEventReceiptsTable)
+    .where(eq(billingEventReceiptsTable.stripeEventId, ambiguousBindingEvent.id));
+  assert.equal(ambiguousReceipt?.organizationId, null);
+  assert.equal(ambiguousReceipt?.processingState, "quarantined");
+  assert.equal(ambiguousReceipt?.diagnosticCode, "stripe_event_binding_ambiguous");
+
+  assert.equal(trustedStripeUrl("https://invoice.stripe.com/i/test"), "https://invoice.stripe.com/i/test");
+  assert.equal(trustedStripeUrl("https://stripe.com.evil.test/invoice"), null);
+  assert.equal(trustedStripeUrl("http://invoice.stripe.com/invoice"), null);
 
   // Repeated and logically older delivery hints never win: reconciliation always retrieves the current fake object.
   fake.subscriptions.set(`sub_fake_${suffix}`, subscription("active", "price_test_scale_year"));
@@ -192,7 +402,22 @@ try {
   fake.subscriptions.set(active.id, active);
   assert.equal((await fake.setCancelAtPeriodEnd({ subscriptionId: active.id, cancel: true })).cancel_at_period_end, true);
   assert.equal((await fake.setCancelAtPeriodEnd({ subscriptionId: active.id, cancel: false })).cancel_at_period_end, false);
-  assert.match((await fake.scheduleDowngrade({ subscription: active })).id, /^sub_sched_/);
+  assert.match((await fake.scheduleDowngrade({
+    subscription: active,
+    priceId: "price_test_starter_month",
+  })).id, /^sub_sched_/);
+  await db.update(organizationBillingTable).set({
+    pendingPlanId: starter.id,
+    pendingEffectiveAt: new Date(Date.now() + 86400_000),
+    pendingSubscriptionScheduleId: `sub_sched_missing_${suffix}`,
+  }).where(eq(organizationBillingTable.organizationId, organizationId));
+  fake.subscriptions.set(active.id, active);
+  await reconcileOrganizationBilling(organizationId, userId);
+  const [afterMissingSchedule] = await db.select().from(organizationBillingTable)
+    .where(eq(organizationBillingTable.organizationId, organizationId));
+  assert.equal(afterMissingSchedule!.pendingPlanId, null);
+  assert.equal(afterMissingSchedule!.pendingSubscriptionScheduleId, null);
+  assert.equal(afterMissingSchedule!.lastErrorCode, "stripe_downgrade_schedule_missing");
 
   // Durable claim uniqueness gives checkout replay reuse and rejects conflicting request fingerprints.
   const key = randomUUID();
@@ -255,15 +480,47 @@ try {
     stripeCustomerId: `cus_missing_live_${suffix}`, stripeSubscriptionId: newSubscription.id,
     stripeSubscriptionStatus: "active", status: "active",
   }).where(eq(organizationBillingTable.organizationId, organizationId));
-  const request = { tenant: { organizationId, userId } } as Parameters<typeof validateExistingCustomerUnderLock>[0];
+  const request = { id: "billing-smoke", tenant: { organizationId, userId } } as Parameters<typeof validateExistingCustomerUnderLock>[0];
   await assert.rejects(() => withBillingLifecycleLock(organizationId, () => validateExistingCustomerUnderLock(request)));
   const [quarantined] = await db.select().from(organizationBillingTable).where(eq(organizationBillingTable.organizationId, organizationId));
   assert.equal(quarantined!.status, "quarantined");
   assert.equal(quarantined!.stripeCustomerId, `cus_missing_live_${suffix}`);
   assert.equal(quarantined!.stripeSubscriptionId, newSubscription.id);
+  const [quarantineAudit] = await db.select().from(auditLogsTable).where(and(
+    eq(auditLogsTable.organizationId, organizationId),
+    eq(auditLogsTable.action, "billing.customer_reference_quarantined"),
+  ));
+  assert.equal(quarantineAudit?.actorUserId, userId);
+  assert.equal((quarantineAudit?.metadata as { code?: string } | null)?.code, "stripe_customer_missing_for_subscription");
+  assert.equal(JSON.stringify(quarantineAudit).includes(`cus_missing_live_${suffix}`), false);
+  const generationBeforeRepair = quarantined!.stripeCustomerGeneration;
+  await db.update(organizationBillingTable).set({
+    stripeCustomerId: `cus_missing_orphan_${suffix}`,
+    stripeSubscriptionId: null,
+    stripeSubscriptionStatus: "canceled",
+  }).where(eq(organizationBillingTable.organizationId, organizationId));
+  const repaired = await withBillingLifecycleLock(
+    organizationId,
+    () => validateExistingCustomerUnderLock(request),
+  );
+  assert.equal(repaired!.stripeCustomerId, null);
+  assert.equal(repaired!.stripeCustomerGeneration, generationBeforeRepair + 1);
+  const [repairAudit] = await db.select().from(auditLogsTable).where(and(
+    eq(auditLogsTable.organizationId, organizationId),
+    eq(auditLogsTable.action, "billing.customer_reference_repaired"),
+  ));
+  assert.equal(repairAudit?.actorUserId, userId);
+  assert.equal((repairAudit?.beforeState as { customerGeneration?: number } | null)?.customerGeneration, generationBeforeRepair);
+  assert.equal((repairAudit?.afterState as { customerGeneration?: number } | null)?.customerGeneration, generationBeforeRepair + 1);
+  assert.equal(JSON.stringify(repairAudit).includes(`cus_missing_orphan_${suffix}`), false);
   console.log(JSON.stringify({ billingSmoke: "ok", reconciliations: 4, fakeExternalCalls: fake.calls.length }));
 } finally {
   injectBillingProviderForTest(new FakeBillingProvider());
+  if (stripeEventIds.length) {
+    await db.delete(billingEventReceiptsTable)
+      .where(inArray(billingEventReceiptsTable.stripeEventId, stripeEventIds));
+  }
+  await db.delete(organizationsTable).where(eq(organizationsTable.id, foreignOrganizationId));
   await db.delete(organizationsTable).where(eq(organizationsTable.id, organizationId));
   await db.delete(usersTable).where(eq(usersTable.id, userId));
   for (const plan of plans.values()) if (["starter", "growth", "scale"].includes(plan.code)) {

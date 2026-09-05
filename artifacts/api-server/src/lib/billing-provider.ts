@@ -13,7 +13,7 @@ export interface BillingProvider {
   retrieveSubscription(id: string): Promise<ProviderSubscription>;
   listSubscriptions(customerId: string): Promise<ProviderSubscription[]>;
   updateSubscription(input: { subscription: ProviderSubscription; priceId: string; planCode: string; idempotencyKey: string }): Promise<ProviderSubscription>;
-  scheduleDowngrade(input: { subscription: ProviderSubscription; priceId: string; planCode: string; idempotencyKey: string }): Promise<{ id: string }>;
+  scheduleDowngrade(input: { subscription: ProviderSubscription; priceId: string; planCode: string; idempotencyKey: string }): Promise<{ id: string; priceId: string; effectiveAt: number }>;
   setCancelAtPeriodEnd(input: { subscriptionId: string; cancel: boolean; idempotencyKey: string }): Promise<ProviderSubscription>;
   createPortal(input: { customerId: string; returnUrl: string; idempotencyKey: string }): Promise<{ id: string; url: string }>;
   listInvoices(input: { customerId: string; limit: number; startingAfter?: string }): Promise<Stripe.ApiList<Stripe.Invoice>>;
@@ -90,13 +90,20 @@ export class StripeBillingProvider implements BillingProvider {
         { idempotencyKey: `${input.idempotencyKey}:create` },
       )).id;
     }
-    return stripe.subscriptionSchedules.update(scheduleId, {
+    const schedule = await stripe.subscriptionSchedules.update(scheduleId, {
       end_behavior: "release",
       phases: [
         { start_date: start, end_date: end, items: [{ price: onlyItem(input.subscription).price.id, quantity: 1 }] },
         { start_date: end, items: [{ price: input.priceId, quantity: 1 }], metadata: { plan_code: input.planCode } },
       ],
     }, { idempotencyKey: `${input.idempotencyKey}:update` });
+    const targetPhase = schedule.phases.at(-1);
+    const targetPrice = targetPhase?.items[0]?.price;
+    const targetPriceId = typeof targetPrice === "string" ? targetPrice : targetPrice?.id;
+    if (!targetPhase || targetPriceId !== input.priceId || targetPhase.start_date !== end) {
+      throw new Error("stripe_downgrade_schedule_mismatch");
+    }
+    return { id: schedule.id, priceId: targetPriceId, effectiveAt: targetPhase.start_date };
   }
   async setCancelAtPeriodEnd(input: { subscriptionId: string; cancel: boolean; idempotencyKey: string }) {
     return (await getUncachableStripeClient()).subscriptions.update(input.subscriptionId, {
@@ -117,4 +124,7 @@ export class StripeBillingProvider implements BillingProvider {
 
 let provider: BillingProvider = new StripeBillingProvider();
 export const billingProvider = () => provider;
-export const injectBillingProviderForTest = (value: BillingProvider) => { provider = value; };
+export const injectBillingProviderForTest = (value: BillingProvider) => {
+  if (process.env.NODE_ENV !== "test") throw new Error("Billing provider override is test-only");
+  provider = value;
+};

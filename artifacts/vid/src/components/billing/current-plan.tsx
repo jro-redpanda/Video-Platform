@@ -33,7 +33,13 @@ export function CurrentPlan({ subscription }: { subscription: BillingSubscriptio
     portal.mutate({ data: { idempotencyKey: getIntentKey('portal') } }, {
       onSuccess: (data) => {
         clearIntentKey('portal');
-        safeRedirect(data.url);
+        if (!safeRedirect(data.url)) {
+          toast({
+            title: "Customer portal could not be opened",
+            description: "The billing provider returned an invalid portal address. Please try again.",
+            variant: "destructive",
+          });
+        }
       },
       onError: () => toast({ title: "Error", description: "Could not open customer portal.", variant: "destructive" })
     });

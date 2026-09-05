@@ -9,6 +9,7 @@ import {
   getGetWorkspaceQueryKey,
   getListBillingInvoicesQueryKey,
 } from "@workspace/api-client-react";
+import { getSafeStripeUrl } from "@/lib/frontend-safety";
 
 export function useBilling() {
   const queryClient = useQueryClient();
@@ -95,15 +96,11 @@ export function useBilling() {
 }
 
 export function safeRedirect(url: string) {
-  try {
-    const parsed = new URL(url);
-    const isStripe = parsed.hostname === "stripe.com" || parsed.hostname.endsWith(".stripe.com");
-    if (parsed.protocol === "https:" && isStripe) {
-      window.location.assign(url);
-    } else {
-      console.error("Untrusted redirect URL", url);
-    }
-  } catch (e) {
-    console.error("Invalid redirect URL", url);
+  const trustedUrl = getSafeStripeUrl(url);
+  if (trustedUrl) {
+    window.location.assign(trustedUrl);
+    return true;
   }
+  console.error("Blocked an untrusted billing redirect URL.");
+  return false;
 }

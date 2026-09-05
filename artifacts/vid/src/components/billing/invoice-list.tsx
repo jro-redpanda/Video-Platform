@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FileText, Download } from "lucide-react";
 import { format } from "date-fns";
+import { getSafeStripeUrl } from "@/lib/frontend-safety";
 
 export function InvoiceList({ canManage }: { canManage: boolean }) {
   const [cursor, setCursor] = useState<string | undefined>();
@@ -42,7 +43,9 @@ export function InvoiceList({ canManage }: { canManage: boolean }) {
             </tr>
           </thead>
           <tbody className="divide-y">
-            {data.items.map((inv) => (
+            {data.items.map((inv) => {
+              const hostedInvoiceUrl = getSafeStripeUrl(inv.hostedInvoiceUrl);
+              return (
               <tr key={inv.id} className="hover:bg-muted/30 transition-colors">
                 <td className="px-6 py-4 text-foreground font-medium">{format(new Date(inv.createdAt), "MMM d, yyyy")}</td>
                 <td className="px-6 py-4 font-mono text-muted-foreground">{(inv.amountDue / 100).toLocaleString('en-US', { style: 'currency', currency: inv.currency.toUpperCase() })}</td>
@@ -56,8 +59,8 @@ export function InvoiceList({ canManage }: { canManage: boolean }) {
                   </span>
                 </td>
                 <td className="px-6 py-4 text-right">
-                  {inv.hostedInvoiceUrl ? (
-                    <a href={inv.hostedInvoiceUrl} target="_blank" rel="noreferrer" className="text-primary hover:text-primary/80 transition-colors inline-flex items-center gap-1.5 font-medium">
+                  {hostedInvoiceUrl ? (
+                    <a href={hostedInvoiceUrl} target="_blank" rel="noreferrer" className="text-primary hover:text-primary/80 transition-colors inline-flex items-center gap-1.5 font-medium">
                       <Download className="h-4 w-4" /> <span>Download PDF</span>
                     </a>
                   ) : (
@@ -65,7 +68,8 @@ export function InvoiceList({ canManage }: { canManage: boolean }) {
                   )}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>

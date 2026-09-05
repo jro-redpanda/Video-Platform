@@ -12,5 +12,8 @@ export type ListBillingInvoicesParams = {
  * @maximum 100
  */
 limit?: number;
+/**
+ * @pattern ^in_[A-Za-z0-9]+$
+ */
 cursor?: string;
 };

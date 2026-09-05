@@ -10,7 +10,9 @@ Stripe credentials are fetched on every operation through the Replit connector. 
 
 Application public-schema migrations run through `@workspace/db`. StripeSync then runs its own migrations, constructs the sync client, finds or creates the managed webhook at `/api/stripe/webhook`, and performs backfill in that order. StripeSync exclusively owns `stripe.*`; application migrations and catalog fingerprints intentionally exclude it.
 
-The webhook route is registered with `express.raw` before JSON parsing. It only checks signature presence and delegates signature validation/ingestion to StripeSync. Confirm the managed endpoint URL and delivery health in each environment after a domain change.
+The webhook route is registered with `express.raw` before JSON parsing. StripeSync verifies the signature and ingests its provider-owned projection first. The application then records a unique, payload-free receipt, maps it only through application-owned customer/subscription/checkout-session bindings, and reconciles current Stripe authority under the organization lifecycle lock. Metadata is a consistency check, never a tenant selector. Duplicate and older deliveries cannot apply payload state.
+
+Receipt processing uses a five-minute claim lease. Transient reconciliation failures remain retryable; a five-minute PgBoss sweep reclaims failed or abandoned receipts. Receipts retain only normalized provider object/customer/subscription/Checkout Session IDs, never payloads. Events that arrive before their application binding remain pending for up to 24 hours and are retried by Stripe and the sweep. Ambiguous or changed bindings are quarantined; still-unbound receipts expire as ignored without adopting a tenant. Confirm the managed endpoint URL, application receipt state, and delivery health in each environment after a domain change.
 
 ## Catalog
 
@@ -20,13 +22,13 @@ Run:
 pnpm --filter @workspace/scripts stripe:seed
 ```
 
-The command is idempotent, test-mode only, uses stable metadata and idempotency keys, requires exactly three active managed products and six recurring USD prices, transactionally records relationship IDs, then runs StripeSync backfill. A duplicate or amount/interval conflict stops reconciliation for operator review rather than silently selecting a product.
+The command is idempotent, test-mode only, reads the three approved commercial plans and amounts from the application plan policy, uses stable metadata and idempotency keys, requires exactly three active managed products and six recurring USD prices, transactionally records relationship IDs, then runs StripeSync backfill. A duplicate or amount/interval conflict stops reconciliation for operator review rather than silently selecting a product.
 
 ## Reconciliation and incidents
 
-PgBoss reconciles active and at-risk subscriptions every five minutes. Workspace managers may trigger bounded repair through `POST /api/billing/reconcile`. Reconciliation retrieves the authoritative subscription from Stripe and quarantines unknown prices, multiple items, tenant/customer mismatches, missing periods, and ambiguous statuses. Inspect `organization_billing.last_error_code`, billing audit rows, the PgBoss dead-letter queue, and Stripe webhook health. Never repair entitlements by editing `stripe.*`.
+PgBoss reconciles active and at-risk subscriptions every five minutes. Workspace managers may trigger bounded repair through `POST /api/billing/reconcile`. Reconciliation retrieves the authoritative subscription from Stripe. Authority/integrity failures (unknown prices or statuses, multiple items/subscriptions, tenant/customer mismatches, and missing periods) commit a quarantine projection. Network and provider-availability failures preserve the last access projection, record a stable retryable diagnostic, and fail the job so PgBoss retry/dead-letter policy remains effective. Inspect `organization_billing.last_error_code`, `billing_event_receipts`, billing audit rows, the PgBoss dead-letter queue, and Stripe webhook health. Never repair entitlements by editing `stripe.*`.
 
-Past-due access has a seven-day grace period. Unpaid, canceled after the paid access period, unknown, and quarantined states are no-create; reads and existing data remain intact. Downgrades use Stripe subscription schedules and cancellation uses period-end cancellation.
+Past-due access has a seven-day grace period. Unpaid, canceled after the paid access period, unknown, and quarantined states are no-create; reads and existing data remain intact. Downgrades use Stripe subscription schedules and persist the verified schedule ID and effective period end. A missing/mismatched schedule clears the pending downgrade and records `stripe_downgrade_schedule_missing` without revoking otherwise-authoritative paid access. Cancellation uses period-end cancellation.
 
 ## Launch exclusions and readiness
 

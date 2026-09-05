@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "fetch:smoke": "node --experimental-strip-types ./scripts/custom-fetch-smoke.mjs"
+  },
   "exports": {
     ".": "./src/index.ts"
   },

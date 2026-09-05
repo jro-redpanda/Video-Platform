@@ -410,6 +410,28 @@ try {
   ).catch(() => undefined);
   const [retryResponse] = await Promise.all([retryRequest, overlappingFailure]);
   assert.equal(retryResponse.status, 202);
+  const [retryAudit] = await db.select().from(auditLogsTable).where(and(
+    eq(auditLogsTable.organizationId, fourthMembership.organizationId),
+    eq(auditLogsTable.action, "workspace.onboarding_retry_requested"),
+  ));
+  assert.equal(retryAudit?.actorKind, "user");
+  assert.equal(retryAudit?.actorUserId, fourth.user.id);
+  assert.equal((retryAudit?.beforeState as { status?: string } | null)?.status, "failed");
+  assert.equal((retryAudit?.afterState as { status?: string } | null)?.status, "provisioning");
+  await db.update(organizationsTable).set({ status: "provisioning" })
+    .where(eq(organizationsTable.id, fourthMembership.organizationId));
+  await db.update(onboardingProvisioningIntentsTable).set({ state: "pending", retryable: true })
+    .where(eq(onboardingProvisioningIntentsTable.organizationId, fourthMembership.organizationId));
+  const retriesBeforeNoOp = await db.select({ id: auditLogsTable.id }).from(auditLogsTable).where(and(
+    eq(auditLogsTable.organizationId, fourthMembership.organizationId),
+    eq(auditLogsTable.action, "workspace.onboarding_retry_requested"),
+  ));
+  assert.equal((await request("/api/onboarding/retry", { method: "POST" }, fourth.cookie)).status, 202);
+  const retriesAfterNoOp = await db.select({ id: auditLogsTable.id }).from(auditLogsTable).where(and(
+    eq(auditLogsTable.organizationId, fourthMembership.organizationId),
+    eq(auditLogsTable.action, "workspace.onboarding_retry_requested"),
+  ));
+  assert.equal(retriesAfterNoOp.length, retriesBeforeNoOp.length);
 } finally {
   server.close();
   if (organizationIds.length) {

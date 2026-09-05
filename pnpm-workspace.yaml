@@ -67,6 +67,17 @@ catalog:
   zod: ^3.25.76
 
 autoInstallPeers: false
+strictPeerDependencies: true
+peerDependencyRules:
+  allowedVersions:
+    # Better Auth 1.7.2 resolves utility 0.5.0 while these packages still
+    # declare 0.4.2. Retire each exception when the parent declaration catches up.
+    "@better-auth/core>@better-auth/utils": "0.5.0"
+    "@better-auth/drizzle-adapter>@better-auth/utils": "0.5.0"
+    # Vidstack 0.6 declares React 18 peers; the existing React 19 player is
+    # covered by the workspace typecheck/build and embed/player smoke suite.
+    "@vidstack/react>react": "19.1.0"
+    "@vidstack/react>@types/react": "19.2.17"
 
 onlyBuiltDependencies:
   - '@swc/core'
@@ -79,6 +90,12 @@ overrides:
   "brace-expansion@5.0.8": "5.0.9"
   "fast-uri@3.1.4": "3.1.6"
   "js-yaml@4.3.0": "4.3.1"
+  # GHSA-2v37-7h3g-55p8; remove when PostCSS requires >=3.3.18.
+  "nanoid@3.3.16": "3.3.18"
+  # GHSA-4mjr-xmp4-gh2g and GHSA-x5fp-wj9c-mxmx; remove when Express requires >=6.16.0.
+  "qs@6.15.3": "6.16.0"
+  # GHSA-w5hq-g745-h8pq; gaxios 6 requires uuid 9, whose safe release is 11.1.1.
+  # Remove the major override only after the Google dependency chain accepts uuid 11 directly.
   "uuid@9.0.1": "11.1.1"
   # replit uses linux-x64 only, we can exclude all other platforms
   "esbuild>@esbuild/darwin-arm64": "-"
@@ -160,6 +177,7 @@ overrides:
   "@expo/ngrok-bin>@expo/ngrok-bin-sunos-x64": "-"
   "@expo/ngrok-bin>@expo/ngrok-bin-win32-ia32": "-"
   "@expo/ngrok-bin>@expo/ngrok-bin-win32-x64": "-"
-  # drizzle-kit uses esbuild internally on an older version that's vulnerable, this overrides it
+  # GHSA-g7r4-m6w7-qqqr: keep every build/codegen parent on the patched release.
+  # Remove this global override when all direct parents require >=0.28.1.
   "@esbuild-kit/esm-loader": "npm:tsx@^4.21.0"
-  esbuild: "0.27.3"
+  esbuild: "0.28.1"

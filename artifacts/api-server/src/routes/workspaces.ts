@@ -25,10 +25,14 @@ router.post("/workspaces/select", requireSession, async (req, res): Promise<void
     || !Object.keys(raw).every((key) => key === "id" || key === "slug")) {
     res.status(400).json({ error: "A workspace selector is required" }); return;
   }
-  const selector = SelectWorkspaceBody.parse(raw);
+  const parsed = SelectWorkspaceBody.safeParse(raw);
+  if (!parsed.success) {
+    res.status(400).json({ error: "A valid workspace selector is required" }); return;
+  }
+  const selector = parsed.data;
   const conditions = [eq(membershipsTable.userId, req.session!.user.id), eq(membershipsTable.status, "active"), eq(organizationsTable.status, "active")];
-  if ("id" in selector && selector.id) conditions.push(eq(organizationsTable.id, selector.id));
-  else conditions.push(eq(organizationsTable.slug, selector.slug!));
+  if ("id" in selector) conditions.push(eq(organizationsTable.id, selector.id));
+  else conditions.push(eq(organizationsTable.slug, selector.slug));
   const [workspace] = await db.select({ id: organizationsTable.id, name: organizationsTable.name, slug: organizationsTable.slug })
     .from(membershipsTable).innerJoin(organizationsTable, eq(organizationsTable.id, membershipsTable.organizationId))
     .where(and(...conditions)).limit(1);

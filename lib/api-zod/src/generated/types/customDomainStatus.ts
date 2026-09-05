@@ -13,9 +13,15 @@ export interface CustomDomainStatus {
   hostname: string | null;
   /** @nullable */
   lifecycleState: CustomDomainStatusLifecycleState;
-  /** @nullable */
+  /**
+     * Returned only while an entitled manager must configure an unverified ownership challenge.
+     * @nullable
+     */
   txtRecordName: string | null;
-  /** @nullable */
+  /**
+     * Returned only while an entitled manager must configure an unverified ownership challenge; never returned after verification or plan downgrade.
+     * @nullable
+     */
   txtRecordValue: string | null;
   /** @nullable */
   lastCheckedAt: Date | null;

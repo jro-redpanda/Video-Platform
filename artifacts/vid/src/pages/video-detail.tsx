@@ -16,6 +16,8 @@ import { Player } from "@/components/player"
 import { MoveVideoDialog } from "@/components/video-library/move-video-dialog"
 import { ThumbnailManager } from "@/components/thumbnail-manager"
 import { useToast } from "@/components/ui/use-toast"
+import { getSafeMediaUrl } from "@/lib/frontend-safety"
+import { invalidateVideoDerivedQueries } from "@/lib/query-invalidation"
 
 export default function VideoDetail() {
   const { id } = useParams<{ id: string }>()
@@ -58,6 +60,7 @@ export default function VideoDetail() {
           old ? { ...old, ...updatedData } : old
         )
         queryClient.invalidateQueries({ queryKey: getListVideosQueryKey() })
+        void invalidateVideoDerivedQueries(queryClient)
         toast({ title: successMessage })
       },
       onError: (error: any) => {
@@ -94,7 +97,7 @@ export default function VideoDetail() {
     return <div className="p-8 text-center">Video not found.</div>
   }
 
-  const embedUrl = video.embedUrl || ""
+  const embedUrl = getSafeMediaUrl(video.embedUrl) || ""
   const embedCode = video.embedCode || ""
   const embedReady = !!video.embedCode && video.status === 'ready'
 
